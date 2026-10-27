@@ -50,7 +50,9 @@ data class TagData(
     val year: String,
     val trackNumber: String,
     val discNumber: String,
-    val composer: String
+    val composer: String,
+    // null = lyrics were not edited (leave the file / database untouched); blank = remove the lyrics.
+    val lyrics: String? = null
 ) {
     companion object {
         fun from(song: Song) = TagData(
@@ -131,6 +133,13 @@ object TagEditor {
             set(FieldKey.TRACK, tags.trackNumber)
             set(FieldKey.DISC_NO, tags.discNumber)
             set(FieldKey.COMPOSER, tags.composer)
+            tags.lyrics?.let { l ->
+                if (l.isBlank()) {
+                    try { tag.deleteField(FieldKey.LYRICS) } catch (_: Exception) {}
+                } else {
+                    tag.setField(FieldKey.LYRICS, l.trim())
+                }
+            }
             audioFile.commit()
 
             // 3) Write back into the original file
@@ -176,13 +185,23 @@ object TagEditor {
 fun TagEditorDialog(
     song: Song,
     onDismiss: () -> Unit,
-    onSaved: (Song, TagData) -> Unit
+    onSaved: (Song, TagData) -> Unit,
+    onLoadLyrics: suspend (Song) -> String? = { null }
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var tags by remember { mutableStateOf(TagData.from(song)) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var lyricsText by remember { mutableStateOf("") }
+    var originalLyrics by remember { mutableStateOf("") }
+    var lyricsLoaded by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(song.id) {
+        val loaded = try { onLoadLyrics(song).orEmpty() } catch (_: Exception) { "" }
+        originalLyrics = loaded
+        lyricsText = loaded
+        lyricsLoaded = true
+    }
 
     // Retry after the user grants write access
     var pending by remember { mutableStateOf(false) }
@@ -194,10 +213,12 @@ fun TagEditorDialog(
         busy = true
         error = null
         scope.launch {
-            when (val r = TagEditor.write(context, song, tags)) {
+            // Lyrics are only written when they were actually changed.
+            val toSave = tags.copy(lyrics = if (lyricsLoaded && lyricsText != originalLyrics) lyricsText else null)
+            when (val r = TagEditor.write(context, song, toSave)) {
                 is TagEditor.Result.Success -> {
                     Toast.makeText(context, "Tags saved", Toast.LENGTH_SHORT).show()
-                    onSaved(song, tags)
+                    onSaved(song, toSave)
                     onDismiss()
                 }
                 is TagEditor.Result.NeedsPermission -> {
@@ -252,6 +273,16 @@ fun TagEditorDialog(
             Column(Modifier.weight(1f)) { field("Disc", tags.discNumber, true) { tags = tags.copy(discNumber = it.filter(Char::isDigit).take(2)) } }
         }
         field("Composer", tags.composer) { tags = tags.copy(composer = it) }
+        com.beatraxus.app.ui.components.InfoSectionLabel("LYRICS")
+        com.beatraxus.app.ui.components.InfoTextField(
+            label = if (lyricsLoaded) "Lyrics (plain text or LRC)" else "Loading lyrics\u2026",
+            value = lyricsText,
+            onValueChange = { lyricsText = it },
+            enabled = !busy && lyricsLoaded,
+            singleLine = false,
+            minLines = 5,
+            maxLines = 10
+        )
         error?.let {
             androidx.compose.material3.Text(it, color = androidx.compose.ui.graphics.Color(0xFFFF5252), fontSize = 12.sp)
         }

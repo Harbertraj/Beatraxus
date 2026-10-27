@@ -78,7 +78,7 @@ fun SongOptionsSheet(
     showMark: Boolean = true,
     // --- new features (all optional, existing callers keep working) ---
     onTagsSaved: (Song, com.beatraxus.app.features.TagData) -> Unit = { _, _ -> },
-    // Loads the saved lyrics text for the lyrics editor (null when the song has none).
+    // Loads the saved lyrics text for the lyrics field of the tag editor (null when the song has none).
     onLoadLyrics: suspend (Song) -> String? = { null },
     onPlaySongs: (List<Song>, Int) -> Unit = { _, _ -> },
     onPauseLocalPlayback: () -> Unit = {},
@@ -256,7 +256,8 @@ fun SongOptionsSheet(
                 com.beatraxus.app.features.TagEditorDialog(
                     song = song,
                     onDismiss = { showTagEditor = false; onDismiss() },
-                    onSaved = onTagsSaved
+                    onSaved = onTagsSaved,
+                    onLoadLyrics = onLoadLyrics
                 )
             }
             if (showRingtone) {

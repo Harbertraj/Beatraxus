@@ -4296,6 +4296,7 @@ items(artistSongs, key = { it.id }) { song ->
                     onRepeat = { viewModel.toggleRepeat() },
                     onSeek = { viewModel.seekTo(it) },
                     onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
+                    onLoadLyrics = { s -> viewModel.loadEditableLyrics(s) },
                     onPlaySongs = { list, index -> viewModel.playList(list, index) },
                     onPauseLocalPlayback = { viewModel.pausePlayback() },
                     onClose = { showFullPlayer = false },

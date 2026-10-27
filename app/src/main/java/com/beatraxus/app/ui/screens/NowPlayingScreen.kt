@@ -176,6 +176,7 @@ fun NowPlayingScreen(
     onGoToFolder: (String, String) -> Unit = { _, _ -> },
     onGoToGenre: (String) -> Unit = {},
     onTagsSaved: (Song, com.beatraxus.app.features.TagData) -> Unit = { _, _ -> },
+    onLoadLyrics: suspend (Song) -> String? = { null },
     onPlaySongs: (List<Song>, Int) -> Unit = { _, _ -> },
     onPauseLocalPlayback: () -> Unit = {}
 ) {
@@ -1298,6 +1299,7 @@ fun NowPlayingScreen(
                     showSongOptions = false
                 },
                 onTagsSaved = onTagsSaved,
+                onLoadLyrics = onLoadLyrics,
                 onPlaySongs = onPlaySongs,
                 onPauseLocalPlayback = onPauseLocalPlayback,
                 currentPositionMs = progressMs(),

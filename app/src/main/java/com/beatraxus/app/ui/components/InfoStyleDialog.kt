@@ -307,13 +307,18 @@ fun InfoTextField(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    numeric: Boolean = false
+    numeric: Boolean = false,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else Int.MAX_VALUE
 ) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label, fontSize = 12.sp) },
-        singleLine = true,
+        singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
         enabled = enabled,
         shape = RoundedCornerShape(14.dp),
         keyboardOptions = if (numeric) KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number)

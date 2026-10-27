@@ -3678,18 +3678,26 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /** Updates the library (memory + database) after the tag editor saved a song. */
+    /** Lyrics text for the tag editor: file tag first, then the lyrics table, then the song's stored lyrics. */
+    suspend fun loadEditableLyrics(song: Song): String? =
+        lyricsRepository.fetchEmbeddedCandidate(song)?.content?.takeIf { it.isNotBlank() }
+
     fun applyEditedTags(song: Song, tags: com.beatraxus.app.features.TagData) {
-        val updated = with(com.beatraxus.app.features.TagEditorHelper) { song.withEditedTags(tags) }
-        viewModelScope.launch(Dispatchers.IO) { songDao.insertSong(updated.toEntity()) }
+        val newLyrics = tags.lyrics?.trim()
+        var updated = with(com.beatraxus.app.features.TagEditorHelper) { song.withEditedTags(tags) }
+        if (newLyrics != null) updated = updated.copy(lyrics = newLyrics.ifBlank { null })
+        viewModelScope.launch(Dispatchers.IO) {
+            songDao.insertSong(updated.toEntity())
+            if (newLyrics != null) {
+                if (newLyrics.isBlank()) lyricsRepository.clearSavedLyrics(updated, false)
+                else lyricsRepository.saveLyrics(song.id, newLyrics, 0L)
+                if (_uiState.value.currentSong?.id == song.id) loadLyrics(updated)
+            }
+        }
         _songs.update { list -> list.map { if (it.id == song.id) updated else it } }
         _uiState.update { st ->
             if (st.currentSong?.id == song.id) st.copy(currentSong = updated) else st
         }
-    }
-
-    /** Saved lyrics text (LRC or plain) for [song], read from the lyrics table; null when none is stored. */
-    suspend fun loadEditableLyrics(song: Song): String? = withContext(Dispatchers.IO) {
-        database.lyricsDao().getLyrics(song.id)?.lyrics?.takeIf { it.isNotBlank() }
     }
 
     fun skipToPrevious() {
