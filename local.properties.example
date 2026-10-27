@@ -1,0 +1,9 @@
+## Copy to local.properties (git-ignored). Everything is optional for a debug build.
+## sdk.dir is written by Android Studio / Code on the Go automatically.
+LASTFM_API_KEY=
+LASTFM_SECRET=
+## Release signing (leave out to sign with the debug key)
+#RELEASE_STORE_FILE=/path/to/release.keystore
+#RELEASE_STORE_PASSWORD=
+#RELEASE_KEY_ALIAS=
+#RELEASE_KEY_PASSWORD=

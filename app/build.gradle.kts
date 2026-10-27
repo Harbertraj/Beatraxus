@@ -45,10 +45,10 @@ configure<ApplicationExtension> {
             abiFilters.addAll(listOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64"))
         }
 
-        val lastFmKey = localProperties.getProperty("LASTFM_API_KEY")
-            ?: error("Missing LASTFM_API_KEY in local.properties")
-        val lastFmSecret = localProperties.getProperty("LASTFM_SECRET")
-            ?: error("Missing LASTFM_SECRET in local.properties")
+        // Missing keys no longer abort Gradle sync (fresh clone / Code on the Go). Last.fm features
+        // just stay inactive until the keys are added to local.properties.
+        val lastFmKey = localProperties.getProperty("LASTFM_API_KEY", "")
+        val lastFmSecret = localProperties.getProperty("LASTFM_SECRET", "")
         buildConfigField("String", "LASTFM_API_KEY", "\"$lastFmKey\"")
         buildConfigField("String", "LASTFM_SECRET", "\"$lastFmSecret\"")
 
@@ -112,15 +112,24 @@ configure<ApplicationExtension> {
         manifestPlaceholders["redirectHostName"] = "auth"
     }
 
+    // Use the release keystore only if local.properties points to a real file. Otherwise (phone,
+    // fresh clone) fall back to the auto-generated debug keystore so the APK still builds.
+    val releaseStoreFile = localProperties.getProperty("RELEASE_STORE_FILE")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { file(it) }
+        ?.takeIf { it.exists() }
+    val hasReleaseSigning = releaseStoreFile != null
+
     signingConfigs {
-        create("release") {
-            storeFile = localProperties.getProperty("RELEASE_STORE_FILE")?.let { file(it) }
-                ?: error("Missing RELEASE_STORE_FILE in local.properties")
-            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
-            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
-            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
-            enableV1Signing = true
-            enableV2Signing = true
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = releaseStoreFile
+                storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
+                keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+                keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
+                enableV1Signing = true
+                enableV2Signing = true
+            }
         }
     }
 
@@ -128,7 +137,8 @@ configure<ApplicationExtension> {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release")
+                            else signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -138,7 +148,8 @@ configure<ApplicationExtension> {
         }
         debug {
             isDebuggable = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release")
+                            else signingConfigs.getByName("debug")
         }
     }
 
