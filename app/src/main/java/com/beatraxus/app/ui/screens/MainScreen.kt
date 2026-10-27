@@ -3773,7 +3773,6 @@ items(artistSongs, key = { it.id }) { song ->
                                     selectedSongForOptions = null
                                 },
                                 onTagsSaved = { s, t -> viewModel.applyEditedTags(s, t) },
-                                onLoadLyrics = { s -> viewModel.loadEditableLyrics(s) },
                                 onPlaySongs = { list, index -> viewModel.playList(list, index) },
                                 onPauseLocalPlayback = { viewModel.pausePlayback() },
                                 currentPositionMs = if (song.id == uiState.currentSong?.id) progressMs else 0L,

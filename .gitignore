@@ -34,3 +34,6 @@ app/src/main/assets/google-services.json
 /tools/fpsbooster_harness/data/
 /tools/fpsbooster_harness/out/
 __pycache__/
+
+# Code on the Go / Android IDE sync artifacts
+/.cg/

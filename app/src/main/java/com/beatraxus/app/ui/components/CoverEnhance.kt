@@ -455,7 +455,7 @@ internal fun FullCoverLayer(
         // Same transformation list while blurring (API 31+ blurs on the GPU), otherwise the cover is
         // re-decoded the moment lyrics / queue open and the blur appears late.
         val gpuBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                val sharpRequest = remember(displayUri, decodeW, decodeH, isBlurred && !gpuBlur) {
+        val sharpRequest = remember(displayUri, decodeW, decodeH, isBlurred && !gpuBlur, strongBlur && !gpuBlur) {
             ImageRequest.Builder(context)
                 .data(displayUri)
                 .diskCachePolicy(CachePolicy.ENABLED)
@@ -467,7 +467,7 @@ internal fun FullCoverLayer(
                 .apply {
                     val list = ArrayList<Transformation>(1)
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
-                        list += FastBlurTransformation(25f)
+                        list += FastBlurTransformation(if (strongBlur) 90f else 25f)
                     }
                     if (list.isNotEmpty()) transformations(list)
                 }
