@@ -424,7 +424,7 @@ fun DspScreen(
                 }
                 smooth = fallen
                 if (anyLeft || liveFftBars.any { it > 0f }) liveFftBars = fallen
-                delay(if (anyLeft) 16 else 120)
+                if (anyLeft) withFrameNanos { } else delay(120)
                 continue
             }
             val capture = viewModel.captureLiveWindow()
@@ -471,7 +471,7 @@ fun DspScreen(
                     liveFftBars = smooth.copyOf()
                 }
             }
-            delay(16) // ~60fps
+            withFrameNanos { } // one update per screen frame (120 Hz screens get 120), not a fixed 60 fps
         }
     }
 

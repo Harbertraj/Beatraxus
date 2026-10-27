@@ -82,6 +82,15 @@ object RefreshRateManager {
         }
     }
 
+    /**
+     * Length of one screen frame in ms at the rate the panel runs now (8 ms at 120 Hz, 16 ms at 60 Hz). Polling loops
+     * that feed animations use this instead of a fixed 16 ms, which held them at 60 updates a second on faster screens.
+     */
+    fun frameIntervalMs(context: Context): Long {
+        val hz = defaultDisplay(context)?.refreshRate?.takeIf { it >= 30f } ?: 60f
+        return (1000f / hz).toLong().coerceIn(4L, 33L)
+    }
+
     /** Pins [window] to the mode that matches the saved choice. Does nothing when the window already asks for it. */
     fun applyTo(window: Window, context: Context) {
         if (videoModeOverride) return

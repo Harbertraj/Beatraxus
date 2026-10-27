@@ -1341,7 +1341,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 val serviceRef = service
                 if (serviceRef != null && uiState.value.isPlaying && uiState.value.dsp.config.audio3DStageEnabled) {
                     _realtimeLevels.value = serviceRef.getLevels()
-                    delay(16) // ~60fps
+                    // One update per screen frame (8 ms on a 120 Hz panel); a fixed 16 ms capped this at 60 fps.
+                    delay(com.beatraxus.app.perf.RefreshRateManager.frameIntervalMs(getApplication<Application>()))
                 } else {
                     if (_realtimeLevels.value[0] != 0f || _realtimeLevels.value[1] != 0f) {
                         _realtimeLevels.value = floatArrayOf(0f, 0f)
