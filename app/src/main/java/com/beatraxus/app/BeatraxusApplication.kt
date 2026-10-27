@@ -103,6 +103,10 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
         // "did not call startForeground() in time" crash). Run it on a background thread instead.
         val startup = Executors.newSingleThreadExecutor { r -> Thread(r, "beatraxus-startup") }
         startup.execute {
+            // Saved screen refresh rate (Settings > Appearance); MainActivity re-applies it when this value arrives.
+            try { com.beatraxus.app.perf.RefreshRateManager.init(this) } catch (_: Throwable) {}
+        }
+        startup.execute {
             // Clear temporary cloud cache on app start
             try {
                 clearTemporaryCache()

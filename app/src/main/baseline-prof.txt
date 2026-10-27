@@ -1,0 +1,9 @@
+# Baseline profile: the code that runs while the app opens, so it is compiled ahead of time.
+Lcom/beatraxus/app/BeatraxusApplication;
+HSPLcom/beatraxus/app/BeatraxusApplication;->onCreate()V
+Lcom/beatraxus/app/MainActivity;
+HSPLcom/beatraxus/app/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/beatraxus/app/MainActivity;->onStart()V
+HSPLcom/beatraxus/app/MainActivity;->onResume()V
+Lcom/beatraxus/app/perf/RefreshRateManager;
+HSPLcom/beatraxus/app/perf/RefreshRateManager;->applyTo(Landroid/view/Window;Landroid/content/Context;)V

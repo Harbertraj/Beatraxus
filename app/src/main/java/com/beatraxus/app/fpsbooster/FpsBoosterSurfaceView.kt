@@ -189,6 +189,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         val fps = plan?.targetFps ?: return
         try {
             val choice = DisplayRefreshRate.preferredMode(context, fps) ?: return
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
             val lp = window.attributes
             if (lp.preferredDisplayModeId != choice.modeId) { lp.preferredDisplayModeId = choice.modeId; window.attributes = lp }
         } catch (t: Throwable) { Log.w(TAG, "preferred display mode failed", t) }
@@ -197,8 +198,9 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private fun clearDisplayMode() {
         val window = findWindow() ?: return
         try {
-            val lp = window.attributes
-            if (lp.preferredDisplayModeId != 0) { lp.preferredDisplayModeId = 0; window.attributes = lp }
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
+            // Back to the refresh rate chosen for the app (not to "no preference", which can fall back to 60 Hz).
+            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
         } catch (_: Throwable) {}
     }
 

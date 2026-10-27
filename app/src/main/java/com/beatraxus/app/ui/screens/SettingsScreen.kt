@@ -77,6 +77,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.Role
+import com.beatraxus.app.perf.RefreshRateManager
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -620,6 +622,7 @@ fun SettingsScreen(
                             "Appearance: Dual Colour Palette" -> DspPaletteContent(uiState, playerViewModel)
                             "Appearance: Surround Screen" -> SurroundAppearanceContent(uiState, playerViewModel)
                             "Appearance: Fonts" -> FontsAppearanceContent(uiState, playerViewModel)
+                            "Appearance: Refresh Rate" -> RefreshRateAppearanceContent()
                             "Appearance: Lyrics Database" -> LyricsDatabaseContent(uiState, playerViewModel)
                             "Replay Gain" -> ReplayGainContent(uiState, playerViewModel, onEditValue = { editingValue = it })
                             "Library" -> LibraryContent(uiState, playerViewModel, onShowInfo = { showInfoPopup = true })
@@ -898,6 +901,76 @@ fun AppearanceContent(uiState: PlayerUiState, sectionStack: SnapshotStateList<St
             iconColor = PrimaryCyan,
             onClick = { sectionStack.add("Appearance: Fonts") }
         )
+        val selectedRate by RefreshRateManager.selected.collectAsStateWithLifecycle()
+        SettingMenuItem(
+            title = "Refresh Rate",
+            subtitle = if (selectedRate == RefreshRateManager.AUTO) "Auto (highest your screen supports)" else "$selectedRate Hz",
+            icon = Icons.Rounded.Speed,
+            iconColor = PrimaryCyan,
+            onClick = { sectionStack.add("Appearance: Refresh Rate") }
+        )
+    }
+}
+
+/** Settings > Appearance > Refresh Rate: Auto (the panel's highest rate) or a fixed 60 / 90 / 120 / 144 Hz. */
+@Composable
+fun RefreshRateAppearanceContent() {
+    val context = LocalContext.current
+    val manager = RefreshRateManager
+    val selected by manager.selected.collectAsStateWithLifecycle()
+    val supported = remember { manager.supportedRates(context) }
+    val peak = supported.max()
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "Screen refresh rate used by the whole app. Auto detects the highest rate your screen supports ($peak Hz) and keeps the app on it. " +
+                "Rates your screen does not have are greyed out.",
+            color = SecondaryText,
+            fontSize = 13.sp,
+            lineHeight = 18.sp
+        )
+        val options = listOf(RefreshRateManager.AUTO) + RefreshRateManager.FIXED_OPTIONS
+        options.forEach { hz ->
+            val isAuto = hz == RefreshRateManager.AUTO
+            // A fixed rate counts as available when the panel has a mode within 1 Hz of it.
+            val available = isAuto || supported.any { kotlin.math.abs(it - hz) <= 1 }
+            val isSelected = selected == hz
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .selectable(selected = isSelected, enabled = available, role = Role.RadioButton) { manager.set(context, hz) },
+                shape = RoundedCornerShape(18.dp),
+                color = if (isSelected) PrimaryCyan.copy(alpha = 0.16f) else Color(0xFF111216).copy(alpha = 0.70f),
+                border = BorderStroke(0.8.dp, if (isSelected) PrimaryCyan else Color.White.copy(alpha = 0.10f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .graphicsLayer(alpha = if (available) 1f else 0.4f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    RadioButton(selected = isSelected, onClick = null, enabled = available)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            if (isAuto) "Auto" else "$hz Hz",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        Text(
+                            when {
+                                isAuto -> "Default. Uses $peak Hz on this screen"
+                                !available -> "Not supported by this screen"
+                                else -> "Fixed at $hz Hz"
+                            },
+                            color = SecondaryText,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

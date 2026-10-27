@@ -175,6 +175,7 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         if (targetFps <= 0) return
         try {
             val choice = DisplayRefreshRate.preferredMode(context, targetFps) ?: return
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
             val lp = window.attributes
             if (lp.preferredDisplayModeId != choice.modeId) {
                 lp.preferredDisplayModeId = choice.modeId
@@ -188,11 +189,9 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     private fun clearDisplayMode() {
         val window = findWindow() ?: return
         try {
-            val lp = window.attributes
-            if (lp.preferredDisplayModeId != 0) {
-                lp.preferredDisplayModeId = 0
-                window.attributes = lp
-            }
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
+            // Back to the refresh rate chosen for the app (not to "no preference", which can fall back to 60 Hz).
+            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
         } catch (_: Throwable) {
         }
     }

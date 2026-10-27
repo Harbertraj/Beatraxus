@@ -223,6 +223,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-compose:1.10.0")
+    // Installs the baseline profiles (this app's and the ones Compose/Media3 ship) on first run, so the app is
+    // precompiled instead of interpreted/JIT-compiled while it opens. Needed for sideloaded APKs, where the
+    // Play Store does not do this.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("com.google.android.material:material:1.12.0")
 
     val lifecycleVersion = "2.8.7"

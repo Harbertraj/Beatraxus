@@ -8,12 +8,17 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.hardware.display.DisplayManager
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.Bundle
 import android.os.IBinder
 import android.os.SystemClock
+import android.view.Display
 import android.view.Choreographer
 import android.util.Log
 import java.security.MessageDigest
@@ -24,6 +29,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
+import com.beatraxus.app.perf.RefreshRateManager
 import kotlinx.coroutines.launch
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -144,33 +150,35 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
-     * Ask for the panel's highest refresh rate at the current resolution. Without this many
-     * devices (ColorOS/OxygenOS in particular) keep an app that does not request it at 60 Hz even
-     * on a 120 Hz screen, which made every animation look like it was running on a 60 Hz display.
+     * Pins the window to the refresh rate chosen in Settings > Appearance > Refresh Rate (default: the panel's
+     * highest rate at its current resolution). Without this many devices (ColorOS/OxygenOS in particular) keep an
+     * app that does not request it at 60 Hz even on a 120 Hz screen, which made every animation look like it was
+     * running on a 60 Hz display.
      */
     private fun requestHighestRefreshRate() {
-        try {
-            val d = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) display else @Suppress("DEPRECATION") windowManager.defaultDisplay
-            d ?: return
-            val current = d.mode
-            val best = d.supportedModes
-                .filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
-                .maxByOrNull { it.refreshRate } ?: return
-            val lp = window.attributes
-            if (lp.preferredDisplayModeId != best.modeId || lp.preferredRefreshRate != best.refreshRate) {
-                lp.preferredDisplayModeId = best.modeId
-                lp.preferredRefreshRate = best.refreshRate
-                window.attributes = lp
-            }
-        } catch (t: Throwable) {
-            Log.w("MainActivity", "Could not request a high refresh rate", t)
+        RefreshRateManager.applyTo(window, this)
+    }
+
+    // Some systems move the panel back to a lower mode (power saver, screen on/off, another app). When the display
+    // changes, the window asks for its mode again; applyTo() does nothing if the request is already in place.
+    private val displayListener = object : DisplayManager.DisplayListener {
+        override fun onDisplayAdded(displayId: Int) {}
+        override fun onDisplayRemoved(displayId: Int) {}
+        override fun onDisplayChanged(displayId: Int) {
+            if (displayId == Display.DEFAULT_DISPLAY) requestHighestRefreshRate()
         }
     }
+    private var displayListenerRegistered = false
 
     override fun onStart() {
         super.onStart()
         requestHighestRefreshRate()
-        frameJankMonitor.start()
+        if (!displayListenerRegistered) {
+            (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.registerDisplayListener(displayListener, Handler(Looper.getMainLooper()))
+            displayListenerRegistered = true
+        }
+        // The jank logger posts a frame callback on every frame; it is only useful (and only paid for) in debuggable builds.
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) frameJankMonitor.start()
         // AudioPlaybackService.onCreate() runs on the main thread (audio engine, media session, ...).
         // Doing that during the first frames makes the app-open animation stutter, so start it once
         // the first frames are on screen. A few frames later is still far inside the system's
@@ -250,12 +258,9 @@ class MainActivity : FragmentActivity() {
         Thread({ logSigningCertFingerprints() }, "SigningCertLog").start()
         frameJankMonitor = FrameJankMonitor("BeatraxusFrameMonitor")
 
-        // Keep splash screen on until the initial library load is finished, but never longer than
-        // SPLASH_MAX_WAIT_MS: if the load stalls or fails, the app must still open.
-        val splashDeadline = SystemClock.uptimeMillis() + SPLASH_MAX_WAIT_MS
-        splashScreen.setKeepOnScreenCondition {
-            viewModel.uiState.value.isLoadingLibrary && SystemClock.uptimeMillis() < splashDeadline
-        }
+        // The system splash is NOT held while the library loads any more. Holding it (up to 3 s) kept the static logo
+        // on screen and made the app feel stuck before the app-open animation even started. The library now loads in
+        // the background while the app-open animation plays, so the animation starts on the first frame.
 
         // Remove splash screen exit animation so app opens immediately without logo scale/fade animation
         splashScreen.setOnExitAnimationListener { splashProvider ->
@@ -272,6 +277,11 @@ class MainActivity : FragmentActivity() {
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
 
         handleIntent(intent)
+
+        // A refresh rate picked in Settings applies at once; the saved choice is loaded off the main thread at startup.
+        lifecycleScope.launch {
+            RefreshRateManager.selected.collect { requestHighestRefreshRate() }
+        }
 
         setContent {
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -377,9 +387,18 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) requestHighestRefreshRate()
+    }
+
     override fun onStop() {
         super.onStop()
         frameJankMonitor.stop()
+        if (displayListenerRegistered) {
+            (getSystemService(DISPLAY_SERVICE) as? DisplayManager)?.unregisterDisplayListener(displayListener)
+            displayListenerRegistered = false
+        }
         serviceStartPending = false
         if (bindRequested) {
             try {
