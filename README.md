@@ -176,6 +176,12 @@ LLM_MODEL=gemini-2.0-flash
 # Auto-generated video subtitles (speech recognition). Needs an OpenAI-style
 # /audio/transcriptions endpoint that returns verbose_json (OpenAI whisper-1, Groq, self-hosted Whisper).
 # Translating the generated subtitles uses the LLM_* keys above (a chat-completions endpoint).
+# Free plans cap the audio seconds per hour. To avoid stopping at that limit, SPEECH_API_KEY and SPEECH_MODEL each
+# accept several comma-separated values; the app uses the first and switches to the next the moment one is limited,
+# and only waits when every one is limited. A shorter list repeats its last value. Examples (Groq counts the limit per
+# model, so one key with two models already doubles it; extra keys from other accounts add more):
+#   SPEECH_API_KEY=gsk_keyA,gsk_keyB
+#   SPEECH_MODEL=whisper-large-v3-turbo,whisper-large-v3
 SPEECH_API_KEY=
 SPEECH_ENDPOINT=https://api.openai.com/v1/audio/transcriptions
 SPEECH_MODEL=whisper-1

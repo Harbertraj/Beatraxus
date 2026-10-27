@@ -487,8 +487,11 @@ fun SubtitlePlayerSheetSection(
             val saved = subUiState.cachedSubtitles
             saved.forEach { g ->
                 val label = savedSubtitleLabel(g)
+                // The player's track list lags behind a freshly downloaded subtitle, so the name the view model
+                // reports for the loaded subtitle counts too; otherwise the chip misses its orange selected look.
                 val picked = subUiState.enabled && subUiState.selectedSubtitleId == g.subtitleId &&
-                    videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label }
+                    (subUiState.selectedSubtitleName == label ||
+                        videoUiState.availableSubtitleTracks.any { it.isSelected && it.name == label })
                 MadeSubtitleChip(
                     label = label,
                     picked = picked,

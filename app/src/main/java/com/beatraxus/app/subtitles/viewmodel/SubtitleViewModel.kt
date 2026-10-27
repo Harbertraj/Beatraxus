@@ -26,7 +26,9 @@ import com.beatraxus.app.subtitles.generate.FfmpegChunkProvider
 import com.beatraxus.app.subtitles.generate.GenerationException
 import com.beatraxus.app.subtitles.generate.GenerationCheckpointStore
 import com.beatraxus.app.subtitles.generate.GenerationService
+import com.beatraxus.app.subtitles.generate.FailoverSpeechTranscriber
 import com.beatraxus.app.subtitles.generate.OpenAiSpeechTranscriber
+import com.beatraxus.app.subtitles.generate.SpeechProviderConfig
 import com.beatraxus.app.subtitles.generate.PartialSubtitle
 import com.beatraxus.app.subtitles.generate.PartialSubtitleScheduler
 import com.beatraxus.app.subtitles.generate.SrtWriter
@@ -426,24 +428,32 @@ class SubtitleViewModel(
             if (existing != null) {
                 val file = File(existing.localPath)
                 if (file.exists()) {
+                    // Same name the saved-subtitle chip is listed under, so the chip and the loaded track match.
+                    val existingLabel = savedLabel(existing)
                     subtitleController.attachExternalSubtitle(
                         videoId = video.id,
                         file = file,
                         language = existing.language,
-                        label = result.fileName,
+                        label = existingLabel,
                         subtitleId = existing.subtitleId
                     )
-                    if (!auto) rememberChoice(existing.subtitleId)
+                    if (!auto) {
+                        rememberChoice(existing.subtitleId)
+                        prefs.edit().putBoolean("video_subtitle_enabled", true).apply()
+                    }
                     withContext(Dispatchers.Main) {
                         _uiState.update {
                             it.copy(
                                 isDownloading = null,
+                                // A subtitle the viewer just picked is showing, so the sheet must treat subtitles as on
+                                // (otherwise its chip never gets the orange selected look after "None" was chosen).
+                                enabled = if (auto) it.enabled else true,
                                 selectedSubtitleId = existing.subtitleId,
                                 selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
-                                selectedSubtitleName = result.fileName
+                                selectedSubtitleName = existingLabel
                             )
                         }
-                        _events.emit(SubtitleUiEvent.DownloadSuccess(result.fileName))
+                        _events.emit(SubtitleUiEvent.DownloadSuccess(existingLabel))
                     }
                     return@launch
                 }
@@ -530,12 +540,17 @@ class SubtitleViewModel(
                 label = result.fileName,
                 subtitleId = subId
             )
-            if (!auto) rememberChoice(subId)
+            if (!auto) {
+                rememberChoice(subId)
+                prefs.edit().putBoolean("video_subtitle_enabled", true).apply()
+            }
 
             withContext(Dispatchers.Main) {
                 _uiState.update {
                     it.copy(
                         isDownloading = null,
+                        // The downloaded subtitle is now showing, so subtitles are on (see the cached branch above).
+                        enabled = if (auto) it.enabled else true,
                         cachedSubtitles = updatedCachedList,
                         selectedSubtitleId = subId,
                         selectedSubtitleType = SelectedSubtitleType.EXTERNAL,
@@ -1455,7 +1470,8 @@ class SubtitleViewModel(
                         }
                     },
                     onProgress = { done, total ->
-                        _uiState.update { it.copy(translationStatus = "Translating to $targetName: part ${minOf(done + 1, total)} of $total") }
+                        // Several parts are translated at once, so this counts the parts that are finished.
+                        _uiState.update { it.copy(translationStatus = "Translating to $targetName: ${minOf(done, total)} of $total parts done") }
                     }
                 )
                 subtitleCache.saveSubtitle(
@@ -1487,11 +1503,18 @@ class SubtitleViewModel(
     }
 
     private fun buildGenerationService(): GenerationService {
-        val transcriber = OpenAiSpeechTranscriber(
-            BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_MODEL,
+        // Every key/model listed in the build settings is a provider. One that hits its free-plan limit is set aside and
+        // the next takes over at once, so a limit on one of them no longer stops (or slows) the run.
+        val providers = SpeechProviderConfig.parse(BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_MODEL)
+            .ifEmpty { listOf(SpeechProviderConfig(BuildConfig.SPEECH_ENDPOINT, BuildConfig.SPEECH_API_KEY, BuildConfig.SPEECH_MODEL)) }
+        val transcriber = FailoverSpeechTranscriber(
+            providers = providers.map { OpenAiSpeechTranscriber(it.endpoint, it.apiKey, it.model, failOnRateLimit = true) },
+            onSwitch = { from, to ->
+                Log.w(TAG, "Speech provider ${from + 1} is limited or unusable, continuing with provider ${to + 1} of ${providers.size} (${providers[to].model})")
+            },
             onRateLimited = { leftMs, totalMs ->
-                // Free speech plans cap the audio seconds per hour: past that the service asks to wait, sometimes minutes.
-                if (leftMs == totalMs) Log.w(TAG, "Speech service limit reached, waiting ${totalMs / 1000}s before the next part")
+                // Every provider is limited: the free plans cap the audio seconds per hour, so wait for the soonest one.
+                if (leftMs == totalMs) Log.w(TAG, "All speech providers are at their limit, waiting ${totalMs / 1000}s before the next part")
                 _uiState.update {
                     it.copy(
                         generationStatus = if (leftMs > 0L) "Speech service limit reached. Continuing in ${clock(leftMs)}."

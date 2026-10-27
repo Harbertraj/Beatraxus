@@ -92,7 +92,12 @@ class OpenAiSpeechTranscriber(
     private val apiKey: String,
     private val model: String,
     /** Called every second while a rate limit is being waited out: (time left, the whole wait). 0 left = the wait is over. */
-    private val onRateLimited: (leftMs: Long, totalMs: Long) -> Unit = { _, _ -> }
+    private val onRateLimited: (leftMs: Long, totalMs: Long) -> Unit = { _, _ -> },
+    /**
+     * When true a rate-limited answer is not waited out here: it is reported at once as [GenerationException.Kind.RATE_LIMITED]
+     * with the wait the service asked for, so a [FailoverSpeechTranscriber] can carry on with another key or model meanwhile.
+     */
+    private val failOnRateLimit: Boolean = false
 ) : SpeechTranscriber {
 
     override suspend fun transcribe(audio: File, languageCode: String?): WhisperTranscript = withContext(Dispatchers.IO) {
@@ -124,6 +129,14 @@ class OpenAiSpeechTranscriber(
                     val text = response.body?.string().orEmpty()
                     when {
                         response.isSuccessful -> WhisperResponseParser.parse(text)
+                        response.code == 429 && failOnRateLimit -> {
+                            val base = OpenAiStyle.failure(429, text)
+                            throw GenerationException(
+                                GenerationException.Kind.RATE_LIMITED,
+                                base.message,
+                                retryAfterMs = OpenAiStyle.rateLimitWaitMs(response, text, attempt)
+                            )
+                        }
                         response.code == 429 -> {
                             waitMs = OpenAiStyle.rateLimitWaitMs(response, text, attempt)
                                 ?: throw OpenAiStyle.failure(429, text)

@@ -4,7 +4,14 @@ import com.beatraxus.app.subtitles.domain.SubtitleCue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import java.io.File
 
 /** Cuts the audio of the chosen track into pieces for the speech service. */
@@ -169,13 +176,16 @@ data class TranslationResult(
  */
 class SubtitleTranslator(
     private val translator: TextTranslator,
-    private val batchSize: Int = DEFAULT_BATCH
+    private val batchSize: Int = DEFAULT_BATCH,
+    /** How many batches are asked for at the same time. One at a time made a normal subtitle take minutes. */
+    private val parallelism: Int = DEFAULT_PARALLELISM
 ) {
 
     /**
      * @param resume lines (by position in [cues]) an earlier, interrupted run already translated; they are not asked again.
      * @param onBatchDone called with the lines of every finished batch, so they can be saved and a stopped run continues
-     *   from where it stopped instead of starting at part 1 again.
+     *   from where it stopped instead of starting at part 1 again. Calls never overlap.
+     * @param onProgress called with (batches finished, batches in total) at the start and after every finished batch.
      */
     suspend fun translate(
         cues: List<SubtitleCue>,
@@ -192,15 +202,33 @@ class SubtitleTranslator(
         resume.forEach { (i, text) -> if (i in lines.indices && text.isNotBlank()) translated[i] = text }
         val batches = lines.chunked(batchSize.coerceAtLeast(1))
 
-        batches.forEachIndexed { b, batch ->
-            currentCoroutineContext().ensureActive()
-            val todo = batch.filter { it.index !in translated }
-            // Parts an earlier run finished are skipped, so progress starts at the part it continues from.
-            if (todo.isEmpty()) return@forEachIndexed
-            onProgress(b, batches.size)
-            translateBatch(todo, translated, fromLanguageName, toLanguageName)
-            val finished = todo.filter { it.index in translated }.associate { it.index to translated.getValue(it.index) }
-            if (finished.isNotEmpty()) onBatchDone(finished)
+        // Parts an earlier run finished are skipped. What is left is worked out before anything starts, so the batches
+        // never read the shared result while another one is writing to it.
+        val work = batches.map { batch -> batch.filter { it.index !in translated } }.filter { it.isNotEmpty() }
+        var finishedBatches = batches.size - work.size
+        onProgress(finishedBatches, batches.size)
+
+        // Several batches are in flight at once. Each fills its own map; only merging it, saving it and reporting
+        // progress happen under the lock, one batch at a time. If a batch fails for good (bad key, no connection, limit
+        // used up) the others are cancelled, and every batch that did finish has already been saved for a later resume.
+        val lock = Mutex()
+        val gate = Semaphore(parallelism.coerceAtLeast(1))
+        coroutineScope {
+            work.map { todo ->
+                async {
+                    gate.withPermit {
+                        currentCoroutineContext().ensureActive()
+                        val local = HashMap<Int, String>()
+                        translateBatch(todo, local, fromLanguageName, toLanguageName)
+                        lock.withLock {
+                            translated.putAll(local)
+                            finishedBatches++
+                            if (local.isNotEmpty()) onBatchDone(HashMap(local))
+                            onProgress(finishedBatches, batches.size)
+                        }
+                    }
+                }
+            }.awaitAll()
         }
         onProgress(batches.size, batches.size)
 
@@ -276,7 +304,11 @@ class SubtitleTranslator(
     }
 
     companion object {
-        const val DEFAULT_BATCH = 40
+        /** Lines per request. Bigger batches mean fewer requests, which is what free plans count per minute. */
+        const val DEFAULT_BATCH = 60
+
+        /** Requests in flight at once: enough to be several times faster, few enough to stay inside free-plan limits. */
+        const val DEFAULT_PARALLELISM = 4
         private const val SERVICE_ATTEMPTS = 3
         private const val SERVICE_RETRY_DELAY_MS = 2_000L
     }

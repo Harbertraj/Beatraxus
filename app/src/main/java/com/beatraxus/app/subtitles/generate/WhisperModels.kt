@@ -26,7 +26,13 @@ data class WhisperTranscript(
 )
 
 /** Why generating subtitles failed. [kind] decides what the viewer is told and whether a retry makes sense. */
-class GenerationException(val kind: Kind, message: String? = null, cause: Throwable? = null) : Exception(message ?: kind.name, cause) {
+class GenerationException(
+    val kind: Kind,
+    message: String? = null,
+    cause: Throwable? = null,
+    /** For [Kind.RATE_LIMITED]: how long the service asked to wait, or null when waiting is pointless (quota used up). */
+    val retryAfterMs: Long? = null
+) : Exception(message ?: kind.name, cause) {
     enum class Kind {
         NOT_CONFIGURED,
         UNSUPPORTED_SOURCE,
