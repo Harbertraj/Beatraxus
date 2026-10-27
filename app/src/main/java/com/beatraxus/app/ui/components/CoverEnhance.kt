@@ -446,12 +446,16 @@ internal fun FullCoverLayer(
             CoverFit.FIT_INSIDE -> hPx
         }
         val drawW = if (fit == CoverFit.FIT_WIDTH) wPx else drawH * aspect
-        val decodeW = drawW.roundToInt().coerceAtLeast(1)
-        val decodeH = drawH.roundToInt().coerceAtLeast(1)
+        // Quantised to 128px steps: the box height animates (quality badge re-expanding when lyrics /
+        // queue close). A decode size that followed every frame built a new ImageRequest per frame, missed
+        // the memory cache and left the cover blank until it was decoded again (the "late album art").
+        fun quantize(v: Float) = (((v / 128f).toInt() + 1) * 128).coerceAtLeast(128)
+        val decodeW = quantize(drawW)
+        val decodeH = quantize(drawH)
         // Same transformation list while blurring (API 31+ blurs on the GPU), otherwise the cover is
         // re-decoded the moment lyrics / queue open and the blur appears late.
         val gpuBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-                val sharpRequest = remember(displayUri, decodeW, decodeH, isBlurred && !gpuBlur, strongBlur && !gpuBlur) {
+                val sharpRequest = remember(displayUri, decodeW, decodeH, isBlurred && !gpuBlur) {
             ImageRequest.Builder(context)
                 .data(displayUri)
                 .diskCachePolicy(CachePolicy.ENABLED)
@@ -463,7 +467,7 @@ internal fun FullCoverLayer(
                 .apply {
                     val list = ArrayList<Transformation>(1)
                     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S && isBlurred) {
-                        list += FastBlurTransformation(if (strongBlur) 90f else 25f)
+                        list += FastBlurTransformation(25f)
                     }
                     if (list.isNotEmpty()) transformations(list)
                 }

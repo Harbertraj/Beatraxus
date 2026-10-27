@@ -911,7 +911,9 @@ fun NowPlayingScreen(
                                             .height(36.dp)
                                             .onGloballyPositioned { coords ->
                                                 // Not while lyrics are open: the row is collapsing then.
-                                                if (fullCoverArt && !showLyrics) {
+                                                // Also wait until the metadata row finished animating: measuring while it
+                                                // re-expands moved the cover height every frame (late album art).
+                                                if (fullCoverArt && !showLyrics && metadataHeight == 90.dp) {
                                                     badgeBottomWindowPx = coords.positionInWindow().y + coords.size.height
                                                 }
                                             },
