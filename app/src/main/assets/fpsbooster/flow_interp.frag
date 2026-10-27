@@ -103,6 +103,14 @@ void main() {
   vec3 pa = texture(uA, vUv).rgb;
   vec3 pb = texture(uB, vUv).rgb;
   vec3 nearest = (uT < 0.5) ? pa : pb;
+  // The real frame is drawn at the (usually larger) screen size. A bilinear fetch here made every static or
+  // untrusted pixel soft while only the motion-compensated pixels were bicubic, so picture detail changed from
+  // pixel to pixel and was visibly softer than normal playback. Use the same bicubic resample everywhere
+  // (identical to a plain copy when the frame and the screen have the same size).
+  if (uSharp == 1) {
+    if (uT < 0.5) nearest = sampleSharp(uA, vUv);
+    else nearest = sampleSharp(uB, vUv);
+  }
   vec3 rgb = nearest;
 
   if (uWarp == 1 && texture(uCut, vec2(0.5)).b < 0.5) {
@@ -110,7 +118,7 @@ void main() {
     vec3 dab = abs(pa - pb);
     if (max(dab.r, max(dab.g, dab.b)) < STATIC_DIFF && dot(f0.xy, f0.xy) < STATIC_FLOW2) {
       // static pixel: A == B and nothing moves around it. Either frame is the answer; skip the 6 warp fetches.
-      rgb = pa;
+      rgb = nearest;
     } else {
       // --- forward-field warp: refine the vector where the content was at time t ---
       vec4 f = fw(vUv - uT * f0.xy * inv);

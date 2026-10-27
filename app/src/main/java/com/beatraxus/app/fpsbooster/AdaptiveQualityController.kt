@@ -72,7 +72,9 @@ class AdaptiveQualityController(
             QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
             QualityLevel("Balanced", 960, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
             QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false),
-            QualityLevel("Minimal", 480, 1280, FlowPyramid.COARSEST_RANGE, false) // only reachable with adaptive resolution on
+            // Only reachable with adaptive resolution on. Only the motion-search size shrinks: the shown frame stays at
+            // the video's own resolution (a 1280 px frame cap here made 1080p / 4K video visibly softer).
+            QualityLevel("Minimal", 480, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false)
         )
 
         fun indexFor(q: BoosterQuality) = when (q) {
