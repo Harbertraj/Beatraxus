@@ -3687,6 +3687,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Saved lyrics text (LRC or plain) for [song], read from the lyrics table; null when none is stored. */
+    suspend fun loadEditableLyrics(song: Song): String? = withContext(Dispatchers.IO) {
+        database.lyricsDao().getLyrics(song.id)?.lyrics?.takeIf { it.isNotBlank() }
+    }
+
     fun skipToPrevious() {
         service?.previous()
     }
