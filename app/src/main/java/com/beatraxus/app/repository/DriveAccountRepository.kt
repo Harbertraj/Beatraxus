@@ -93,7 +93,7 @@ class DriveAccountRepository(private val context: Context) {
     }
 
     suspend fun addAccount(account: DriveAccount) {
-        android.util.Log.d("DriveAccountRepo", "Adding account")
+        android.util.Log.d("DriveAccountRepo", "Adding account: ${account.email}")
         context.dataStore.edit { prefs ->
             val current = prefs[DRIVE_ACCOUNTS] ?: emptySet()
             // Remove any existing entry with the same email

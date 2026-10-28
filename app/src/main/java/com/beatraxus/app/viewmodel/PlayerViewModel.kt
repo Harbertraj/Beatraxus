@@ -5774,7 +5774,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _uiState.update { it.copy(isSubmittingTelegram = true, telegramAuthError = null) }
             try {
-                Log.d("TDLib", "Submitting phone number")
+                Log.d("TDLib", "Submitting phone number: $trimmedPhone")
                 tdLibManager.submitPhoneNumber(trimmedPhone)
             } catch (e: Exception) {
                 Log.e("TDLib", "submitPhoneNumber failed", e)

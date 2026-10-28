@@ -24,10 +24,6 @@ on:
     tags:
       - 'v*'
 
-# The build only needs to read the repo; do not hand the job a write-capable GITHUB_TOKEN.
-permissions:
-  contents: read
-
 jobs:
   build-release:
     name: Build Signed Release APKs

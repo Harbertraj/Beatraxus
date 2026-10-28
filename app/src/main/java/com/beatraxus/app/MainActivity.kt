@@ -643,7 +643,7 @@ fun BeatraxusApp(
         if (result.resultCode == Activity.RESULT_OK && result.data != null) {
             try {
                 val account = task?.getResult(ApiException::class.java)
-                Log.d("MainActivity", "Google sign in success")
+                Log.d("MainActivity", "Google sign in success: ${account?.email}")
                 if (account != null && account.email != null) {
                     viewModel.addDriveAccount(DriveAccount(
                         account.email!!,

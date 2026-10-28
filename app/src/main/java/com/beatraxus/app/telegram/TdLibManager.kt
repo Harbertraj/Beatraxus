@@ -307,7 +307,7 @@ class TdLibManager private constructor(
     }
 
     suspend fun submitPhoneNumber(phone: String): TdApi.Ok {
-        Log.d("TDLib", "submitPhoneNumber called (Ready: ${isReady()})")
+        Log.d("TDLib", "submitPhoneNumber called for $phone (Ready: ${isReady()})")
         return send(TdApi.SetAuthenticationPhoneNumber(phone, TdApi.PhoneNumberAuthenticationSettings()))
     }
 
