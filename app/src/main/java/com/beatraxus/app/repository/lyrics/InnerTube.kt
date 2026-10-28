@@ -20,7 +20,6 @@ import java.util.TimeZone
  */
 internal object InnerTube {
     const val MUSIC_ORIGIN = "https://music.youtube.com"
-    private const val MUSIC_KEY = "AIzaSyC9XL3ZjWddXya6X74dJoCTL-WEYFDNX30"
     const val WEB_USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/124.0.0.0 Safari/537.36"
@@ -46,7 +45,6 @@ internal object InnerTube {
             ?.newBuilder()
             ?.addQueryParameter("alt", "json")
             ?.addQueryParameter("prettyPrint", "false")
-            ?.addQueryParameter("key", MUSIC_KEY)
             ?.build() ?: return HttpResult(0, null)
         val headers = mapOf(
             "User-Agent" to WEB_USER_AGENT,
