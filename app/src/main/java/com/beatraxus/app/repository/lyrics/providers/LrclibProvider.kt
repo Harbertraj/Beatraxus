@@ -31,6 +31,10 @@ class LrclibProvider : LyricsProvider {
     override val requiresVideoId = false
     override val experimental = false
 
+    private companion object {
+        const val SYNCED_BONUS = 0.03
+    }
+
     private val lrcLibService = Retrofit.Builder()
         .baseUrl("https://lrclib.net/")
         .client(LyricsHttpClient.client)
@@ -41,18 +45,21 @@ class LrclibProvider : LyricsProvider {
     override suspend fun fetch(query: LyricsQuery): LyricsResult? = withContext(Dispatchers.IO) {
         val cleanTitle = query.cleanTitle
         val primaryArtist = query.primaryArtist
-        val durationSec = query.durationSec
+        // LRCLIB's /api/get rejects a request whose duration is not within ~2 s of the record, so an
+        // unknown duration (0) must be omitted, and a blank album must not be sent as album_name="".
+        val durationSec = query.durationSec.takeIf { it > 0 }
+        val album = query.album?.takeIf { it.isNotBlank() }
 
         // (1) api/get with primaryArtist + cleanTitle + album + durationSec
         val getRes1 = executeApi {
-            lrcLibService.getLyrics(primaryArtist, cleanTitle, query.album, durationSec)
+            lrcLibService.getLyrics(primaryArtist, cleanTitle, album, durationSec)
         }
         if (getRes1 != null && isValidResponse(getRes1) && isDurationAcceptable(query, getRes1)) {
             return@withContext createResultFromResponse(query, getRes1)
         }
 
         // (2) api/get with album=null
-        if (query.album != null) {
+        if (album != null) {
             val getRes2 = executeApi {
                 lrcLibService.getLyrics(primaryArtist, cleanTitle, null, durationSec)
             }
@@ -99,6 +106,8 @@ class LrclibProvider : LyricsProvider {
             throw e
         } catch (e: IOException) {
             throw LyricsTransientException(e.message, e)
+        } catch (e: com.google.gson.JsonParseException) {
+            return null // unreadable body: treat as "not found" so the later lookups still run
         } catch (e: Exception) {
             if (e is HttpException) {
                 val code = e.code()
@@ -128,8 +137,12 @@ class LrclibProvider : LyricsProvider {
             val score = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
             val isConfident = LyricsMatcher.isConfidentMatch(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
 
-            if (isConfident && score > bestScore) {
-                bestScore = score
+            // The same song often has several LRCLIB entries (some plain-only); a small bonus makes a
+            // synced entry win over an almost-equally-good plain one.
+            val rank = score + if (!item.syncedLyrics.isNullOrBlank()) SYNCED_BONUS else 0.0
+
+            if (isConfident && rank > bestScore) {
+                bestScore = rank
                 bestRes = item
             }
         }
@@ -142,7 +155,8 @@ class LrclibProvider : LyricsProvider {
     }
 
     private fun createResultFromResponse(query: LyricsQuery, res: LrcLibResponse): LyricsResult {
-        val synced = res.syncedLyrics
+        // An empty-string syncedLyrics is not null, so `synced ?: plain` used to return "" as the text.
+        val synced = res.syncedLyrics?.takeIf { it.isNotBlank() }
         val plain = res.plainLyrics ?: ""
 
         val type = when {

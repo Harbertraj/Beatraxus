@@ -11,7 +11,10 @@ import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.TtmlParser
 import com.beatraxus.app.repository.lyrics.cleanTitle
 import com.beatraxus.app.repository.lyrics.durationSec
+import com.beatraxus.app.repository.lyrics.isSuccessful
+import com.beatraxus.app.repository.lyrics.obj
 import com.beatraxus.app.repository.lyrics.primaryArtist
+import com.beatraxus.app.repository.lyrics.str
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -56,8 +59,11 @@ class UnisonProvider : LyricsProvider {
             ?.newBuilder()
             ?.addQueryParameter("song", title)
             ?.addQueryParameter("artist", artist)
-            ?.addQueryParameter("album", query.album ?: "")
-            ?.addQueryParameter("duration", query.durationSec.toString())
+            ?.apply {
+                // An empty album / zero duration is "unknown", not a value to match against.
+                if (!query.album.isNullOrBlank()) addQueryParameter("album", query.album)
+                if (query.durationSec > 0) addQueryParameter("duration", query.durationSec.toString())
+            }
             ?.build() ?: return null
 
         return fetchFromUrl(url)
@@ -69,23 +75,29 @@ class UnisonProvider : LyricsProvider {
 
         try {
             val root = JsonParser.parseString(body).asJsonObject
-            if (root.get("success")?.asBoolean != true) return null
+            if (!root.isSuccessful()) return null
 
-            val data = root.getAsJsonObject("data") ?: return null
-            val rawLyrics = data.get("lyrics")?.asString ?: return null
-            val format = data.get("format")?.asString?.lowercase() ?: "plain"
-            val syncType = data.get("syncType")?.asString?.lowercase() ?: "plain"
-            val confidence = data.get("confidence")?.asString?.lowercase() ?: "medium"
+            // Null-safe reads: a `null` field used to throw and discard an otherwise valid result.
+            val data = root.obj("data") ?: return null
+            val rawLyrics = data.str("lyrics")?.takeIf { it.isNotBlank() } ?: return null
+            val format = data.str("format")?.lowercase() ?: "plain"
+            val syncType = data.str("syncType")?.lowercase() ?: "plain"
+            val confidence = data.str("confidence")?.lowercase() ?: "medium"
 
-            val convertedLyrics = when (format) {
-                "ttml" -> TtmlParser.parseToEnhancedLrc(rawLyrics) ?: return null
-                else -> rawLyrics
+            val looksLikeTtml = format == "ttml" || rawLyrics.trimStart().startsWith("<tt")
+            val convertedLyrics = if (looksLikeTtml) {
+                TtmlParser.parseToEnhancedLrc(rawLyrics) ?: return null
+            } else {
+                rawLyrics
             }
 
+            // Decide the type from the content itself; relying only on the syncType label made timed
+            // LRC with an unexpected label show up as plain, unsynced text.
             val hasWordTags = LrcParser.WORD_TIME_PATTERN.matcher(convertedLyrics).find()
+            val hasLineTimes = syncType != "plain" && LrcParser.parse(convertedLyrics).any { it.isTimed }
             val type = when {
-                syncType == "richsync" || hasWordTags -> LyricsType.WORD_BY_WORD
-                syncType == "linesync" -> LyricsType.SYNCED
+                hasWordTags -> LyricsType.WORD_BY_WORD
+                hasLineTimes -> LyricsType.SYNCED
                 else -> LyricsType.PLAIN
             }
 

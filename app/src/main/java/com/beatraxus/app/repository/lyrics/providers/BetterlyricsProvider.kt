@@ -13,6 +13,9 @@ import com.beatraxus.app.repository.lyrics.TtmlParser
 import com.beatraxus.app.repository.lyrics.cleanTitle
 import com.beatraxus.app.repository.lyrics.durationSec
 import com.beatraxus.app.repository.lyrics.primaryArtist
+import com.beatraxus.app.repository.lyrics.jDouble
+import com.beatraxus.app.repository.lyrics.jLong
+import com.beatraxus.app.repository.lyrics.jStr
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -45,23 +48,27 @@ class BetterlyricsProvider : LyricsProvider {
             ?.newBuilder()
             ?.addQueryParameter("s", title)
             ?.addQueryParameter("a", artist)
-            ?.addQueryParameter("al", query.album ?: "")
-            ?.addQueryParameter("d", query.durationSec.toString())
+            ?.apply {
+                // Unknown album / duration are left out instead of being sent as "" / 0.
+                if (!query.album.isNullOrBlank()) addQueryParameter("al", query.album)
+                if (query.durationSec > 0) addQueryParameter("d", query.durationSec.toString())
+            }
             ?.build() ?: return null
 
         val res = LyricsHttp.get(url)
         val body = res.body ?: return null
 
         try {
-            val root = JsonParser.parseString(body).asJsonObject
-            val ttml = root.get("ttml")?.asString ?: return null
+            // Null-safe: a null trackName / artistName / score used to throw and drop valid TTML.
+            val root = JsonParser.parseString(body)
+            val ttml = root.jStr("ttml")?.takeIf { it.isNotBlank() } ?: return null
 
-            val candDurationMs = root.get("duration")?.asLong?.let { it * 1000L }
-            val candTrack = root.get("trackName")?.asString ?: title
-            val candArtist = root.get("artistName")?.asString ?: artist
+            val candDurationMs = root.jLong("duration")?.let { it * 1000L }
+            val candTrack = root.jStr("trackName") ?: title
+            val candArtist = root.jStr("artistName") ?: artist
 
             val computedScore = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
-            val rawScore = root.get("score")?.asDouble
+            val rawScore = root.jDouble("score")
             val finalScore = if (rawScore != null) (rawScore / 100.0).coerceIn(0.0, 1.0) else computedScore
 
             val lrc = TtmlParser.parseToEnhancedLrc(ttml) ?: return null

@@ -4,13 +4,15 @@ import android.util.Log
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
+import kotlinx.coroutines.CancellationException
 import kotlin.math.abs
 
 object VideoIdResolver {
     private const val TAG = "VideoIdResolver"
+
+    // YouTube Music search filters ("songs" = audio uploads, "videos" = official/lyric videos).
+    private const val PARAMS_SONGS = "EgWKAQIIAWoMEAMQBBAJEA4QChAF"
+    private const val PARAMS_VIDEOS = "EgWKAQIQAWoMEAMQBBAJEA4QChAF"
 
     private data class CacheEntry(val videoId: String?, val timestamp: Long)
 
@@ -36,8 +38,14 @@ object VideoIdResolver {
         cache[key] = CacheEntry(videoId, System.currentTimeMillis())
     }
 
-    suspend fun resolve(query: LyricsQuery): String? {
-        val key = "${LyricsMatcher.normalize(query.primaryArtist)}|${LyricsMatcher.normalize(query.cleanTitle)}|${query.durationSec}"
+    /**
+     * @param preferVideo search the "videos" filter instead of "songs". Auto-generated "Topic" audio
+     * uploads (what the songs filter returns) almost never carry caption tracks, so the captions
+     * provider needs the video version.
+     */
+    suspend fun resolve(query: LyricsQuery, preferVideo: Boolean = false): String? {
+        val key = "${LyricsMatcher.normalize(query.primaryArtist)}|${LyricsMatcher.normalize(query.cleanTitle)}|${query.durationSec}" +
+            if (preferVideo) "|v" else ""
         val cached = getFromCache(key)
         if (cached != null) {
             return if (cached.isEmpty()) null else cached
@@ -48,23 +56,15 @@ object VideoIdResolver {
             val primaryArtist = query.primaryArtist
             val searchQuery = "$cleanTitle $primaryArtist".trim()
 
-            val url = "https://music.youtube.com/youtubei/v1/search".toHttpUrlOrNull() ?: return null
-            val jsonBody = """
-                {
-                  "context": {
-                    "client": {
-                      "clientName": "WEB_REMIX",
-                      "clientVersion": "1.20240101.01.00"
-                    }
-                  },
-                  "query": "$searchQuery",
-                  "params": "EgWKAQIIAWoMEAMQBBAJEA4QChAF"
-                }
-            """.trimIndent()
-            val mediaType = "application/json".toMediaType()
-            val requestBody = jsonBody.toRequestBody(mediaType)
+            // Built with Gson: the old string template produced invalid JSON for any title/artist
+            // containing a quote or backslash, so those songs never resolved.
+            val jsonBody = com.google.gson.JsonObject().apply {
+                add("context", InnerTube.webRemixContext())
+                addProperty("query", searchQuery)
+                addProperty("params", if (preferVideo) PARAMS_VIDEOS else PARAMS_SONGS)
+            }
 
-            val res = LyricsHttp.post(url, requestBody, timeoutMs = 5000L)
+            val res = InnerTube.postMusic("search", jsonBody, timeoutMs = 5000L)
             val body = res.body ?: run {
                 putInCache(key, null)
                 return null
@@ -116,6 +116,8 @@ object VideoIdResolver {
 
             putInCache(key, bestVideoId)
             return bestVideoId
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Throwable) {
             Log.w(TAG, "Failed to resolve videoId: ${e.message}")
             return null

@@ -10,9 +10,13 @@ object LyricsHttpClient {
             .readTimeout(15, TimeUnit.SECONDS)
             .writeTimeout(15, TimeUnit.SECONDS)
             .addInterceptor { chain ->
-                val req = chain.request().newBuilder()
-                    .header("User-Agent", "Beatraxus Music Player (https://github.com/Harbertraj/Beatraxus)")
-                    .build()
+                // Only default the User-Agent: the YouTube providers must present a browser/app UA.
+                val original = chain.request()
+                val req = if (original.header("User-Agent") == null) {
+                    original.newBuilder()
+                        .header("User-Agent", "Beatraxus Music Player (https://github.com/Harbertraj/Beatraxus)")
+                        .build()
+                } else original
                 chain.proceed(req)
             }
             .build()

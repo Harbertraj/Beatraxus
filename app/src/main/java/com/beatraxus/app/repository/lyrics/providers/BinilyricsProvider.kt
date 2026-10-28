@@ -14,12 +14,19 @@ import com.beatraxus.app.repository.lyrics.TtmlParser
 import com.beatraxus.app.repository.lyrics.cleanTitle
 import com.beatraxus.app.repository.lyrics.durationSec
 import com.beatraxus.app.repository.lyrics.primaryArtist
+import com.beatraxus.app.repository.lyrics.jArr
+import com.beatraxus.app.repository.lyrics.jLong
+import com.beatraxus.app.repository.lyrics.jStr
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class BinilyricsProvider : LyricsProvider {
+    private companion object {
+        const val MAX_TTML_DOWNLOADS = 3
+    }
+
     override val id = "binilyrics"
     override val displayName = "BiniLyrics"
     override val description = "Apple Music word timings (TTML)"
@@ -60,38 +67,36 @@ class BinilyricsProvider : LyricsProvider {
         val body = res.body ?: return null
 
         try {
-            val root = JsonParser.parseString(body).asJsonObject
-            val results = root.getAsJsonArray("results") ?: return null
+            val results = JsonParser.parseString(body).jArr("results") ?: return null
             if (results.size() == 0) return null
 
-            var bestResult: LyricsResult? = null
-            var bestScore = -1.0
+            // Rank the candidates by their metadata FIRST and only download the TTML of the best few.
+            // It used to download and parse the TTML of every result one after another, which blew
+            // through the provider's 8 s budget whenever the server returned more than a couple.
+            data class Candidate(val lyricsUrl: okhttp3.HttpUrl, val score: Double)
 
-            for (i in 0 until results.size()) {
-                val item = results.get(i).asJsonObject
-                val lyricsUrlStr = item.get("lyricsUrl")?.asString ?: continue
-                val lyricsUrl = lyricsUrlStr.toHttpUrlOrNull() ?: continue
+            val candidates = results.mapNotNull { item ->
+                val lyricsUrl = item.jStr("lyricsUrl")?.toHttpUrlOrNull() ?: return@mapNotNull null
+                val candTrack = item.jStr("track") ?: item.jStr("title") ?: title
+                val candArtist = item.jStr("artist") ?: artist
+                val candDurationMs = item.jLong("duration")?.let { it * 1000L }
+                Candidate(
+                    lyricsUrl,
+                    LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
+                )
+            }.sortedByDescending { it.score }.take(MAX_TTML_DOWNLOADS)
 
-                val candTrack = item.get("track")?.asString ?: item.get("title")?.asString ?: title
-                val candArtist = item.get("artist")?.asString ?: artist
-                val candDurationMs = item.get("duration")?.asLong?.let { it * 1000L }
-
-                val ttmlRes = LyricsHttp.get(lyricsUrl)
-                val ttml = ttmlRes.body ?: continue
+            for (cand in candidates) {
+                val ttml = LyricsHttp.get(cand.lyricsUrl).body ?: continue
 
                 val lrc = TtmlParser.parseToEnhancedLrc(ttml) ?: continue
                 val hasWordTags = LrcParser.WORD_TIME_PATTERN.matcher(lrc).find() || ttml.contains(Regex("<\\d{1,3}:\\d{2}"))
                 val type = if (hasWordTags) LyricsType.WORD_BY_WORD else LyricsType.SYNCED
 
-                val score = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTrack, candArtist, candDurationMs)
-
-                if (score > bestScore) {
-                    bestScore = score
-                    bestResult = LyricsResult(type, lrc, score)
-                }
+                return LyricsResult(type, lrc, cand.score)
             }
 
-            return bestResult
+            return null
         } catch (e: LyricsTransientException) {
             throw e
         } catch (e: Exception) {

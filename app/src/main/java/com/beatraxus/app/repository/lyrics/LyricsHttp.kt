@@ -8,10 +8,18 @@ import okhttp3.HttpUrl
 import okhttp3.Request
 import okhttp3.RequestBody
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 
 data class HttpResult(val code: Int, val body: String?)
 
 object LyricsHttp {
+    // OkHttp's execute() is a blocking call that coroutine cancellation cannot interrupt, so
+    // withTimeout alone let a stalled request hold its thread and semaphore permit for the full
+    // 15 s read timeout. callTimeout makes OkHttp itself abort the call at the deadline.
+    private fun clientFor(timeoutMs: Long) = LyricsHttpClient.client.newBuilder()
+        .callTimeout(timeoutMs, TimeUnit.MILLISECONDS)
+        .build()
+
     suspend fun get(
         url: HttpUrl,
         headers: Map<String, String> = emptyMap(),
@@ -23,7 +31,7 @@ object LyricsHttp {
 
         try {
             withTimeout(timeoutMs) {
-                LyricsHttpClient.client.newCall(req).execute().use { resp ->
+                clientFor(timeoutMs).newCall(req).execute().use { resp ->
                     val code = resp.code
                     when {
                         code == 404 || code == 401 || code == 204 || code == 422 -> HttpResult(code, null)
@@ -54,7 +62,7 @@ object LyricsHttp {
 
         try {
             withTimeout(timeoutMs) {
-                LyricsHttpClient.client.newCall(req).execute().use { resp ->
+                clientFor(timeoutMs).newCall(req).execute().use { resp ->
                     val code = resp.code
                     when {
                         code == 404 || code == 401 || code == 204 || code == 422 -> HttpResult(code, null)

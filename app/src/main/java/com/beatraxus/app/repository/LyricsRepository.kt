@@ -306,7 +306,7 @@ class LyricsRepository(
                 }
 
                 semaphore.withPermit {
-                    val timeoutMs = if (provider.id == "paxsenix") 12_000L else 8_000L
+                    val timeoutMs = if (provider.id == "paxsenix" || provider.id == "youtube_captions") 12_000L else 8_000L
                     val startTime = System.currentTimeMillis()
                     var status = "miss"
                     var typeStr = "-"

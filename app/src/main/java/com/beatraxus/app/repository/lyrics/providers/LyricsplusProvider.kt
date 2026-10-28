@@ -12,6 +12,9 @@ import com.beatraxus.app.repository.lyrics.LyricsQuery
 import com.beatraxus.app.repository.lyrics.cleanTitle
 import com.beatraxus.app.repository.lyrics.durationSec
 import com.beatraxus.app.repository.lyrics.primaryArtist
+import com.beatraxus.app.repository.lyrics.jArr
+import com.beatraxus.app.repository.lyrics.jLong
+import com.beatraxus.app.repository.lyrics.jStr
 import com.google.gson.JsonArray
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
@@ -50,36 +53,40 @@ class LyricsplusProvider : LyricsProvider {
                 ?.newBuilder()
                 ?.addQueryParameter("title", title)
                 ?.addQueryParameter("artist", artist)
-                ?.addQueryParameter("album", query.album ?: "")
-                ?.addQueryParameter("duration", query.durationSec.toString())
+                ?.apply {
+                    // Unknown album / duration are left out instead of being sent as "" / 0.
+                    if (!query.album.isNullOrBlank()) addQueryParameter("album", query.album)
+                    if (query.durationSec > 0) addQueryParameter("duration", query.durationSec.toString())
+                }
                 ?.build() ?: continue
 
             val res = LyricsHttp.get(url)
             val body = res.body ?: continue
 
             try {
-                val root = JsonParser.parseString(body).asJsonObject
-                val lyricsArray = root.getAsJsonArray("lyrics") ?: run {
+                val root = JsonParser.parseString(body)
+                val lyricsArray = root.jArr("lyrics") ?: run {
                     Log.w("LyricsProvider", "$id parse failed: ${body.take(300)}")
                     return null
                 }
 
                 if (lyricsArray.size() == 0) continue
 
-                val candDurationMs = root.get("duration")?.asLong?.let { it * 1000L }
+                val candDurationMs = root.jLong("duration")?.let { it * 1000L }
 
                 val sb = StringBuilder()
+                val plainSb = StringBuilder()
                 var hasWordTimings = false
                 var hasLineTimings = false
 
-                for (i in 0 until lyricsArray.size()) {
-                    val lineObj = lyricsArray[i].asJsonObject
-                    val lineTime = lineObj.get("time")?.asLong ?: 0L
+                for (el in lyricsArray) {
+                    if (!el.isJsonObject) continue
+                    val lineTime = el.jLong("time") ?: 0L
                     if (lineTime > 0) hasLineTimings = true
 
-                    val lineText = lineObj.get("text")?.asString ?: ""
+                    val lineText = el.jStr("text") ?: ""
 
-                    val sylArray = lineObj.getAsJsonArray("syllabus") ?: lineObj.getAsJsonArray("syllables")
+                    val sylArray = el.jArr("syllabus") ?: el.jArr("syllables")
                     if (sylArray != null && sylArray.size() > 0) {
                         val words = groupSyllables(sylArray, lineTime)
                         if (words.isNotEmpty()) {
@@ -91,10 +98,13 @@ class LyricsplusProvider : LyricsProvider {
 
                     if (lineText.isNotEmpty()) {
                         sb.append("[${EnhancedLrc.formatLrcTime(lineTime)}]$lineText\n")
+                        plainSb.append(lineText).append("\n")
                     }
                 }
 
-                val resultText = sb.toString().trim()
+                val timed = hasWordTimings || hasLineTimings
+                // Untimed lyrics used to be returned as a wall of "[00:00.00]" tags.
+                val resultText = (if (timed) sb else plainSb).toString().trim()
                 if (resultText.isEmpty()) continue
 
                 val type = when {
@@ -117,9 +127,10 @@ class LyricsplusProvider : LyricsProvider {
     private fun groupSyllables(sylArray: JsonArray, defaultTimeMs: Long): List<Pair<Long, String>> {
         val syls = mutableListOf<Syl>()
         for (i in 0 until sylArray.size()) {
-            val item = sylArray[i].asJsonObject
-            val text = item.get("text")?.asString ?: ""
-            val time = item.get("time")?.asLong ?: defaultTimeMs
+            val item = sylArray[i]
+            if (!item.isJsonObject) continue
+            val text = item.jStr("text") ?: ""
+            val time = item.jLong("time") ?: defaultTimeMs
             if (text.isNotEmpty()) {
                 syls.add(Syl(time, text))
             }

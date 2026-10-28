@@ -10,11 +10,18 @@ import com.beatraxus.app.repository.lyrics.LyricsHttp
 import com.beatraxus.app.repository.lyrics.LyricsMatcher
 import com.beatraxus.app.repository.lyrics.LyricsProvider
 import com.beatraxus.app.repository.lyrics.LyricsQuery
+import com.beatraxus.app.repository.lyrics.LyricsTransientException
 import com.beatraxus.app.repository.lyrics.cleanTitle
+import com.beatraxus.app.repository.lyrics.jArr
+import com.beatraxus.app.repository.lyrics.jBool
+import com.beatraxus.app.repository.lyrics.jLong
+import com.beatraxus.app.repository.lyrics.jStr
 import com.beatraxus.app.repository.lyrics.primaryArtist
 import com.google.gson.JsonArray
 import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import kotlin.math.abs
@@ -45,24 +52,49 @@ class PaxsenixProvider : LyricsProvider {
 
     private suspend fun fetchForTitleArtist(query: LyricsQuery, title: String, artist: String, apiKey: String): LyricsResult? {
         if (title.isBlank() || artist.isBlank()) return null
-        
+
+        // A rate limit / server error from the keyed API used to abort the whole provider, so the
+        // free iTunes + legacy path below was never even tried. Fall through to it instead, and only
+        // re-raise the transient error afterwards if that path finds nothing either.
+        var transient: LyricsTransientException? = null
         if (apiKey.isNotEmpty()) {
-            val res = fetchWithNewApi(query, title, artist, apiKey)
-            if (res != null) return res
+            try {
+                fetchWithNewApi(query, title, artist, apiKey)?.let { return it }
+            } catch (e: LyricsTransientException) {
+                transient = e
+            }
         }
 
-        var match = searchiTunes(title, artist, "IN", query)
-        if (match == null) {
-            match = searchiTunes(title, artist, "US", query)
+        val legacy = try {
+            fetchLegacy(query, title, artist)
+        } catch (e: LyricsTransientException) {
+            throw transient ?: e
         }
-        if (match == null) return null
+        if (legacy != null) return legacy
+        if (transient != null) throw transient
+        return null
+    }
+
+    private suspend fun fetchLegacy(query: LyricsQuery, title: String, artist: String): LyricsResult? {
+        // The two storefront searches are independent; they ran one after the other (up to 10 s).
+        // One storefront timing out must not discard the other storefront's answer.
+        val searches = coroutineScope {
+            listOf("IN", "US")
+                .map { country -> async { runCatching { searchiTunes(title, artist, country, query) } } }
+                .map { it.await() }
+        }
+        val match = searches.firstNotNullOfOrNull { it.getOrNull() }
+        if (match == null) {
+            searches.firstNotNullOfOrNull { it.exceptionOrNull() as? LyricsTransientException }?.let { throw it }
+            return null
+        }
 
         val lyricsUrl = "https://lyrics.paxsenix.org/apple-music/lyrics".toHttpUrlOrNull()
             ?.newBuilder()
             ?.addQueryParameter("id", match.trackId.toString())
             ?.build() ?: return null
 
-        val res = LyricsHttp.get(lyricsUrl, timeoutMs = 10000L)
+        val res = LyricsHttp.get(lyricsUrl, timeoutMs = 8000L)
         val body = res.body ?: return null
 
         try {
@@ -81,21 +113,25 @@ class PaxsenixProvider : LyricsProvider {
             ?.build() ?: return null
 
         val headers = mapOf("Authorization" to "Bearer $apiKey")
-        val searchRes = LyricsHttp.get(searchUrl, headers = headers, timeoutMs = 10000L)
+        val searchRes = LyricsHttp.get(searchUrl, headers = headers, timeoutMs = 6000L)
         val searchBody = searchRes.body ?: return null
         
         var trackId: String? = null
         var bestScore = 0.0
 
         try {
-            val rootArray = JsonParser.parseString(searchBody).asJsonArray
-            for (i in 0 until rootArray.size()) {
-                val item = rootArray[i].asJsonObject
-                val candId = item.get("id")?.asString ?: item.get("trackId")?.asString ?: continue
-                val candTitle = item.get("name")?.asString ?: item.get("title")?.asString ?: ""
-                
-                val candArtist = item.get("artistName")?.asString ?: ""
-                val candDurationMs = item.get("durationInMillis")?.asLong ?: 0L
+            // The search answer is a bare array, but tolerate {"results"|"data"|"songs": [...]} too.
+            val parsed = JsonParser.parseString(searchBody)
+            val items = (if (parsed.isJsonArray) parsed.asJsonArray else null)
+                ?: parsed.jArr("results") ?: parsed.jArr("data") ?: parsed.jArr("songs")
+                ?: JsonArray()
+            for (item in items) {
+                if (!item.isJsonObject) continue
+                val candId = item.jStr("id") ?: item.jStr("trackId") ?: continue
+                val candTitle = item.jStr("name") ?: item.jStr("title") ?: ""
+
+                val candArtist = item.jStr("artistName") ?: ""
+                val candDurationMs = item.jLong("durationInMillis") ?: 0L
 
                 val isConfident = LyricsMatcher.isConfidentMatch(query.title, query.artist, query.durationMs, candTitle, candArtist, candDurationMs)
                 val score = LyricsMatcher.score(query.title, query.artist, query.durationMs, candTitle, candArtist, candDurationMs)
@@ -113,7 +149,7 @@ class PaxsenixProvider : LyricsProvider {
             ?.addQueryParameter("id", trackId)
             ?.build() ?: return null
 
-        val lyricsRes = LyricsHttp.get(lyricsUrl, headers = headers, timeoutMs = 10000L)
+        val lyricsRes = LyricsHttp.get(lyricsUrl, headers = headers, timeoutMs = 6000L)
         val lyricsBody = lyricsRes.body ?: return null
 
         try {
@@ -125,19 +161,19 @@ class PaxsenixProvider : LyricsProvider {
     }
 
     private fun parseLegacyLyrics(body: String, matchScore: Double): LyricsResult? {
-        val root = JsonParser.parseString(body).asJsonObject
+        val root = JsonParser.parseString(body)
 
-        val contentArray = root.getAsJsonArray("content")
+        val contentArray = root.jArr("content")
         if (contentArray != null && contentArray.size() > 0) {
             val sb = StringBuilder()
             var hasNonZeroTime = false
 
-            for (i in 0 until contentArray.size()) {
-                val lineObj = contentArray[i].asJsonObject
-                val lineTime = lineObj.get("timestamp")?.asLong ?: 0L
+            for (lineObj in contentArray) {
+                if (!lineObj.isJsonObject) continue
+                val lineTime = lineObj.jLong("timestamp") ?: 0L
                 if (lineTime > 0) hasNonZeroTime = true
 
-                val mainTextArray = lineObj.getAsJsonArray("text")
+                val mainTextArray = lineObj.jArr("text")
                 if (mainTextArray != null && mainTextArray.size() > 0) {
                     val mainWords = parsePartsToWords(mainTextArray, lineTime)
                     if (mainWords.isNotEmpty()) {
@@ -145,7 +181,7 @@ class PaxsenixProvider : LyricsProvider {
                     }
                 }
 
-                val bgTextArray = lineObj.getAsJsonArray("backgroundText")
+                val bgTextArray = lineObj.jArr("backgroundText")
                 if (bgTextArray != null && bgTextArray.size() > 0) {
                     val bgWords = parsePartsToWords(bgTextArray, lineTime)
                     if (bgWords.isNotEmpty()) {
@@ -168,12 +204,12 @@ class PaxsenixProvider : LyricsProvider {
             }
         }
 
-        val lrc = root.get("lrc")?.asString
+        val lrc = root.jStr("lrc")
         if (!lrc.isNullOrBlank()) {
             return LyricsResult(LyricsType.SYNCED, lrc, matchScore)
         }
 
-        val plain = root.get("plain")?.asString
+        val plain = root.jStr("plain")
         if (!plain.isNullOrBlank()) {
             return LyricsResult(LyricsType.PLAIN, plain, matchScore)
         }
@@ -195,18 +231,18 @@ class PaxsenixProvider : LyricsProvider {
         val body = res.body ?: return null
 
         try {
-            val root = JsonParser.parseString(body).asJsonObject
-            val results = root.getAsJsonArray("results") ?: return null
+            val results = JsonParser.parseString(body).jArr("results") ?: return null
 
             var bestMatch: iTunesMatch? = null
             var bestScore = 0.0
 
             for (i in 0 until results.size()) {
-                val item = results[i].asJsonObject
-                val trackId = item.get("trackId")?.asLong ?: continue
-                val trackName = item.get("trackName")?.asString ?: ""
-                val artistName = item.get("artistName")?.asString ?: ""
-                val trackTimeMs = item.get("trackTimeMillis")?.asLong
+                val item = results[i]
+                if (!item.isJsonObject) continue
+                val trackId = item.jLong("trackId") ?: continue
+                val trackName = item.jStr("trackName") ?: ""
+                val artistName = item.jStr("artistName") ?: ""
+                val trackTimeMs = item.jLong("trackTimeMillis")
 
                 if (trackTimeMs != null && query.durationMs > 0 && abs(query.durationMs - trackTimeMs) > 12000) {
                     continue
@@ -230,10 +266,11 @@ class PaxsenixProvider : LyricsProvider {
     private fun parsePartsToWords(partsArray: JsonArray, lineDefaultTime: Long): List<Pair<Long, String>> {
         val parts = mutableListOf<PartObj>()
         for (i in 0 until partsArray.size()) {
-            val item = partsArray[i].asJsonObject
-            val text = item.get("text")?.asString ?: ""
-            val timestamp = item.get("timestamp")?.asLong ?: lineDefaultTime
-            val isPart = item.get("part")?.asBoolean ?: false
+            val item = partsArray[i]
+            if (!item.isJsonObject) continue
+            val text = item.jStr("text") ?: ""
+            val timestamp = item.jLong("timestamp") ?: lineDefaultTime
+            val isPart = item.jBool("part") ?: false
             if (text.isNotEmpty()) {
                 parts.add(PartObj(text, timestamp, isPart))
             }
