@@ -1601,6 +1601,10 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
                     _songs.value = sortedSongs
 
+                    // Counts were only computed after a scan, so they showed 0 (songs/albums/artists)
+                    // after every app restart. Derive them from the library we just loaded.
+                    updateLibraryCounts(sortedSongs.filter { it.source == SongSource.LOCAL })
+
                     // Restore last queue and playing song
                     val lastSongId = prefs?.getString("last_song_id", null)
                     val lastQueueIds = prefs?.getString("last_queue_ids", null)?.split(",")?.filter { it.isNotBlank() }
