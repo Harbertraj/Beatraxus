@@ -170,15 +170,16 @@ fun buildPipelineStages(song: Song, uiState: PlayerUiState): PipelineResult {
     )
 
     // 2. DECODER
-    val isAlac = rawCodec.contains("ALAC")
+    val isFlac = rawCodec.contains("FLAC") || rawCodec.contains("flac")
+    val isAlac = rawCodec.contains("ALAC") || rawCodec.contains("alac")
     val isDsd = rawCodec.contains("DSD") || rawCodec.contains("DSF") || rawCodec.contains("DFF")
     val decoderEngine = when {
         isAlac -> "FFmpeg ALAC Decoder"
         isDsd -> "FFmpeg DSD Decoder"
-        rawCodec.contains("FLAC") -> "Android MediaCodec (FLAC)"
+        isFlac -> "FFmpeg FLAC Decoder"
         else -> "Android MediaCodec"
     }
-    val decoderExec = if (isAlac || isDsd) "Software (FFmpeg)" else "Hardware / System"
+    val decoderExec = if (isAlac || isDsd || isFlac) "Software (FFmpeg)" else "Hardware / System"
     val decoderPrimary = "$decoderEngine · PCM f32 / ${formatSampleRate(inputSr)}"
     stages.add(
         PipelineStage(

@@ -68,20 +68,20 @@ internal class DecoderFactory(
 
         val isM4A = format == "m4a" || format == "mp4"
         val isWav = format.contains("wav")
-        val isFlac = format.contains("flac")
+        val isFlac = format.contains("flac") || fileExt == "flac"
 
         // 1. Cloud routing
         if (isCloud) {
-            // FFmpeg is much more robust for ALAC and WAV (especially over network)
+            // FFmpeg is much more robust for FLAC, ALAC and WAV (especially over network)
             // We route Telegram lossless formats here to ensure stability with Head+Tail streaming.
             val isTelegramLossless = song.source == SongSource.TELEGRAM && (isAlac || isWav || isFlac)
             
-            if (isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || isTelegramLossless) {
+            if (isFlac || isExplicitAlac || isDolbyOrDts || isDsd || (isWav && song.source != SongSource.TELEGRAM) || isTelegramLossless) {
                 val reason = when {
                     isDolbyOrDts -> format.uppercase()
                     isDsd -> "DSD"
+                    isFlac -> "FLAC"
                     isExplicitAlac || (isTelegramLossless && isAlac) -> "ALAC"
-                    isTelegramLossless && isFlac -> "FLAC"
                     else -> "WAV"
                 }
                 Log.i(TAG, "Routing Cloud ($reason) to FFmpeg: ${song.title}")
@@ -109,7 +109,7 @@ internal class DecoderFactory(
             // TelegramChannelRepository.detectAudioFormat), the isAlac/isWav checks above are
             // sufficient without an extra network round-trip per song.
 
-            // Most other cloud files (AAC, FLAC, MP3) should use MediaCodec for better streaming
+            // Most other cloud files (AAC, MP3) should use MediaCodec for better streaming
             Log.d(TAG, "Routing to MediaCodec (Cloud): ${song.title} [format=$format]")
             return mediaCodecDecoder
         }
