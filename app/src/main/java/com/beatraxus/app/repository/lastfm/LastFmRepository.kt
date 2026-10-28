@@ -24,8 +24,12 @@ class LastFmRepository(private val context: Context) {
     private val sharedSecret = BuildConfig.LASTFM_SECRET
 
     private val service: LastFmService by lazy {
+        // Release builds must not log request/response bodies: they carry the API key,
+        // session key and signature. Logging is kept only for debug builds.
         val logging = HttpLoggingInterceptor().apply {
-            level = HttpLoggingInterceptor.Level.BODY
+            level = if (BuildConfig.DEBUG) HttpLoggingInterceptor.Level.BODY
+                    else HttpLoggingInterceptor.Level.NONE
+            redactHeader("Authorization")
         }
         val client = OkHttpClient.Builder()
             .addInterceptor(logging)
@@ -120,9 +124,10 @@ class LastFmRepository(private val context: Context) {
         )
         val sig = generateSignature(params)
         return try {
-            Log.d(TAG, "Fetching session for token: $token")
+            Log.d(TAG, "Fetching Last.fm session")
             val response = service.getSession(apiKey = apiKey, token = token, apiSig = sig)
-            Log.d(TAG, "Session response: ${response.session}")
+            // The session key is a long-lived credential: never log it.
+            Log.d(TAG, "Session response received: ${response.session != null}")
             response.session?.also {
                 saveSession(it.name, it.key)
             }

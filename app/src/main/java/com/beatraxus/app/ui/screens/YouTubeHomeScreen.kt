@@ -329,6 +329,9 @@ private fun YouTubePlayer(videoId: String, fullscreen: FullscreenController, mod
                 settings.domStorageEnabled = true
                 settings.mediaPlaybackRequiresUserGesture = false
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
+                // The player only needs the network: no local file or content:// access.
+                settings.allowFileAccess = false
+                settings.allowContentAccess = false
                 CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                 addJavascriptInterface(YouTubeJsBridge(main) { code -> currentOnError(code) }, "Android")
                 webViewClient = object : WebViewClient() {

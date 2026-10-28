@@ -237,7 +237,7 @@ object CastManager {
             return
         }
 
-        Log.d(TAG, "Attempting to load media: $streamUrl (startPositionMs=$startPositionMs)")
+        Log.d(TAG, "Attempting to load media: ${streamUrl.substringBefore('?')} (startPositionMs=$startPositionMs)")
 
         val musicMetadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply {
             putString(MediaMetadata.KEY_TITLE, song.title)
@@ -346,7 +346,7 @@ object CastManager {
             .setCurrentTime(if (isLive) 0L else startPositionMs.coerceAtLeast(0L))
             .build()
 
-        Log.d(TAG, "Casting video: $url ($contentType, start=$startPositionMs)")
+        Log.d(TAG, "Casting video: ${url.substringBefore('?')} ($contentType, start=$startPositionMs)")
         remoteMediaClient.load(loadRequest).setResultCallback { result ->
             if (!result.status.isSuccess) {
                 Log.e(TAG, "Failed to load video: ${result.status.statusMessage} (Code: ${result.status.statusCode})")

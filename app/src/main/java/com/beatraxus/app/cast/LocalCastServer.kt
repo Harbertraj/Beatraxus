@@ -29,6 +29,28 @@ object LocalCastServer {
 
     var currentSong: Song? = null
 
+    /**
+     * Random secret that has to accompany every request (as `?t=...`). The URLs handed to the Cast
+     * device carry it, so the TV can play, but other devices on the same Wi-Fi can no longer fetch
+     * the song/video being cast (which can be a cloud file streamed with the user's own tokens).
+     */
+    private val accessToken: String by lazy {
+        val bytes = ByteArray(16)
+        java.security.SecureRandom().nextBytes(bytes)
+        bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    private fun isAuthorized(query: String): Boolean {
+        val supplied = query.split('&')
+            .firstOrNull { it.startsWith("t=") }
+            ?.substring(2)
+            ?: return false
+        return java.security.MessageDigest.isEqual(
+            supplied.toByteArray(Charsets.UTF_8),
+            accessToken.toByteArray(Charsets.UTF_8)
+        )
+    }
+
     /** Feature 26: the local video the Chromecast is currently streaming from this phone (served at /video). */
     @Volatile
     var currentVideo: Video? = null
@@ -82,7 +104,7 @@ object LocalCastServer {
             }
             
             val url = getUrl(context)
-            Log.d(TAG, "Server started on $url")
+            Log.d(TAG, "Server started on ${url?.substringBefore('?')}")
             return url
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start server", e)
@@ -113,14 +135,14 @@ object LocalCastServer {
         currentVideo = video
         if (!isRunning && start(context) == null) return null
         val ip = getLocalIpAddress(context) ?: return null
-        return "http://$ip:$port/video?vid=${java.net.URLEncoder.encode(video.id, "UTF-8")}"
+        return "http://$ip:$port/video?vid=${java.net.URLEncoder.encode(video.id, "UTF-8")}&t=$accessToken"
     }
 
     private fun getUrl(context: Context): String? {
         return try {
             val ip = getLocalIpAddress(context)
             val sid = currentSong?.id
-            if (ip != null) "http://$ip:$port/stream${if (sid != null) "?sid=$sid" else ""}" else null
+            if (ip != null) "http://$ip:$port/stream?${if (sid != null) "sid=$sid&" else ""}t=$accessToken" else null
         } catch (e: Exception) {
             null
         }
@@ -132,7 +154,7 @@ object LocalCastServer {
         // Without this, the Cast receiver / TV image cache keeps showing the first
         // album art it ever loaded from this fixed "/art" endpoint.
         val sid = currentSong?.id
-        return "http://$ip:$port/art${if (sid != null) "?sid=$sid" else ""}"
+        return "http://$ip:$port/art?${if (sid != null) "sid=$sid&" else ""}t=$accessToken"
     }
 
     private fun getLocalIpAddress(context: Context): String? {
@@ -200,6 +222,8 @@ object LocalCastServer {
     private fun handleRequest(context: Context, socket: Socket) {
         threadPool.execute {
             try {
+                // A client that connects and then stays silent must not hold a thread forever.
+                socket.soTimeout = 30_000
                 val input = socket.getInputStream()
                 val reader = input.bufferedReader()
                 val requestLine = reader.readLine()
@@ -213,6 +237,12 @@ object LocalCastServer {
                 val path = fullPath.substringBefore('?')
                 val query = fullPath.substringAfter('?', "")
                 val output = socket.getOutputStream()
+
+                if (!isAuthorized(query)) {
+                    Log.w(TAG, "Rejecting request without a valid access token")
+                    sendError(output, 403, "Forbidden")
+                    return@execute
+                }
 
                 if (path.startsWith("/video")) {
                     serveVideo(context, reader, output, query)
