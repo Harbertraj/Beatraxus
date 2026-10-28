@@ -81,7 +81,7 @@ class FpsBoosterManager(
         listener.onStats(
             BoosterStats(
                 running = fallback == null,
-                engine = BoosterEngine.OPTICAL_FLOW,
+                engine = plan.engine,
                 sourceFps = sourceFps,
                 targetFps = plan.targetFps,
                 renderedFps = w.renderedFps,

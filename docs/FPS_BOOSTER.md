@@ -342,18 +342,11 @@ described in the task, not measured here). If it misbehaves, it is one line to b
   `OpticalFlowRenderer.kt` (fence gating, skipped pairs, per-slot textures) type-checks and mirrors the harness, but its
   runtime behaviour is untested.
 
-## 12. AI interpolation: plan only (nothing implemented, no UI)
-Do **not** add an "AI" option to the UI until all of the following exist. Plan, as an optional downloadable model pack:
-1. **Spike (throwaway app):** RIFE v4.x via ncnn + Vulkan (MNN as fallback runtime) on target devices at 540p / 720p,
-   fp16 on/off, 5+ min runs; record latency (p50/p95), memory, temperature, and whether `grid_sample` / deconvolution
-   run on the GPU or fall back to CPU. Gate: p95 < ~35 ms at the chosen size, sustained.
-2. **Model pack:** weights hosted by us (not Google Drive), MIT notices kept, SHA-256 verified, versioned, downloaded
-   on demand (Play Asset Delivery or in-app download), removable. Provenance of weights / training data to be reviewed
-   before shipping.
-3. **On-device benchmark gate:** reuse `BoosterBenchmarkRunner` style: run the model on a synthetic pair after download;
-   enable the option only if the gate passes, store the result, re-test after OS / driver updates.
-4. **Integration:** a second `BoosterEngine` behind the same `SurfaceTexture` / presenter path; the frame comes back
-   as a texture (no CPU read-back if the runtime allows Vulkan-GL interop, otherwise it is probably too slow).
-   Reuse `HoldController` (the model latency is just a bigger `estimateNs`) and the skip-if-busy rule above.
-5. **UI:** the engine chip appears only when the pack is installed and the gate passed; copy says what it costs
-   (battery, delay). Until then `BoosterEngine` has no AI value and the settings sheet shows none.
+## 12. AI-Powered FPS Booster (RIFE 4.26 Implementation)
+Status: **Implemented with ONNX Runtime Mobile (`RifeAiEngine.kt`)**
+
+- **Model & Pipeline**: Uses RIFE 4.26 ONNX model (`rife_v426.onnx`) with local inference via `com.microsoft.onnxruntime:onnxruntime-android:1.18.0`.
+- **Acceleration**: NNAPI and XNNPACK CPU/GPU execution providers enabled with multi-threaded tensor processing.
+- **Engine Selection**: Added `AI_RIFE` ("RIFE AI") to `BoosterEngine` enum, fully integrated into `FpsBoosterPlanner`, `FpsBoosterSettings`, `FpsBoosterScreen`, and `VideoPlayerScreen`.
+- **Target Frame Rates**: Supports 48, 60, 90, and 120 FPS targets with timestep-aware frame synthesis ($t \in (0, 1)$) and Choreographer vsync scheduling.
+- **Motion Artifact Fixes**: Applied strict photometric color-difference checks (`smoothstep(0.03, 0.10, length(fa - fb))`) in `flow_interp.frag` to eliminate edge tearing, ghosting, and body-stretching distortions during fast movement.

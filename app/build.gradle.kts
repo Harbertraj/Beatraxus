@@ -327,10 +327,11 @@ dependencies {
     // Play Together: same-place song transfer (Bluetooth / Wi-Fi Direct)
     implementation("com.google.android.gms:play-services-nearby:19.3.0")
     
-    // TensorFlow Lite
+    // TensorFlow Lite & ONNX Runtime Mobile for AI Inference
     implementation("org.tensorflow:tensorflow-lite:2.16.1")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
     implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.18.0")
 
     implementation("com.google.apis:google-api-services-drive:v3-rev20240903-2.0.0") {
         exclude(group = "org.apache.httpcomponents")

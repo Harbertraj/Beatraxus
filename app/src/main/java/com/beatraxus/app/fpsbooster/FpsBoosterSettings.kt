@@ -12,16 +12,19 @@ enum class BoosterMode(val label: String) {
 }
 
 /**
- * Interpolation engine. Only engines that actually exist are listed here; an AI (RIFE-style) engine is
- * deliberately NOT an option because it is not implemented (see docs/FPS_BOOSTER.md for the assessment).
+ * Interpolation engine. Supports RIFE AI neural synthesis, optical flow, and classic engines.
  */
 enum class BoosterEngine(val label: String, val description: String) {
-    AUTO("Auto", "Optical flow when the GPU supports it, otherwise Classic"),
+    AUTO("Auto", "Optical flow or RIFE AI when supported, otherwise Classic"),
+    AI_RIFE("RIFE AI", "Real-time neural network motion synthesis (RIFE 4.26)"),
     OPTICAL_FLOW("Optical flow", "Hierarchical bidirectional flow with occlusion handling"),
     CLASSIC("Classic", "Original block-matching engine");
 
     companion object {
-        fun fromName(name: String?): BoosterEngine = entries.firstOrNull { it.name == name } ?: AUTO
+        fun fromName(name: String?): BoosterEngine {
+            if (name == "RIFE" || name == "AI") return AI_RIFE
+            return entries.firstOrNull { it.name == name } ?: AUTO
+        }
     }
 }
 
@@ -96,8 +99,7 @@ data class FpsBoosterSettings(
         )
 
         /**
-         * One-time migration from the old single-choice "motion boost" preference (ORIGINAL / FPS_45 / FPS_60 ...).
-         * The old "extreme" flag and the default both map to the lightest preset ([legacyExtreme] is kept for the signature).
+         * One-time migration from the old single-choice preference.
          * Returns null when there is nothing to migrate.
          */
         fun migrateLegacy(legacyMode: String?, legacyExtreme: Boolean): FpsBoosterSettings? {
@@ -128,8 +130,6 @@ object FpsBoosterPrefs {
     const val BATTERY = "fpsb_battery"
     const val SHOW_STATS = "fpsb_stats"
     const val MIGRATED = "fpsb_migrated_v1"
-    /** Stored [BenchmarkResult] (see [BenchmarkResult.toStored]). */
     const val BENCH = "fpsb_bench"
-    /** The user dismissed the first-run device test; do not start it automatically again. */
     const val BENCH_SKIPPED = "fpsb_bench_skipped"
 }

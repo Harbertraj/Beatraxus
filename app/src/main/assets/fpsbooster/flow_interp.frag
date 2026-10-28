@@ -131,19 +131,19 @@ void main() {
       vec3 bb = texture(uB, vUv - (1.0 - uT) * b.xy * inv).rgb;
 
       // Fast motion: vector estimates, the forward/backward check and the refined-vs-first vector are all
-      // off by roughly a fixed share of the speed (a 100 px/frame pan is never matched to within 1 px), so the
-      // tolerances grow with it. Fixed tolerances rejected most of a fast picture and showed the unmoved frame
-      // in patches. The two-frame colour check below still catches a genuinely wrong match.
+      // off by roughly a fixed share of the speed, so the tolerances grow with it.
+      // Strict color check (0.03 to 0.10): if the warped prediction differs significantly in color, it's a wrong match
+      // (e.g., stretching background into foreground/body parts). Fall back to clean nearest frame instead of distorting.
       float sf = 1.0 + 0.02 * length(f.xy);
       float sb = 1.0 + 0.02 * length(b.xy);
       float wf = (1.0 - smoothstep(uConsLo * sf, uConsHi * sf, f.a))
-               * (1.0 - smoothstep(0.06, 0.22, length(fa - fb)))
-               * (1.0 - smoothstep(0.35, 0.60, f.b))
-               * (1.0 - smoothstep(1.0 * sf, 4.0 * sf, length(f.xy - f0.xy)));
+               * (1.0 - smoothstep(0.03, 0.10, length(fa - fb)))
+               * (1.0 - smoothstep(0.25, 0.50, f.b))
+               * (1.0 - smoothstep(1.0 * sf, 3.5 * sf, length(f.xy - f0.xy)));
       float wb = (1.0 - smoothstep(uConsLo * sb, uConsHi * sb, b.a))
-               * (1.0 - smoothstep(0.06, 0.22, length(ba - bb)))
-               * (1.0 - smoothstep(0.35, 0.60, b.b))
-               * (1.0 - smoothstep(1.0 * sb, 4.0 * sb, length(b.xy - b0.xy)));
+               * (1.0 - smoothstep(0.03, 0.10, length(ba - bb)))
+               * (1.0 - smoothstep(0.25, 0.50, b.b))
+               * (1.0 - smoothstep(1.0 * sb, 3.5 * sb, length(b.xy - b0.xy)));
 
       // Averaging two resampled frames (A and B) blurs anything the flow did not match to the pixel. With uSharp
       // the colour comes from ONE frame, the one nearer in time, resampled bicubically; fa/fb/ba/bb above are only

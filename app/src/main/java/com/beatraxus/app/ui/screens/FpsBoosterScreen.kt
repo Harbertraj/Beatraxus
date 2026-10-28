@@ -195,7 +195,7 @@ fun FpsBoosterSheetContent(
                     StatLine("Generated", "%.1f frames/s".format(stats.generatedFps))
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
                     StatLine("Dropped frames", stats.droppedFrames.toString())
-                    if (stats.engine == BoosterEngine.OPTICAL_FLOW) {
+                    if (stats.engine == BoosterEngine.OPTICAL_FLOW || stats.engine == BoosterEngine.AI_RIFE) {
                         StatLine("Processing latency", "%.1f ms / frame pair".format(stats.estimateLatencyMs))
                         StatLine("Motion analysis size", "${stats.workEdge} px")
                         StatLine("Video delay", "%.0f ms".format(stats.addedDelayMs))

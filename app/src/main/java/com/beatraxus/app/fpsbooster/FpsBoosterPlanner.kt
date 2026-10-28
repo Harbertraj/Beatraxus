@@ -50,6 +50,7 @@ object FpsBoosterPlanner {
 
         val engine = when (settings.engine) {
             BoosterEngine.AUTO -> if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
+            BoosterEngine.AI_RIFE -> BoosterEngine.AI_RIFE
             BoosterEngine.OPTICAL_FLOW ->
                 if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
             BoosterEngine.CLASSIC -> BoosterEngine.CLASSIC

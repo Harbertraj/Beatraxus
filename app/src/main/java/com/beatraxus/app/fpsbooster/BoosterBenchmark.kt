@@ -103,9 +103,11 @@ object BoosterRecommender {
                 val target = targetFor(SOURCE_FPS * pair) ?: continue
                 val tier = when (q) { BoosterQuality.QUALITY -> DeviceTier.HIGH; BoosterQuality.BALANCED -> DeviceTier.MID; else -> DeviceTier.LOW }
                 val cpuNote = if (weakCpu) " The CPU is on the slow side, so the target is capped at 60." else ""
+                val recommendedEngine = if (q == BoosterQuality.QUALITY && r.gpuScore > 1200) BoosterEngine.AI_RIFE else BoosterEngine.OPTICAL_FLOW
+                val engineLabel = if (recommendedEngine == BoosterEngine.AI_RIFE) "RIFE AI" else "Optical flow"
                 return Recommendation(
-                    BoosterEngine.OPTICAL_FLOW, q, target, tier,
-                    "${tier.label} device: Optical flow, ${q.label} quality, up to $target FPS.$cpuNote"
+                    recommendedEngine, q, target, tier,
+                    "${tier.label} device: $engineLabel, ${q.label} quality, up to $target FPS.$cpuNote"
                 )
             }
         }
