@@ -6,7 +6,8 @@
 // error in .a. Every output pixel is built from up to two independent warps (one from each field); a warp
 // is trusted only where its field is self-consistent AND the two warped samples show the same picture.
 // Occluded / disoccluded areas fail one field's consistency test and are taken from the other warp.
-// Where neither warp is trusted the nearest real frame is shown (judder instead of ghosting) - unless a third,
+// Where neither warp is trusted the plain blend of the two real frames is shown (on real film the unmoved nearest frame
+// next to warped pixels tears the picture into patches) - unless a third,
 // independent candidate explains the pixel: the dominant ("camera") motion of the whole picture (uGlobal, found
 // on the GPU by global_motion.frag). It is used as a fill-in only where the per-pixel flow is untrusted, and only
 // where the two frames really agree under that motion (colour check), so a moving object is never dragged along
@@ -45,7 +46,8 @@ uniform sampler2D uA;        // RGBA8 frame A, LINEAR
 uniform sampler2D uB;        // RGBA8 frame B, LINEAR
 uniform sampler2D uFw;       // RGBA16F, LINEAR: rg = A->B flow (work px), b = match cost, a = fw/bw inconsistency (px)
 uniform sampler2D uBw;       // RGBA16F, LINEAR: B->A
-uniform sampler2D uCut;      // 1x1 RGBA8/16F: b = 1 on a scene cut, a = share of untrustworthy motion in the picture (0..1)
+uniform sampler2D uCut;      // 1x1 RGBA8/16F: b = 1 on a scene cut
+uniform sampler2D uRisk;     // RGBA16F, LINEAR, ~1 texel per 16 work px (risk_map.frag): r = how much the two flow fields disagree around here
 uniform sampler2D uGlobal;   // 1x1 RGBA16F, NEAREST: rg = dominant A->B motion (work px), b = share of the picture that agrees
 uniform sampler2D uFuse0;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 0..3
 uniform sampler2D uFuse1;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 4, 5
@@ -73,12 +75,18 @@ const float STATIC_DIFF = 0.008;      // max channel difference (0..1) between A
 const float STATIC_FLOW2 = 0.12;      // squared flow length (px^2) below which there is no motion around the pixel
 const float GLOBAL_MIN_SHARE = 0.30;  // dominant motion needs this share of the picture behind it (as in flow_search.frag)
 const float GLOBAL_MIN_SPEED = 1.0;   // below this (px) the nearest frame is as good as a warp
-// Whole-frame safeguard (cut_detect.frag, .a): when this share of the motion field is inconsistent the flow has failed
-// across the picture (whip pans, heavy motion blur) and the per-pixel decisions turn into ragged patches. Fade to a plain
-// blend of the two real frames between these shares. Measured on the harness: normal scenes <= 0.15, blurred pan at
-// 300 px/frame ~0.3, at 500 px/frame ~0.8.
-const float FAIL_LO = 0.30;
-const float FAIL_HI = 0.60;
+// Regional safeguard (risk_map.frag): where the forward and the backward field predict different pictures over a whole
+// neighbourhood, the vectors are wrong there, and per-pixel trust checks cannot see it (a flat or motion-blurred area
+// matches under any shift). Fade to a plain blend of the two real frames in that region only, smoothly, so no hard
+// patch borders appear and the rest of the picture keeps its motion compensation. Measured on a real action film
+// (harness: eval_clip.py): hand-tuned 0.03..0.12, AI composite 0.12..0.32 (the learned weights are already more careful).
+#if AI_FUSION
+const float RISK_LO = 0.12;
+const float RISK_HI = 0.32;
+#else
+const float RISK_LO = 0.03;
+const float RISK_HI = 0.12;
+#endif
 const float AI_MIN_WEIGHT = 0.02;     // a candidate with less weight than this is not fetched at all
 
 // Bilinear fetch of a flow field with the VECTOR weighted by how trustworthy each of the 4 neighbouring blocks
@@ -395,7 +403,9 @@ void main() {
       // A half-trusted warp blended over the nearest frame is a visible double image (ghost): make the
       // transition decisive so a pixel is either motion-compensated or a clean real frame.
       conf = smoothstep(0.25, 0.60, conf);
-      rgb = mix(nearest, warped, conf);
+      // Where the warp is not trusted, show the blend of both real frames, not the unmoved nearest frame: the nearest
+      // frame next to warped pixels tears the picture into crisp patches (hard borders), the blend only ghosts.
+      rgb = mix(mix(pa, pb, uT), warped, conf);
 
       // --- fill-in with the dominant motion where the per-pixel flow is not trusted ---
       if (conf < 0.95) {
@@ -416,9 +426,9 @@ void main() {
         }
       }
 #endif
-      // flow failed across the picture: soft blend of the two real frames instead of patchwork
-      float fail = smoothstep(FAIL_LO, FAIL_HI, texture(uCut, vec2(0.5)).a);
-      rgb = mix(rgb, mix(pa, pb, uT), fail);
+      // flow unreliable around here: soft blend of the two real frames instead of patchwork
+      float risk = smoothstep(RISK_LO, RISK_HI, texture(uRisk, vUv).r);
+      rgb = mix(rgb, mix(pa, pb, uT), risk);
     }
   }
 

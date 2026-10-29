@@ -40,3 +40,14 @@ def read_flo(path: str) -> np.ndarray:
             raise ValueError("bad .flo magic")
         w, h = np.fromfile(f, np.int32, 2)
         return np.fromfile(f, np.float32, w * h * 2).reshape(h, w, 2)
+
+
+def tear(out: np.ndarray, ref: np.ndarray, dil: int = 9, floor: float = 0.01) -> float:
+    """Tearing / patchwork score (lower is better, x1000): mean strength of edges in `out` that have no counterpart within
+    `dil` px in the real frame `ref`. A cross-fade ghost has soft edges (low score), a torn "peeling paint" patch has hard
+    edges where the real picture has none (high score). PSNR cannot tell the two apart: both are equally "wrong"."""
+    def grad(img: np.ndarray) -> np.ndarray:
+        g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+        return np.hypot(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)) / 8.0
+    near = cv2.dilate(grad(ref), np.ones((dil, dil), np.uint8))
+    return float(np.maximum(0.0, grad(out) - near - floor).mean() * 1000.0)

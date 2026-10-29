@@ -452,3 +452,41 @@ frames between `FAIL_LO = 0.30` and `FAIL_HI = 0.60` of that share (both the han
 normal scenes <= 0.15, whip 300 ~0.3, whip 500 ~0.8. Whip 500 goes from patchwork to a soft blend (14.4 dB, equal to blend); all
 earlier regression floors are unchanged. Edge strips where new content enters the frame are not covered (no flow can know them).
 Not verified on a phone: the real clip, and the cost of the extra 576-tap reduction (small: it replaces nothing and runs once per source pair).
+
+### 13.z Part 6: real action footage (cuts, regional safeguard, blend fallback)
+
+Test material: a real 24 FPS fight scene (screen-recorded into a 30 FPS file, so every 5th frame is a repeat) with 14 hard cuts, flying
+objects, motion blur and grain. `tools/fpsbooster_harness/eval_clip.py` drops the repeats, then rebuilds every frame k from k-1 and
+k+1 (t = 0.5) and scores it against the real frame k (PSNR, SSIM and `tear`, see below). Tuned on 11.4-15.4 s, validated on 0.4-4.4 s.
+
+`metrics.tear` (new): mean strength of edges in the output that have no counterpart in the real frame. A cross-fade ghost is soft
+(low), a torn "peeling paint" patch has hard edges where the real picture has none (high). PSNR cannot tell the two apart.
+
+Problems found (numbers: tuning stretch / validation stretch):
+
+1. **Scene cuts were not detected.** The old test (coarse match cost > 0.12 and > 50% poor) fired on 1 of 13 real cuts: two shots
+   of the same set match almost as well at the coarsest level as real motion does. Result: a ghosted or garbled frame at every cut.
+   `cut_detect.frag` now also tests the final field on its 32x18 lattice: share of points that match badly (cost > 0.012) AND
+   disagree with the backward field (> 2 px, speed-scaled). Cuts >= 0.65, everything else <= 0.45, threshold 0.55: 14/14 cuts found,
+   0 false flags in 353 pairs; synthetic cut 0.98; whip 500 0.46 (stays a blend case). Cut frames are now a clean real frame (99 dB, was 18).
+2. **The Part 5 whole-frame safeguard fired on ordinary action.** Real fights have 40-99% "inconsistent" vectors (flat walls, grain,
+   blur), so it cross-faded normal action: the AI path lost 2 dB (22.7 instead of 24.8). Removed.
+3. **Unmoved nearest frame as fallback tears the picture.** Where no warp was trusted the hand-tuned path showed the nearest real frame
+   next to warped pixels: hard patch borders ("peeling paint"). Now the blend of the two real frames. Hand-tuned: 21.2 -> 23.1 dB,
+   tear 1.19 -> 0.57 (a plain blend: 22.1 dB, tear 0.34).
+4. **Per-pixel checks pass on flat / blurred areas** (any shift matches), so wrong vectors there look fine pixel by pixel but form
+   crisp blobs. New `risk_map.frag`: one tiny pass per source pair (1 texel per 16 work px, 49 taps each, ~0.6 M fetches) measures where the
+   forward and the backward field predict different pictures over a ~66 px window. `flow_interp.frag` fades to the plain blend there
+   (hand-tuned 0.03..0.12, AI 0.12..0.32), smoothly, one bilinear fetch per pixel. Off when the dominant motion explains > 50-75% of the
+   picture (real action <= 48%, every rigid synthetic pan >= 79%), which keeps every synthetic floor.
+
+Result (PSNR dB / tear), tuning / validation stretch, non-cut frames:
+
+| | blend | hand-tuned before | hand-tuned now | AI before | AI now |
+|---|---|---|---|---|---|
+| PSNR | 22.1 / 22.7 | 21.2 / 21.9 | 23.0 / 23.7 | 22.7 / - | 24.7 / 25.7 |
+| tear | 0.34 / 0.14 | 1.19 / 0.74 | 0.40 / 0.24 | 0.28 / 0.20 | 0.17 / 0.10 |
+
+`check_regression.py` (36 checks) and `check_orientation.py` pass. Kotlin: `OpticalFlowRenderer` gets the `risk` texture per slot and the extra
+pass (`RISK_CELL` = 16 must match `new_engine.py`). **Not verified on a phone:** Kotlin compile (no Android SDK here), shader compile on real
+GPUs, the cost of the risk pass. Thresholds come from one film; more footage (bright, low-grain, animation) may move them.

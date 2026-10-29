@@ -25,8 +25,9 @@ class ShaderAssetsTest {
         ),
         "global_motion.frag" to listOf("uFlow", "uGrid", "uSamples", "uMaxCost"),
         "flow_consistency.frag" to listOf("uSelf", "uOther", "uGrid"),
-        "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh", "uCons", "uConsGrid", "uBadPx"),
-        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uGlobal", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi", "uSharp", "uFuse0", "uFuse1")
+        "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh", "uCons", "uConsGrid"),
+        "risk_map.frag" to listOf("uA", "uB", "uFw", "uBw", "uGlobal", "uWork", "uFlowUv"),
+        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uRisk", "uGlobal", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi", "uSharp", "uFuse0", "uFuse1")
     )
 
     @Test fun everyShaderExistsAndIsEs3() {

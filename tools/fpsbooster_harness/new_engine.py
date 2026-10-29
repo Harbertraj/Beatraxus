@@ -18,6 +18,7 @@ from engines import Engine
 
 ASSETS = Path(os.environ.get("FPSB_ASSETS") or Path(__file__).resolve().parents[2] / "app/src/main/assets/fpsbooster")
 PITCH = 4
+RISK_CELL = 16        # work px per texel of the risk map; keep in sync with OpticalFlowRenderer.RISK_CELL
 COARSEST_EDGE = 40   # keep in sync with FlowPyramid.COARSEST_EDGE: the coarsest level is the one closest to this
 MAX_LEVELS = 6       # ... and FlowPyramid.MAX_LEVELS
 GLOBAL_SAMPLES = (12, 8)   # keep in sync with OpticalFlowRenderer.GLOBAL_SAMPLES_X / _Y
@@ -91,6 +92,7 @@ class NewEngine(Engine):
         self.p_search = gl.program(_src("flow_search.frag"))
         self.p_cons = gl.program(_src("flow_consistency.frag"))
         self.p_cut = gl.program(_src("cut_detect.frag"))
+        self.p_risk = gl.program(_src("risk_map.frag"))
         self.ai = bool(self.cfg.get("ai", False))
         self.sharp = int(self.cfg.get("sharp", 1))      # the app ships with 1 (PRESERVE_SHARPNESS)
         if self.ai:
@@ -134,6 +136,8 @@ class NewEngine(Engine):
         g0 = self.grids[0]
         self.final = {d: gl.texture(g0[0], g0[1], G.GL_RGBA16F, G.GL_LINEAR) for d in ("fw", "bw")}
         self.cut = gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST)
+        self.riskW, self.riskH = (self.workW + RISK_CELL - 1) // RISK_CELL, (self.workH + RISK_CELL - 1) // RISK_CELL
+        self.risk = gl.texture(self.riskW, self.riskH, G.GL_RGBA16F, G.GL_LINEAR)
         self.gcoarse = {d: gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST) for d in ("fw", "bw")}   # dominant motion, coarsest field
         self.gfinal = gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST)                                # dominant motion, final fw field
         self.out = gl.texture(self.frameW, self.frameH, G.GL_RGBA8)
@@ -154,7 +158,7 @@ class NewEngine(Engine):
             for pair in d:
                 for t in pair:
                     gl.delete_texture(t)
-        for t in (*self.final.values(), *self.gcoarse.values(), self.cut, self.gfinal, self.out, *self.fuse, *self.dump_tex):
+        for t in (*self.final.values(), *self.gcoarse.values(), self.cut, self.risk, self.gfinal, self.out, *self.fuse, *self.dump_tex):
             gl.delete_texture(t)
         self.slots = []
         self.size = None
@@ -259,15 +263,21 @@ class NewEngine(Engine):
         cw, ch = self.grids[n - 1]
         gl.bind_target(self.cut, 1, 1)
         self.p_cut.use().tex(0, "uFlow", self.flow["fw"][n - 1][1]).i2("uGrid", cw, ch)
-        self.p_cut.tex(1, "uCons", self.final["fw"]).i2("uConsGrid", gw, gh).f1("uBadPx", 2.0)
+        self.p_cut.tex(1, "uCons", self.final["fw"]).i2("uConsGrid", gw, gh)
         self.p_cut.f1("uMeanThresh", 0.12).f1("uPoorThresh", 0.10)
+        gl.draw()
+        # regional risk map (where do the forward and the backward field predict different pictures?)
+        gl.bind_target(self.risk, self.riskW, self.riskH)
+        p = self.p_risk.use().tex(0, "uA", self.prev["full"]).tex(1, "uB", self.cur["full"])
+        p.tex(2, "uFw", self.final["fw"]).tex(3, "uBw", self.final["bw"]).tex(4, "uGlobal", self.gfinal)
+        p.f2("uWork", *self.sizes[0]).f2("uFlowUv", self.sizes[0][0] / (gw * PITCH), self.sizes[0][1] / (gh * PITCH))
         gl.draw()
         self.flow_for = self.cur
 
     def _bind_interp_inputs(self, p, A, B, t: float, warp: bool) -> None:
         gw, gh = self.grids[0]
         p.tex(0, "uA", A["full"]).tex(1, "uB", B["full"]).tex(2, "uFw", self.final["fw"]) \
-            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut).tex(5, "uGlobal", self.gfinal)
+            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut).tex(5, "uGlobal", self.gfinal).tex(8, "uRisk", self.risk)
         if warp:
             p.f1("uT", t).i1("uWarp", 1)
         else:  # nothing to interpolate with: show the only frame

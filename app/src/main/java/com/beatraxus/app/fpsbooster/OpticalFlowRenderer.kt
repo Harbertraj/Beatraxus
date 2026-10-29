@@ -76,9 +76,9 @@ class OpticalFlowRenderer(
         fun onError(reason: FallbackReason, message: String)
     }
 
-    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int, val glob: Int) {
+    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int, val glob: Int, val risk: Int) {
         var tsNs: Long = 0L
-        /** fw / bw / cut / glob hold the flow from the previous queued frame to this one. */
+        /** fw / bw / cut / glob / risk hold the flow from the previous queued frame to this one. */
         var hasFlow: Boolean = false
         /** The estimate for this frame was not started because the GPU was busy: show real frames, do not retry. */
         var flowSkipped: Boolean = false
@@ -116,6 +116,7 @@ class OpticalFlowRenderer(
     private var searchProg: Prog? = null
     private var consProg: Prog? = null
     private var cutProg: Prog? = null
+    private var riskProg: Prog? = null
     private var globalProg: Prog? = null
     private var interpProg: Prog? = null            // the hand-tuned blend; always present, also the fallback
     private var aiInterpProg: Prog? = null          // composite that reads the fusion map (only with fuseProg + fuseTex)
@@ -324,6 +325,7 @@ class OpticalFlowRenderer(
         searchProg = Prog(VERTEX, asset("flow_search.frag"))
         consProg = Prog(VERTEX, asset("flow_consistency.frag"))
         cutProg = Prog(VERTEX, asset("cut_detect.frag"))
+        riskProg = Prog(VERTEX, asset("risk_map.frag"))
         globalProg = Prog(VERTEX, asset("global_motion.frag"))
         interpProg = Prog(PRESENT_VERTEX, asset("flow_interp.frag"))
         if (aiFusionWanted) applyAiFusion()
@@ -377,6 +379,8 @@ class OpticalFlowRenderer(
         gridH = levels.gridH
         val n = levels.count
 
+        val riskW = (levelW[0] + RISK_CELL - 1) / RISK_CELL
+        val riskH = (levelH[0] + RISK_CELL - 1) / RISK_CELL
         slots = Array(SLOT_COUNT) {
             Slot(
                 full = newTexture(frameW, frameH, GLES30.GL_RGBA8),
@@ -384,7 +388,8 @@ class OpticalFlowRenderer(
                 fw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
                 bw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
                 cut = newTexture(1, 1, GLES30.GL_RGBA16F),
-                glob = newTexture(1, 1, GLES30.GL_RGBA16F)
+                glob = newTexture(1, 1, GLES30.GL_RGBA16F),
+                risk = newTexture(riskW, riskH, GLES30.GL_RGBA16F)
             )
         }
         flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
@@ -613,9 +618,16 @@ class OpticalFlowRenderer(
         tex(1, cut, "uCons", b.fw)
         GLES30.glUniform2i(cut.loc("uGrid"), gridW[n - 1], gridH[n - 1])
         GLES30.glUniform2i(cut.loc("uConsGrid"), gridW[0], gridH[0])
-        GLES30.glUniform1f(cut.loc("uBadPx"), FAIL_BAD_PX)
         GLES30.glUniform1f(cut.loc("uMeanThresh"), CUT_MEAN)
         GLES30.glUniform1f(cut.loc("uPoorThresh"), CUT_POOR)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        // regional risk map: where do the forward and the backward field predict different pictures?
+        val risk = riskProg!!
+        bindTarget(b.risk, (levelW[0] + RISK_CELL - 1) / RISK_CELL, (levelH[0] + RISK_CELL - 1) / RISK_CELL)
+        risk.use()
+        tex(0, risk, "uA", a.full); tex(1, risk, "uB", b.full); tex(2, risk, "uFw", b.fw); tex(3, risk, "uBw", b.bw); tex(4, risk, "uGlobal", b.glob)
+        GLES30.glUniform2f(risk.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
+        GLES30.glUniform2f(risk.loc("uFlowUv"), levelW[0].toFloat() / (gridW[0] * PITCH), levelH[0].toFloat() / (gridH[0] * PITCH))
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         b.hasFlow = true
         b.flowSkipped = false
@@ -784,7 +796,7 @@ class OpticalFlowRenderer(
     /** Uniforms / textures the hand-tuned program, the fusion pass and the AI composite all read. */
     private fun setInterpInputs(p: Prog, a: Slot, b: Slot, alpha: Float, warp: Boolean) {
         tex(0, p, "uA", a.full); tex(1, p, "uB", b.full)
-        tex(2, p, "uFw", b.fw); tex(3, p, "uBw", b.bw); tex(4, p, "uCut", b.cut); tex(5, p, "uGlobal", b.glob)
+        tex(2, p, "uFw", b.fw); tex(3, p, "uBw", b.bw); tex(4, p, "uCut", b.cut); tex(5, p, "uGlobal", b.glob); tex(8, p, "uRisk", b.risk)
         GLES30.glUniform1f(p.loc("uT"), if (warp) alpha else 1f)
         GLES30.glUniform1i(p.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(p.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
@@ -856,7 +868,7 @@ class OpticalFlowRenderer(
 
     private fun freeResources() {
         val ids = ArrayList<Int>()
-        slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut); ids.add(sl.glob) }
+        slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut); ids.add(sl.glob); ids.add(sl.risk) }
         flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { ids.add(it) } } }
         globalCoarse.forEach { ids.add(it) }
         fuseTex.forEach { ids.add(it) }
@@ -875,7 +887,7 @@ class OpticalFlowRenderer(
             freeResources()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, globalProg, interpProg, aiInterpProg, fuseProg).forEach { it?.delete() }
+            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, riskProg, globalProg, interpProg, aiInterpProg, fuseProg).forEach { it?.delete() }
         }
         surfaceTexture = null
         inputSurface = null
@@ -947,8 +959,8 @@ class OpticalFlowRenderer(
         private const val PRESERVE_SHARPNESS = true
         private const val CUT_MEAN = 0.12f
         private const val CUT_POOR = 0.10f
-        /** Inconsistency (px) above which a vector counts as untrustworthy for the whole-frame safeguard. */
-        private const val FAIL_BAD_PX = 2.0f
+        /** Work px per texel of the regional risk map (risk_map.frag). Keep in sync with RISK_CELL in new_engine.py. */
+        private const val RISK_CELL = 16
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 

@@ -31,8 +31,8 @@ AI_MAX_LOSS_DB = 0.5   # the AI path may never be worse than the hand-tuned one 
 
 
 def check_whip(eng, ai, blend) -> bool:
-    """Whole-frame safeguard (cut_detect.frag .a / FAIL_LO..HI in flow_interp.frag): when the flow fails across the picture
-    the output fades to a plain blend, so it must never be worse than blend (the failure it replaces is ragged patchwork)."""
+    """Regional safeguard (risk_map.frag / RISK_LO..HI in flow_interp.frag): where the flow fails, the output fades to a plain
+    blend, so on a picture where it fails everywhere it must never be worse than blend (the failure it replaces is ragged patchwork)."""
     ok = True
     for speed, blur in ((300, 80), (500, 130)):
         sc = S.whip(W, H, speed, blur)
