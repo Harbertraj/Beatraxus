@@ -20,7 +20,8 @@ enum class FallbackReason(val message: String) {
     /** No longer produced by [AdaptiveQualityController]: the booster keeps running when the device is loaded. */
     CANNOT_KEEP_UP("Device could not keep up: playing normally. Try a lower Quality or turn on Adaptive resolution"),
     THERMAL("Device is too hot: playing normally"),
-    GPU_ERROR("FPS Booster could not start (GPU error): playing normally")
+    GPU_ERROR("FPS Booster could not start (GPU error): playing normally"),
+    RIFE_TOO_SLOW("RIFE AI is too slow for real-time playback: falling back to Optical flow")
 }
 
 /** One rung of the quality ladder: the processing sizes the renderer should use. */

@@ -149,7 +149,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                     Log.e(TAG, "RIFE AI Booster failed: $message")
                     main.post { if (rifeRenderer === createdRife) listener?.onFallback(reason, message) }
                 }
-            }, context.applicationContext)
+            }, context.applicationContext, p.quality)
             rifeRenderer = createdRife
             createdRife.setTargetFps(p.targetFps)
             createdRife.setColorGrade(brightness, contrast, saturation)

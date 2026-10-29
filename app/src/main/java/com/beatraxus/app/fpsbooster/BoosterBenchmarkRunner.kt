@@ -96,6 +96,7 @@ void main() {
         return BenchmarkResult(
             cpuScore = cpuScore, gpuScore = gpuScore, cores = cores,
             pairMs = gpu.pairMs, warpMs = gpu.warpMs, floatRtOk = gpu.floatRtOk, fuseMs = gpu.fuseMs,
+            rifeInferenceMs = gpu.rifeInferenceMs,
             measuredAt = System.currentTimeMillis()
         )
     }
@@ -140,7 +141,8 @@ void main() {
         val warpMs: Float,
         val floatRtOk: Boolean,
         val scoreBasis: Pair<BoosterQuality, Float>?,
-        val fuseMs: Float = BenchmarkResult.FUSE_NOT_MEASURED
+        val fuseMs: Float = BenchmarkResult.FUSE_NOT_MEASURED,
+        val rifeInferenceMs: Float? = null
     )
 
     private fun workSize(q: BoosterQuality): Pair<Int, Int> {
@@ -221,13 +223,29 @@ void main() {
 
         var warp = 0f
         var fuse = BenchmarkResult.FUSE_NOT_MEASURED
+        var rifeMs: Float? = null
         if (floatOk && pairMs.isNotEmpty()) {
             if (isCancelled()) throw InterruptedException("cancelled")
             onProgress(0.75f, "Testing GPU: output")
             warp = timeWarp(fbo)
             if (isCancelled()) throw InterruptedException("cancelled")
-            onProgress(0.9f, "Testing GPU: AI fusion")
+            onProgress(0.88f, "Testing GPU: AI fusion")
             fuse = timeFusion(context, fbo)
+
+            if (RifeAiEngine.isModelInstalled(context)) {
+                if (isCancelled()) throw InterruptedException("cancelled")
+                onProgress(0.95f, "Testing GPU: RIFE AI")
+                try {
+                    val engine = RifeAiEngine(context)
+                    if (engine.initialize(BoosterQuality.PERFORMANCE)) {
+                        val (mw, mh) = RifePacking.modelSize(1280, 720, 640)
+                        rifeMs = engine.benchmark(mw, mh, iterations = 6)
+                    }
+                    engine.release()
+                } catch (e: Throwable) {
+                    Log.w(TAG, "RIFE benchmark failed", e)
+                }
+            }
         }
         search.delete()
         globalProg.delete()
@@ -235,7 +253,7 @@ void main() {
         GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
         GLES30.glDeleteVertexArrays(1, vao, 0)
         onProgress(1f, "Done")
-        return GpuOutcome(pairMs, warp, floatOk && pairMs.isNotEmpty(), basis.takeIf { floatOk }, fuse)
+        return GpuOutcome(pairMs, warp, floatOk && pairMs.isNotEmpty(), basis.takeIf { floatOk }, fuse, rifeMs)
     }
 
     /** The renderer's per-pair work: fw + bw hierarchical search (with the dominant-motion pass) at the preset's settings. */

@@ -26,6 +26,7 @@ data class BenchmarkResult(
     val warpMs: Float,
     val floatRtOk: Boolean,
     val fuseMs: Float = FUSE_NOT_MEASURED,
+    val rifeInferenceMs: Float? = null,
     val measuredAt: Long = 0L,
     val version: Int = VERSION
 ) {
@@ -33,12 +34,13 @@ data class BenchmarkResult(
     fun toStored(): String = buildString {
         append(version).append('|').append(cpuScore).append('|').append(gpuScore).append('|').append(cores).append('|')
         append(BoosterQuality.entries.joinToString(",") { q -> pairMs[q]?.toString() ?: "-" }).append('|')
-        append(warpMs).append('|').append(if (floatRtOk) 1 else 0).append('|').append(measuredAt).append('|').append(fuseMs)
+        append(warpMs).append('|').append(if (floatRtOk) 1 else 0).append('|').append(measuredAt).append('|').append(fuseMs).append('|')
+        append(rifeInferenceMs?.toString() ?: "-")
     }
 
     companion object {
         /** Bump when the test changes so old results are discarded and the test runs again. */
-        const val VERSION = 2
+        const val VERSION = 3
 
         /** [fuseMs] value for "the fusion pass could not run on this GPU". */
         const val FUSE_NOT_MEASURED = -1f
@@ -47,15 +49,16 @@ data class BenchmarkResult(
             if (s.isNullOrBlank()) return null
             return try {
                 val p = s.split('|')
-                if (p.size != 9 || p[0].toInt() != VERSION) return null
+                if (p.size != 10 || p[0].toInt() != VERSION) return null
                 val ms = p[4].split(',')
                 if (ms.size != BoosterQuality.entries.size) return null
                 val map = HashMap<BoosterQuality, Float>()
                 BoosterQuality.entries.forEachIndexed { i, q -> ms[i].toFloatOrNull()?.let { map[q] = it } }
+                val rifeMs = p[9].toFloatOrNull()
                 BenchmarkResult(
                     cpuScore = p[1].toInt(), gpuScore = p[2].toInt(), cores = p[3].toInt(),
                     pairMs = map, warpMs = p[5].toFloat(), floatRtOk = p[6] == "1",
-                    fuseMs = p[8].toFloat(), measuredAt = p[7].toLong()
+                    fuseMs = p[8].toFloat(), rifeInferenceMs = rifeMs, measuredAt = p[7].toLong()
                 )
             } catch (e: NumberFormatException) {
                 null
@@ -138,7 +141,8 @@ object BoosterRecommender {
                 val target = targetFor(SOURCE_FPS * pair) ?: continue
                 val tier = when (q) { BoosterQuality.QUALITY -> DeviceTier.HIGH; BoosterQuality.BALANCED -> DeviceTier.MID; else -> DeviceTier.LOW }
                 val cpuNote = if (weakCpu) " The CPU is on the slow side, so the target is capped at 60." else ""
-                val recommendedEngine = if (q == BoosterQuality.QUALITY && r.gpuScore > 1200 && rifeModelInstalled) BoosterEngine.AI_RIFE else BoosterEngine.OPTICAL_FLOW
+                val recommendedEngine = if (q == BoosterQuality.QUALITY && r.gpuScore > 1200 && rifeModelInstalled &&
+                    r.rifeInferenceMs != null && r.rifeInferenceMs * 1.3f < 1000f / SOURCE_FPS && target == 60) BoosterEngine.AI_RIFE else BoosterEngine.OPTICAL_FLOW
                 val engineLabel = if (recommendedEngine == BoosterEngine.AI_RIFE) "RIFE AI" else "Optical flow"
                 return Recommendation(
                     recommendedEngine, q, target, tier,

@@ -1,26 +1,29 @@
 package com.beatraxus.app.fpsbooster
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.util.Log
+import ai.onnxruntime.NodeInfo
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.Executors
-import kotlin.math.roundToInt
 
 /**
  * AI-Powered Frame Interpolation Engine implementing RIFE 4.26 (Real-Time Intermediate Flow Estimation)
  * neural motion synthesis for BeatRaxus.
  *
  * RIFE 4.26 estimates intermediate optical flow fields and soft fusion masks between consecutive frames
- * A and B at arbitrary timesteps t in (0, 1), producing high-quality motion interpolation without
- * block-matching edge tearing or non-rigid body distortion.
+ * A and B at arbitrary timesteps t in (0, 1), producing high-quality motion interpolation.
  *
- * The engine operates locally on-device using ONNX Runtime Mobile with NNAPI / GPU / CPU acceleration.
+ * The model input contract (`rife_v426.onnx`) is a single float32 tensor named `input` of shape
+ * `[batch, 7, height, width]` (img0 RGB, img1 RGB, timestep plane, float 0..1, NCHW), producing
+ * a single float32 output tensor named `output` of shape `[batch, 3, height, width]`.
  */
 class RifeAiEngine(private val context: Context) {
 
@@ -71,6 +74,8 @@ class RifeAiEngine(private val context: Context) {
     private var ortSession: OrtSession? = null
     private val executor = Executors.newSingleThreadExecutor()
 
+    private var inputName: String = "input"
+
     @Volatile private var isInitialized = false
     @Volatile private var isNnapiSupported = false
 
@@ -82,20 +87,30 @@ class RifeAiEngine(private val context: Context) {
     /**
      * Initializes the ONNX Runtime session and loads the RIFE 4.26 model asset.
      */
-    fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE): Boolean {
+    fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE, useNnapi: Boolean = true): Boolean {
         if (isInitialized) return ortSession != null
 
         return try {
             ortEnv = OrtEnvironment.getEnvironment()
             val sessionOptions = OrtSession.SessionOptions()
             try {
-                try {
-                    sessionOptions.addNnapi()
-                    isNnapiSupported = true
-                    Log.i(TAG, "ONNX Runtime NNAPI acceleration enabled for RIFE AI")
-                } catch (e: Exception) {
-                    Log.w(TAG, "NNAPI acceleration unavailable, falling back to CPU/XNNPACK: ${e.message}")
+                if (useNnapi) {
+                    try {
+                        sessionOptions.addNnapi()
+                        isNnapiSupported = true
+                        Log.i(TAG, "ONNX Runtime NNAPI acceleration enabled for RIFE AI")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "NNAPI acceleration unavailable, falling back to CPU/XNNPACK: ${e.message}")
+                        isNnapiSupported = false
+                    }
+                } else {
                     isNnapiSupported = false
+                    try {
+                        sessionOptions.addXnnpack(mapOf("intra_op_num_threads" to "4"))
+                        Log.i(TAG, "ONNX Runtime XNNPACK acceleration enabled for RIFE AI")
+                    } catch (e: Throwable) {
+                        Log.w(TAG, "XNNPACK acceleration unavailable: ${e.message}")
+                    }
                 }
                 sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
                 sessionOptions.setInterOpNumThreads(2)
@@ -109,10 +124,29 @@ class RifeAiEngine(private val context: Context) {
 
                 val modelFile = getOrExtractModelFile()
                 if (modelFile != null && modelFile.exists() && modelFile.length() > 0) {
-                    ortSession = ortEnv?.createSession(modelFile.absolutePath, sessionOptions)
-                    isInitialized = true
-                    Log.i(TAG, "RIFE 4.26 ONNX model initialized successfully (${modelWidth}x${modelHeight})")
-                    true
+                    val session = ortEnv?.createSession(modelFile.absolutePath, sessionOptions)
+                    if (session != null) {
+                        inputName = session.inputNames.firstOrNull() ?: "input"
+                        Log.i(TAG, "RIFE session created. Inputs: ${session.inputInfo}, Outputs: ${session.outputInfo}")
+
+                        val inputNodeInfo = session.inputInfo[inputName]?.info as? TensorInfo
+                        val channels = inputNodeInfo?.shape?.getOrNull(1)
+                        if (channels != null && channels != 7L) {
+                            Log.e(TAG, "RIFE model input must have 7 channels, found $channels in input '$inputName'")
+                            session.close()
+                            ortSession = null
+                            isInitialized = true
+                            return false
+                        }
+
+                        ortSession = session
+                        isInitialized = true
+                        Log.i(TAG, "RIFE 4.26 ONNX model initialized successfully (${modelWidth}x${modelHeight})")
+                        true
+                    } else {
+                        isInitialized = true
+                        false
+                    }
                 } else {
                     Log.i(TAG, "RIFE model file not present in assets/cache")
                     isInitialized = true
@@ -159,159 +193,69 @@ class RifeAiEngine(private val context: Context) {
     }
 
     /**
-     * Direct float buffer inference entry point for GPU pipeline integration (no Bitmap allocation).
+     * Packed single-tensor inference entry point.
+     * [packed]: direct FloatBuffer of 7*w*h floats (img0 RGB, img1 RGB, timestep plane 0..1), NCHW.
+     * [out]: direct FloatBuffer receiving 3*w*h floats (interpolated RGB).
      */
-    fun interpolateBuffer(
-        bufferA: FloatBuffer,
-        bufferB: FloatBuffer,
-        outputBuffer: FloatBuffer,
-        timestep: Float = 0.5f
-    ): Boolean {
+    fun infer(packed: FloatBuffer, w: Int, h: Int, out: FloatBuffer): Boolean {
         if (!isInitialized && !initialize()) return false
         val session = ortSession ?: return false
         val env = ortEnv ?: return false
 
         return try {
-            val tensorShape = longArrayOf(1, 3, modelHeight.toLong(), modelWidth.toLong())
-            val tensorT = OnnxTensor.createTensor(env, FloatBuffer.wrap(floatArrayOf(timestep.coerceIn(0f, 1f))), longArrayOf(1, 1))
-            val tensorA = OnnxTensor.createTensor(env, bufferA, tensorShape)
-            val tensorB = OnnxTensor.createTensor(env, bufferB, tensorShape)
+            val tensorShape = longArrayOf(1, 7, h.toLong(), w.toLong())
+            val tensor = OnnxTensor.createTensor(env, packed, tensorShape)
+            var result: OrtSession.Result? = null
+            try {
+                result = session.run(mapOf(inputName to tensor))
+                val outputTensor = result.get(0) as? OnnxTensor ?: return false
+                val shape = outputTensor.info.shape
+                if (shape.size == 4 && (shape[1] != 3L || shape[2] != h.toLong() || shape[3] != w.toLong())) {
+                    Log.e(TAG, "Unexpected RIFE output shape: ${shape.contentToString()}, expected [1, 3, $h, $w]")
+                    return false
+                }
 
-            val inputNames = session.inputNames
-            val img0Name = if (inputNames.contains("img0")) "img0" else inputNames.elementAtOrElse(0) { "img0" }
-            val img1Name = if (inputNames.contains("img1")) "img1" else inputNames.elementAtOrElse(1) { "img1" }
-            val timestepName = if (inputNames.contains("timestep")) "timestep" else inputNames.elementAtOrElse(2) { "timestep" }
-
-            val inputs = mapOf(
-                img0Name to tensorA,
-                img1Name to tensorB,
-                timestepName to tensorT
-            )
-
-            val result = session.run(inputs)
-            val outputTensor = result.get(0) as OnnxTensor
-            val outBuf = outputTensor.floatBuffer
-            outputBuffer.rewind()
-            outputBuffer.put(outBuf)
-            outputBuffer.rewind()
-
-            tensorA.close()
-            tensorB.close()
-            tensorT.close()
-            result.close()
-            true
+                val outBuf = outputTensor.floatBuffer
+                out.rewind()
+                out.put(outBuf)
+                out.rewind()
+                true
+            } finally {
+                tensor.close()
+                result?.close()
+            }
         } catch (e: Exception) {
             Log.e(TAG, "RIFE float buffer inference error: ${e.message}", e)
             false
         }
     }
 
-    fun interpolateFrame(
-        frameA: Bitmap,
-        frameB: Bitmap,
-        timestep: Float = 0.5f,
-        outputWidth: Int = frameA.width,
-        outputHeight: Int = frameA.height
-    ): Bitmap? {
-        if (!isInitialized && !initialize()) return null
+    /**
+     * Benchmarks current model inference latency (ms) for input size [w] x [h].
+     * Warms up 2 runs, measures [iterations] runs, and returns the median latency.
+     */
+    fun benchmark(w: Int, h: Int, iterations: Int = 6): Float {
+        val packed = ByteBuffer.allocateDirect(7 * w * h * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        val out = ByteBuffer.allocateDirect(3 * w * h * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        RifePacking.fillPlane(packed, 6 * w * h, w, h, 0.5f)
 
-        val session = ortSession
-        val env = ortEnv
+        // Warmup runs
+        infer(packed, w, h, out)
+        infer(packed, w, h, out)
 
-        if (session != null && env != null) {
-            try {
-                val scaledA = Bitmap.createScaledBitmap(frameA, modelWidth, modelHeight, true)
-                val scaledB = Bitmap.createScaledBitmap(frameB, modelWidth, modelHeight, true)
-
-                val tensorShape = longArrayOf(1, 3, modelHeight.toLong(), modelWidth.toLong())
-                val bufferA = bitmapToFloatBuffer(scaledA)
-                val bufferB = bitmapToFloatBuffer(scaledB)
-                val bufferT = FloatBuffer.wrap(floatArrayOf(timestep.coerceIn(0f, 1f)))
-
-                val tensorA = OnnxTensor.createTensor(env, bufferA, tensorShape)
-                val tensorB = OnnxTensor.createTensor(env, bufferB, tensorShape)
-                val tensorT = OnnxTensor.createTensor(env, bufferT, longArrayOf(1, 1))
-
-                val inputs = mapOf(
-                    "img0" to tensorA,
-                    "img1" to tensorB,
-                    "timestep" to tensorT
-                )
-
-                val result = session.run(inputs)
-                val outputTensor = result.get(0) as OnnxTensor
-                val outputBuffer = outputTensor.floatBuffer
-
-                val outputBitmap = floatBufferToBitmap(outputBuffer, modelWidth, modelHeight)
-
-                tensorA.close()
-                tensorB.close()
-                tensorT.close()
-                result.close()
-
-                return Bitmap.createScaledBitmap(outputBitmap, outputWidth, outputHeight, true)
-            } catch (e: Exception) {
-                Log.e(TAG, "RIFE ONNX inference error: ${e.message}", e)
-            }
+        val times = ArrayList<Float>(iterations)
+        for (i in 0 until iterations) {
+            val start = System.nanoTime()
+            val ok = infer(packed, w, h, out)
+            val durMs = (System.nanoTime() - start) / 1e6f
+            if (ok) times.add(durMs)
         }
 
-        return synthesizeNeuralFallback(frameA, frameB, timestep, outputWidth, outputHeight)
-    }
-
-    private fun bitmapToFloatBuffer(bitmap: Bitmap): FloatBuffer {
-        val w = bitmap.width
-        val h = bitmap.height
-        val pixels = IntArray(w * h)
-        bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
-
-        val floatBuffer = FloatBuffer.allocate(3 * w * h)
-        val rOffset = 0
-        val gOffset = w * h
-        val bOffset = 2 * w * h
-
-        for (i in pixels.indices) {
-            val p = pixels[i]
-            floatBuffer.put(rOffset + i, ((p shr 16) and 0xFF) / 255.0f)
-            floatBuffer.put(gOffset + i, ((p shr 8) and 0xFF) / 255.0f)
-            floatBuffer.put(bOffset + i, (p and 0xFF) / 255.0f)
-        }
-        floatBuffer.rewind()
-        return floatBuffer
-    }
-
-    private fun floatBufferToBitmap(buffer: FloatBuffer, width: Int, height: Int): Bitmap {
-        val pixels = IntArray(width * height)
-        val rOffset = 0
-        val gOffset = width * height
-        val bOffset = 2 * width * height
-
-        for (i in pixels.indices) {
-            val r = (buffer.get(rOffset + i).coerceIn(0f, 1f) * 255f).roundToInt()
-            val g = (buffer.get(gOffset + i).coerceIn(0f, 1f) * 255f).roundToInt()
-            val b = (buffer.get(bOffset + i).coerceIn(0f, 1f) * 255f).roundToInt()
-            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-        }
-        return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
-    }
-
-    private fun synthesizeNeuralFallback(
-        frameA: Bitmap,
-        frameB: Bitmap,
-        timestep: Float,
-        width: Int,
-        height: Int
-    ): Bitmap {
-        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = android.graphics.Canvas(out)
-        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
-
-        paint.alpha = ((1f - timestep) * 255).roundToInt().coerceIn(0, 255)
-        canvas.drawBitmap(frameA, null, android.graphics.Rect(0, 0, width, height), paint)
-
-        paint.alpha = (timestep * 255).roundToInt().coerceIn(0, 255)
-        canvas.drawBitmap(frameB, null, android.graphics.Rect(0, 0, width, height), paint)
-
-        return out
+        if (times.isEmpty()) return -1f
+        times.sort()
+        val medianMs = times[times.size / 2]
+        Log.i(TAG, "Benchmark ${w}x${h} median latency: $medianMs ms over ${times.size} runs")
+        return medianMs
     }
 
     fun release() {

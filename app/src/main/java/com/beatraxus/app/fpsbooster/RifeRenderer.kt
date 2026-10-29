@@ -10,11 +10,9 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
-import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.os.PerformanceHintManager
 import android.os.Process
 import android.util.Log
 import android.view.Choreographer
@@ -28,22 +26,20 @@ import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 
 /**
  * GPU-accelerated RIFE AI Renderer for BeatRaxus:
- * Combines GL surface rendering with ONNX Runtime RIFE 4.26 neural synthesis, incorporating full
- * Optical-Flow safeguards (TimestampRegularizer, median vsync, drift-free stepNs, 1-in-flight deadline
- * inference, GPU scene cut detector, soft blend fallback, and regional risk guards).
+ * Combines GL surface rendering with ONNX Runtime RIFE 4.26 neural synthesis, incorporating async PBO frame
+ * readback, thread-safe NCHW packing, multi-generation task fencing, and piecewise-alpha shader blending.
  */
 class RifeRenderer(
     private val outputSurface: Surface,
     private val callbacks: Callbacks,
-    private val context: Context
+    private val context: Context,
+    private val quality: BoosterQuality = BoosterQuality.PERFORMANCE
 ) {
 
     interface Callbacks {
@@ -53,7 +49,7 @@ class RifeRenderer(
         fun onError(reason: FallbackReason, message: String)
     }
 
-    private class Slot(val full: Int, val luma: Int) {
+    private class Slot(val full: Int, val luma: Int, val small: Int) {
         var tsNs: Long = 0L
     }
 
@@ -83,28 +79,38 @@ class RifeRenderer(
     private var fbo = 0
     private var copyProg: Prog? = null
     private var lumaProg: Prog? = null
+    private var scaleProg: Prog? = null
     private var cutProg: Prog? = null
     private var interpProg: Prog? = null
     private var slots: Array<Slot> = emptyArray()
     private var synthTexture = 0
     private var cutTexture = 0
 
-    // ---- Inference & PBO Buffers ----
-    private var pboA = 0
-    private var pboB = 0
+    // ---- Async PBO Readback & Generation Fencing ----
+    private var readPbo = 0
+    private var readFence = 0L
+    private var readSlot: Slot? = null
+    private var lastReadSlot: Slot? = null
+    private var curSlot: Slot? = null
+    private var prevSlot: Slot? = null
+
+    private var generation = 0
     private var inferenceInFlight = false
-    private var activeInferenceTask: Future<*>? = null
-    private var inferenceStartNs = 0L
     private var flowSkipped = false
     private val estimateLatency = EstimateLatency()
 
-    private var inputBufA: FloatBuffer? = null
-    private var inputBufB: FloatBuffer? = null
-    private var outputBuf: FloatBuffer? = null
+    private var packedIn: FloatBuffer? = null
+    private var outPlanar: FloatBuffer? = null
+    private var synthBytes: ByteBuffer? = null
+    private var curBytes: ByteBuffer? = null
+    private var prevBytes: ByteBuffer? = null
+    private var inA: ByteBuffer? = null
+    private var inB: ByteBuffer? = null
 
     // ---- Safeguard Helpers ----
     private val regularizer = TimestampRegularizer()
     private val statsAcc = StatsAccumulator()
+    private var consecutiveSlowWindows = 0
 
     // ---- Sizes ----
     private var srcW = 0
@@ -246,6 +252,7 @@ class RifeRenderer(
 
         copyProg = Prog(VERTEX, COPY_OES_FRAGMENT)
         lumaProg = Prog(VERTEX, LUMA_FRAGMENT)
+        scaleProg = Prog(VERTEX, SCALE_FRAGMENT)
         cutProg = Prog(VERTEX, CUT_FRAGMENT)
         interpProg = Prog(PRESENT_VERTEX, INTERP_FRAGMENT)
 
@@ -268,14 +275,10 @@ class RifeRenderer(
         inputSurface = s
         callbacks.onInputSurfaceReady(s)
 
-        rifeEngine.initialize(BoosterQuality.PERFORMANCE)
-        modelW = rifeEngine.modelWidth
-        modelH = rifeEngine.modelHeight
-
-        val tensorElems = 3 * modelW * modelH
-        inputBufA = ByteBuffer.allocateDirect(tensorElems * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        inputBufB = ByteBuffer.allocateDirect(tensorElems * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
-        outputBuf = ByteBuffer.allocateDirect(tensorElems * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        if (!rifeEngine.initialize(quality)) {
+            callbacks.onError(FallbackReason.GPU_ERROR, "RIFE session failed")
+            return
+        }
 
         choreographer = Choreographer.getInstance()
         choreographer?.postFrameCallback(frameCallback)
@@ -291,18 +294,44 @@ class RifeRenderer(
         frameW = max(16, width and 1.inv())
         frameH = max(16, height and 1.inv())
 
+        val longEdge = when (quality) {
+            BoosterQuality.PERFORMANCE -> 640
+            BoosterQuality.BALANCED -> 960
+            BoosterQuality.QUALITY -> 1280
+        }
+        val (mw, mh) = RifePacking.modelSize(frameW, frameH, longEdge)
+        modelW = mw
+        modelH = mh
+
         freeSlots()
         slots = Array(SLOT_COUNT) {
             Slot(
                 full = newTexture(frameW, frameH, GLES30.GL_RGBA8, GLES30.GL_LINEAR),
-                luma = newTexture(128, 72, GLES30.GL_R8, GLES30.GL_LINEAR)
+                luma = newTexture(128, 72, GLES30.GL_R8, GLES30.GL_LINEAR),
+                small = newTexture(modelW, modelH, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
             )
         }
         synthTexture = newTexture(modelW, modelH, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
         cutTexture = newTexture(1, 1, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
 
+        val pbos = IntArray(1)
+        GLES30.glGenBuffers(1, pbos, 0)
+        readPbo = pbos[0]
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, readPbo)
+        GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, modelW * modelH * 4, null, GLES30.GL_STREAM_READ)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+
+        packedIn = ByteBuffer.allocateDirect(7 * modelW * modelH * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        outPlanar = ByteBuffer.allocateDirect(3 * modelW * modelH * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        synthBytes = ByteBuffer.allocateDirect(modelW * modelH * 4).order(ByteOrder.nativeOrder())
+        curBytes = ByteBuffer.allocateDirect(modelW * modelH * 4).order(ByteOrder.nativeOrder())
+        prevBytes = ByteBuffer.allocateDirect(modelW * modelH * 4).order(ByteOrder.nativeOrder())
+        inA = ByteBuffer.allocateDirect(modelW * modelH * 4).order(ByteOrder.nativeOrder())
+        inB = ByteBuffer.allocateDirect(modelW * modelH * 4).order(ByteOrder.nativeOrder())
+
         cur = null; prev = null; synthFor = null
         lastDrawnCur = null; lastDrawnPrev = null
+        readSlot = null; lastReadSlot = null; curSlot = null; prevSlot = null
         dirty = true
 
         if (pendingFrame) {
@@ -312,11 +341,15 @@ class RifeRenderer(
     }
 
     private fun cancelEstimate() {
-        activeInferenceTask?.cancel(true)
-        activeInferenceTask = null
+        generation++
         inferenceInFlight = false
         synthFor = null
         flowSkipped = false
+        if (readFence != 0L) {
+            GLES30.glDeleteSync(readFence)
+            readFence = 0L
+        }
+        readSlot = null; lastReadSlot = null; curSlot = null; prevSlot = null
         regularizer.reset()
         estimateLatency.reset()
         nextDueNs = 0L
@@ -340,6 +373,16 @@ class RifeRenderer(
         copyFrameInto(newSlot)
         newSlot.tsNs = regTs
 
+        // Async GPU PBO readback into readPbo
+        bindTarget(newSlot.small, modelW, modelH)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, readPbo)
+        GLES30.glReadPixels(0, 0, modelW, modelH, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, 0)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        if (readFence != 0L) GLES30.glDeleteSync(readFence)
+        readFence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        GLES30.glFlush()
+        readSlot = newSlot
+
         statsAcc.onSourceFrame()
 
         val c = cur
@@ -357,11 +400,6 @@ class RifeRenderer(
         cur = newSlot
         val lead = (regTs - now).coerceIn(-50_000_000L, 200_000_000L)
         leadNs = (leadNs * 7 + lead) / 8
-
-        val p = prev
-        if (p != null && cur != null && synthFor !== cur) {
-            triggerAsyncInference(p, cur!!)
-        }
     }
 
     private fun copyFrameInto(slot: Slot) {
@@ -384,16 +422,24 @@ class RifeRenderer(
         GLES30.glUniform1i(luma.loc("uSrc"), 0)
         GLES30.glUniform2f(luma.loc("uTexel"), 1f / frameW, 1f / frameH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+
+        val scale = scaleProg!!
+        bindTarget(slot.small, modelW, modelH)
+        scale.use()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, slot.full)
+        GLES30.glUniform1i(scale.loc("uSrc"), 0)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    private fun triggerAsyncInference(a: Slot, b: Slot) {
+    private fun submitInference(a: Slot, b: Slot) {
         if (inferenceInFlight) {
             flowSkipped = true
             statsAcc.onEstimateSkipped()
             return
         }
 
-        // Run GPU 1x1 scene cut detector pass first
+        // Run GPU 1x1 scene cut detector pass
         val cut = cutProg!!
         bindTarget(cutTexture, 1, 1)
         cut.use()
@@ -405,30 +451,63 @@ class RifeRenderer(
         GLES30.glUniform1i(cut.loc("uB"), 1)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
+        val gen = ++generation
         inferenceInFlight = true
-        inferenceStartNs = System.nanoTime()
 
-        val bufA = inputBufA
-        val bufB = inputBufB
-        val bufOut = outputBuf
+        val mw = modelW
+        val mh = modelH
+        val curB = curBytes ?: return
+        val prevB = prevBytes ?: return
+        val inA = inA ?: return
+        val inB = inB ?: return
+        val packedIn = packedIn ?: return
+        val outPlanar = outPlanar ?: return
+        val synthBytes = synthBytes ?: return
 
-        if (bufA != null && bufB != null && bufOut != null) {
-            activeInferenceTask = inferenceExecutor.submit {
-                val ok = rifeEngine.interpolateBuffer(bufA, bufB, bufOut, 0.5f)
-                if (ok) {
-                    synthFor = b
-                    flowSkipped = false
-                } else {
-                    flowSkipped = true
-                }
-                val durNs = System.nanoTime() - inferenceStartNs
-                estimateLatency.onSample(durNs)
-                statsAcc.onEstimateMs(durNs / 1e6f)
-                inferenceInFlight = false
+        prevB.rewind(); inA.rewind()
+        inA.put(prevB)
+        prevB.rewind(); inA.rewind()
+
+        curB.rewind(); inB.rewind()
+        inB.put(curB)
+        curB.rewind(); inB.rewind()
+
+        inferenceExecutor.submit {
+            RifePacking.rgbaToPlanar(inA, mw, mh, packedIn, 0)
+            RifePacking.rgbaToPlanar(inB, mw, mh, packedIn, 3 * mw * mh)
+            RifePacking.fillPlane(packedIn, 6 * mw * mh, mw, mh, 0.5f)
+
+            val startNs = System.nanoTime()
+            val ok = rifeEngine.infer(packedIn, mw, mh, outPlanar)
+            if (ok) {
+                outPlanar.rewind()
+                synthBytes.rewind()
+                RifePacking.planarToRgba(outPlanar, mw, mh, synthBytes)
             }
+            val durNs = System.nanoTime() - startNs
+            handler.post { onInferenceDone(gen, targetSlot = b, ok = ok, durNs = durNs) }
+        }
+    }
+
+    private fun onInferenceDone(gen: Int, targetSlot: Slot, ok: Boolean, durNs: Long) {
+        if (released || gen != generation) return
+        inferenceInFlight = false
+        if (ok) {
+            estimateLatency.onSample(durNs)
+            statsAcc.onEstimateMs(durNs / 1e6f)
+            synthBytes?.let { sb ->
+                sb.rewind()
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, synthTexture)
+                GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, modelW, modelH, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, sb)
+                GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
+            }
+            synthFor = targetSlot
+            flowSkipped = false
+            lastDrawnAlpha = -1f
+            dirty = true
         } else {
             flowSkipped = true
-            inferenceInFlight = false
+            statsAcc.onEstimateSkipped()
         }
     }
 
@@ -445,6 +524,43 @@ class RifeRenderer(
             }
         }
         lastVsyncNs = vsyncNs
+
+        // Poll PBO readback sync fence
+        if (readFence != 0L) {
+            val status = GLES30.glClientWaitSync(readFence, 0, 0L)
+            if (status == GLES30.GL_ALREADY_SIGNALED || status == GLES30.GL_CONDITION_SATISFIED) {
+                GLES30.glDeleteSync(readFence)
+                readFence = 0L
+                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, readPbo)
+                val buf = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, modelW * modelH * 4, GLES30.GL_MAP_READ_BIT) as? ByteBuffer
+                if (buf != null) {
+                    curBytes?.let { cb ->
+                        prevBytes?.let { pb ->
+                            cb.rewind(); pb.rewind()
+                            pb.put(cb)
+                            cb.rewind(); pb.rewind()
+                        }
+                        cb.rewind(); buf.rewind()
+                        cb.put(buf)
+                        cb.rewind(); buf.rewind()
+                    }
+                    GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+                }
+                GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+
+                prevSlot = lastReadSlot
+                curSlot = readSlot
+                lastReadSlot = readSlot
+
+                val ps = prevSlot
+                val cs = curSlot
+                if (ps != null && cs != null && synthFor !== cs && !inferenceInFlight) {
+                    if (MotionBoostTiming.isContinuous(ps.tsNs, cs.tsNs)) {
+                        submitInference(ps, cs)
+                    }
+                }
+            }
+        }
 
         val c = cur ?: return
         val fps = targetFps
@@ -517,10 +633,22 @@ class RifeRenderer(
         GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
         GLES30.glUniformMatrix3fv(ip.loc("uColorDelta"), 1, false, colorDelta, 0)
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
+        GLES30.glUniform1f(ip.loc("uConfLo"), 0.15f)
+        GLES30.glUniform1f(ip.loc("uConfHi"), 0.35f)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
+        if (estimateLatency.smoothedNs > 2 * frameIntervalNs && frameIntervalNs > 0) {
+            consecutiveSlowWindows++
+            if (consecutiveSlowWindows >= 3) {
+                callbacks.onError(FallbackReason.RIFE_TOO_SLOW, "RIFE AI inference too slow on this device")
+                return
+            }
+        } else {
+            consecutiveSlowWindows = 0
+        }
+
         val win = statsAcc.poll(nowNs)
         if (win != null) {
             callbacks.onStats(
@@ -563,15 +691,22 @@ class RifeRenderer(
 
     private fun freeSlots() {
         if (slots.isNotEmpty()) {
-            val ids = IntArray(slots.size * 2 + 2)
-            slots.forEachIndexed { i, s -> ids[i * 2] = s.full; ids[i * 2 + 1] = s.luma }
-            ids[ids.size - 2] = synthTexture
-            ids[ids.size - 1] = cutTexture
-            GLES30.glDeleteTextures(ids.size, ids, 0)
+            val ids = IntArray(slots.size * 3 + 3)
+            slots.forEachIndexed { i, s ->
+                ids[i * 3] = s.full
+                ids[i * 3 + 1] = s.luma
+                ids[i * 3 + 2] = s.small
+            }
+            ids[ids.size - 3] = synthTexture
+            ids[ids.size - 2] = cutTexture
+            ids[ids.size - 1] = readPbo
+            GLES30.glDeleteTextures(ids.size - 1, ids, 0)
+            if (readPbo != 0) GLES30.glDeleteBuffers(1, ids, ids.size - 1)
         }
         slots = emptyArray()
         synthTexture = 0
         cutTexture = 0
+        readPbo = 0
     }
 
     private fun releaseGl() {
@@ -579,10 +714,12 @@ class RifeRenderer(
             surfaceTexture?.setOnFrameAvailableListener(null)
             inputSurface?.release()
             surfaceTexture?.release()
+            if (readFence != 0L) GLES30.glDeleteSync(readFence)
+            readFence = 0L
             freeSlots()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            copyProg?.delete(); lumaProg?.delete(); cutProg?.delete(); interpProg?.delete()
+            copyProg?.delete(); lumaProg?.delete(); scaleProg?.delete(); cutProg?.delete(); interpProg?.delete()
             rifeEngine.release()
             inferenceExecutor.shutdownNow()
         }
@@ -675,6 +812,16 @@ void main() {
 
         private val COPY_OES_FRAGMENT: String = DeinterlaceGlsl.oesCopyFragment()
 
+        private const val SCALE_FRAGMENT = """#version 300 es
+precision highp float;
+uniform sampler2D uSrc;
+in vec2 vUv;
+out vec4 o;
+void main() {
+  o = texture(uSrc, vUv);
+}
+"""
+
         private const val LUMA_FRAGMENT = """#version 300 es
 precision highp float;
 uniform sampler2D uSrc;
@@ -718,6 +865,8 @@ uniform float uAlpha;
 uniform int uWarp;
 uniform vec3 uGrade;
 uniform mat3 uColorDelta;
+uniform float uConfLo;
+uniform float uConfHi;
 in vec2 vUv;
 out vec4 o;
 
@@ -738,9 +887,10 @@ void main() {
     vec3 minCol = min(pa, pb);
     vec3 maxCol = max(pa, pb);
     float dev = length(max(vec3(0.0), synth - maxCol) + max(vec3(0.0), minCol - synth));
-    float conf = 1.0 - smoothstep(0.15, 0.35, dev);
+    float conf = 1.0 - smoothstep(uConfLo, uConfHi, dev);
 
-    rgb = mix(plain, synth, conf);
+    vec3 synthT = (uAlpha < 0.5) ? mix(pa, synth, uAlpha * 2.0) : mix(synth, pb, (uAlpha - 0.5) * 2.0);
+    rgb = mix(plain, synthT, conf);
   }
   rgb += uGrade.x;
   rgb = (rgb - 0.5) * uGrade.y + 0.5;

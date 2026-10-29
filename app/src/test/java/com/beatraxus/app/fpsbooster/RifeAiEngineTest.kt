@@ -7,16 +7,16 @@ import org.junit.Test
 class RifeAiEngineTest {
 
     @Test
-    fun modelWidthAndHeightMatchQualityPreset() {
-        val engine = RifeAiEngine(android.content.ContextWrapper(null))
-        // Before initialization, defaults to PERFORMANCE dimensions (640x360)
-        assertEquals(640, engine.modelWidth)
-        assertEquals(360, engine.modelHeight)
+    fun modelSizeReturnsValidMultipleOf32Dimensions() {
+        val (mw, mh) = RifePacking.modelSize(1920, 1080, 640)
+        assertEquals(0, mw % 32)
+        assertEquals(0, mh % 32)
+        assertEquals(640, mw)
+        assertEquals(352, mh)
     }
 
     @Test
-    fun isModelInstalledReturnsFalseWhenAssetsNotPresent() {
-        val context = android.content.ContextWrapper(null)
-        assertFalse(RifeAiEngine.isModelInstalled(context))
+    fun isModelInstalledReturnsFalseWhenContextIsNull() {
+        assertFalse(RifeAiEngine.isModelInstalled(null))
     }
 }

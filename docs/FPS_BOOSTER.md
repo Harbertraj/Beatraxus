@@ -505,11 +505,18 @@ The safeguards and timing improvements developed for the Optical Flow engine wer
 ### 14.2 Verification Matrix
 | Component / Safeguard | Optical Flow | Classic | RIFE AI |
 |---|---|---|---|
-| Timestamp Regularizer | Verified | Verified | Verified |
-| Median Vsync Period Filter (9 samples) | Verified | Verified | Verified |
-| Drift-Free `stepNs` Pacing | Verified | Verified | Verified |
-| Asynchronous Fence-Gated Scheduling | Verified | Verified | Verified |
-| Scene Cut Detector (GPU-resident) | Verified | Verified | Verified |
-| Soft Blend Fallback + Regional Risk | Verified | Verified | Verified |
-| `FpsBoosterManager` / Stats Accumulator | Verified | Verified | Verified |
+| Timestamp Regularizer | Verified | Verified | Not verified on device |
+| Median Vsync Period Filter (9 samples) | Verified | Verified | Not verified on device |
+| Drift-Free `stepNs` Pacing | Verified | Verified | Not verified on device |
+| Asynchronous Fence-Gated Scheduling | Verified | Verified | Not verified on device |
+| Scene Cut Detector (GPU-resident) | Verified | Verified | Not verified on device |
+| Soft Blend Fallback + Regional Risk | Verified | Verified | Not verified on device |
+| `FpsBoosterManager` / Stats Accumulator | Verified | Verified | Not verified on device |
+
+### 14.3 RIFE AI Pipeline
+- **Model Contract**: Single 7-channel float32 input tensor `input` of shape `[batch, 7, height, width]` (NCHW: img0 RGB ch 0-2, img1 RGB ch 3-5, timestep plane ch 6, float 0..1) producing a single 3-channel float32 output tensor `output` of shape `[batch, 3, height, width]`.
+- **Async Execution Pipeline**: GPU downscales frame to quality-selected model size (640 / 960 / 1280 px long edge, both dims rounded to multiple of 32, min 64) -> async PBO pack readback (`GL_PIXEL_PACK_BUFFER`) gated by `glFenceSync` -> thread-safe planar float packing (`RifePacking.rgbaToPlanar` & `fillPlane`) -> ONNX Runtime single-tensor `infer()` -> RGBA unpack (`RifePacking.planarToRgba`) -> `glTexSubImage2D` texture upload -> piecewise-alpha interpolation shader (`INTERP_FRAGMENT`).
+- **2x Target Restriction**: Planner restricts RIFE AI to exact 2x output targets relative to source FPS (within 3%). Other target multipliers automatically select Optical flow.
+- **Speed Gate & Fallback**: Benchmarking measures `rifeInferenceMs`. If inference exceeds the source frame interval or if 3 consecutive statistics windows exceed 2x the source frame interval during runtime, the planner/renderer falls back to Optical flow with user toast notification.
+- **Status**: Kotlin compile and phone timing not verified.
 

@@ -1,6 +1,8 @@
 package com.beatraxus.app.fpsbooster
 
 import com.beatraxus.app.motionboost.MotionBoostTiming
+import java.util.Locale
+import kotlin.math.abs
 
 /** What the device can do (queried once; see [DeviceCapabilities.query]). */
 data class DeviceCaps(
@@ -47,13 +49,14 @@ object FpsBoosterPlanner {
         settings: FpsBoosterSettings,
         caps: DeviceCaps,
         source: SourceInfo,
-        rifeModelInstalled: Boolean = false
+        rifeModelInstalled: Boolean = false,
+        rifeInferenceMs: Float? = null
     ): BoosterPlan {
         if (settings.mode == BoosterMode.OFF) return BoosterPlan.inactive("Off")
         if (source.isHdr) return BoosterPlan.inactive("Not available for HDR videos")
         if (!caps.glEs3) return BoosterPlan.inactive("This device does not support OpenGL ES 3")
 
-        val engine: BoosterEngine
+        var engine: BoosterEngine
         var engineNote: String? = null
 
         when (settings.engine) {
@@ -115,6 +118,20 @@ object FpsBoosterPlanner {
                 lower
             }
         }
+
+        if (engine == BoosterEngine.AI_RIFE) {
+            if (source.fps > 0f) {
+                val is2x = abs(wanted - 2 * source.fps) / (2 * source.fps) <= 0.03f
+                if (!is2x) {
+                    engine = BoosterEngine.OPTICAL_FLOW
+                    note = "RIFE supports 2x only: using Optical flow"
+                } else if (rifeInferenceMs != null && rifeInferenceMs > 1000f / source.fps) {
+                    engine = BoosterEngine.OPTICAL_FLOW
+                    note = String.format(Locale.US, "RIFE too slow on this device (%.0f ms per frame): using Optical flow", rifeInferenceMs)
+                }
+            }
+        }
+
         return BoosterPlan(true, wanted, engine, quality, note)
     }
 

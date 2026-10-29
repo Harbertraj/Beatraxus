@@ -59,24 +59,53 @@ class FpsBoosterPlannerTest {
     }
 
     @Test fun rifeEngineFallbackWhenModelNotInstalled() {
+        val sdr30 = SourceInfo(30f, 1920, 1080, false)
         val rifePlanUninstalled = FpsBoosterPlanner.plan(
-            on().copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = false
+            on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr30, rifeModelInstalled = false
         )
         assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlanUninstalled.engine)
         assertTrue(rifePlanUninstalled.note!!.contains("RIFE model not installed"))
 
         val rifePlanInstalled = FpsBoosterPlanner.plan(
-            on().copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = true
+            on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr30, rifeModelInstalled = true
         )
         assertEquals(BoosterEngine.AI_RIFE, rifePlanInstalled.engine)
         assertNull(rifePlanInstalled.note)
 
         val noFloat = panel120.copy(floatRenderTargets = false)
         val rifeNoFloat = FpsBoosterPlanner.plan(
-            on().copy(engine = BoosterEngine.AI_RIFE), noFloat, sdr24, rifeModelInstalled = true
+            on(60).copy(engine = BoosterEngine.AI_RIFE), noFloat, sdr30, rifeModelInstalled = true
         )
         assertEquals(BoosterEngine.CLASSIC, rifeNoFloat.engine)
         assertTrue(rifeNoFloat.note!!.contains("float textures"))
+    }
+
+    @Test fun rifeEngineFallbackWhenTargetNotExact2x() {
+        // 24 fps -> 60 fps is 2.5x, not exact 2x
+        val rifePlan3x = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlan3x.engine)
+        assertTrue(rifePlan3x.note!!.contains("RIFE supports 2x only"))
+    }
+
+    @Test fun rifeEngineFallbackWhenInferenceTooSlow() {
+        val sdr30 = SourceInfo(30f, 1920, 1080, false)
+        // 30 fps frame interval is 33.3ms; 45ms inference exceeds interval
+        val rifePlanSlow = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 45f
+        )
+        assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlanSlow.engine)
+        assertTrue(rifePlanSlow.note!!.contains("RIFE too slow on this device (45 ms per frame)"))
+    }
+
+    @Test fun rifeEngineSelectedWhenFastAnd2x() {
+        val sdr30 = SourceInfo(30f, 1920, 1080, false)
+        val rifePlanFast = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 20f
+        )
+        assertEquals(BoosterEngine.AI_RIFE, rifePlanFast.engine)
+        assertNull(rifePlanFast.note)
     }
 
     @Test fun autoModePicksSixtyForFilmRate() {
