@@ -150,6 +150,20 @@ class GL:
         g = self.gl
         g.glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
         g.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0)
+        g.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 1, GL_TEXTURE_2D, 0, 0)  # detach a previous MRT target
+        g.glDrawBuffers(1, (c_uint * 1)(GL_COLOR_ATTACHMENT0))
+        status = g.glCheckFramebufferStatus(GL_FRAMEBUFFER)
+        if status != GL_FRAMEBUFFER_COMPLETE:
+            raise RuntimeError(f"framebuffer incomplete 0x{status:x} ({w}x{h})")
+        g.glViewport(0, 0, w, h)
+
+    def bind_targets(self, tex0: int, tex1: int, w: int, h: int) -> None:
+        """Two colour attachments (the AI fusion pass writes layout(location = 0) and (location = 1))."""
+        g = self.gl
+        g.glBindFramebuffer(GL_FRAMEBUFFER, self.fbo)
+        g.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex0, 0)
+        g.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + 1, GL_TEXTURE_2D, tex1, 0)
+        g.glDrawBuffers(2, (c_uint * 2)(GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT0 + 1))
         status = g.glCheckFramebufferStatus(GL_FRAMEBUFFER)
         if status != GL_FRAMEBUFFER_COMPLETE:
             raise RuntimeError(f"framebuffer incomplete 0x{status:x} ({w}x{h})")

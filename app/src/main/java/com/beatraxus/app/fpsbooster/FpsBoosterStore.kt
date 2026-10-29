@@ -23,7 +23,8 @@ object FpsBoosterStore {
             quality = prefs.getString(FpsBoosterPrefs.QUALITY, null),
             adaptive = if (prefs.contains(FpsBoosterPrefs.ADAPTIVE)) prefs.getBoolean(FpsBoosterPrefs.ADAPTIVE, true) else null,
             batterySaver = if (prefs.contains(FpsBoosterPrefs.BATTERY)) prefs.getBoolean(FpsBoosterPrefs.BATTERY, false) else null,
-            showStats = if (prefs.contains(FpsBoosterPrefs.SHOW_STATS)) prefs.getBoolean(FpsBoosterPrefs.SHOW_STATS, true) else null
+            showStats = if (prefs.contains(FpsBoosterPrefs.SHOW_STATS)) prefs.getBoolean(FpsBoosterPrefs.SHOW_STATS, true) else null,
+            aiFusion = if (prefs.contains(FpsBoosterPrefs.AI_FUSION)) prefs.getBoolean(FpsBoosterPrefs.AI_FUSION, false) else null
         )
     }
 
@@ -36,6 +37,7 @@ object FpsBoosterStore {
             .putBoolean(FpsBoosterPrefs.ADAPTIVE, s.adaptiveResolution)
             .putBoolean(FpsBoosterPrefs.BATTERY, s.batterySaver)
             .putBoolean(FpsBoosterPrefs.SHOW_STATS, s.showStats)
+            .putBoolean(FpsBoosterPrefs.AI_FUSION, s.aiFusion)
             .apply()
     }
 

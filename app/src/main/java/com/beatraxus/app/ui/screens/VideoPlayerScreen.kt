@@ -55,6 +55,7 @@ import androidx.compose.ui.zIndex
 import com.beatraxus.app.ui.utils.RenderEffectHelper
 import com.beatraxus.app.motionboost.MotionBoostSurfaceView
 import com.beatraxus.app.fpsbooster.BoosterEngine
+import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterQuality
 import com.beatraxus.app.fpsbooster.BoosterStats
 import com.beatraxus.app.fpsbooster.FallbackReason
@@ -601,6 +602,7 @@ fun VideoPlayerScreen(
         val boostPlan = uiState.fpsBoosterPlan
         val boostActive = boostPlan.active
         val boostEngine = boostPlan.engine
+        val aiFusionOn = BoosterRecommender.aiFusionEnabled(uiState.fpsBooster, boostPlan, uiState.fpsBoosterBenchmark)
         // Rotate / flip / mirror also needs the TextureView: a SurfaceView cannot be transformed. (With the FPS Booster
         // the GL renderer does it itself.)
         val orientation = uiState.videoOrientation
@@ -636,6 +638,7 @@ fun VideoPlayerScreen(
                                     }
                                 }
                                 configure(boostPlan, uiState.fpsBooster)
+                                setAiFusion(aiFusionOn)
                             }
                         } else {
                             MotionBoostSurfaceView(ctx).apply {
@@ -672,6 +675,7 @@ fun VideoPlayerScreen(
                 when (val boostView = view.tag) {
                     is FpsBoosterSurfaceView -> boostView.apply {
                         configure(boostPlan, uiState.fpsBooster)
+                        setAiFusion(aiFusionOn)
                         setDeinterlace(uiState.deinterlaceMode)
                         setColorGrade(uiState.colorBrightness, uiState.colorContrast, uiState.colorSaturation)
                         setColorTune(uiState.colorHue, uiState.colorTemperature)

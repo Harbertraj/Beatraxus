@@ -95,7 +95,7 @@ void main() {
 
         return BenchmarkResult(
             cpuScore = cpuScore, gpuScore = gpuScore, cores = cores,
-            pairMs = gpu.pairMs, warpMs = gpu.warpMs, floatRtOk = gpu.floatRtOk,
+            pairMs = gpu.pairMs, warpMs = gpu.warpMs, floatRtOk = gpu.floatRtOk, fuseMs = gpu.fuseMs,
             measuredAt = System.currentTimeMillis()
         )
     }
@@ -139,7 +139,8 @@ void main() {
         val pairMs: Map<BoosterQuality, Float>,
         val warpMs: Float,
         val floatRtOk: Boolean,
-        val scoreBasis: Pair<BoosterQuality, Float>?
+        val scoreBasis: Pair<BoosterQuality, Float>?,
+        val fuseMs: Float = BenchmarkResult.FUSE_NOT_MEASURED
     )
 
     private fun workSize(q: BoosterQuality): Pair<Int, Int> {
@@ -219,10 +220,14 @@ void main() {
         }
 
         var warp = 0f
+        var fuse = BenchmarkResult.FUSE_NOT_MEASURED
         if (floatOk && pairMs.isNotEmpty()) {
             if (isCancelled()) throw InterruptedException("cancelled")
             onProgress(0.75f, "Testing GPU: output")
             warp = timeWarp(fbo)
+            if (isCancelled()) throw InterruptedException("cancelled")
+            onProgress(0.9f, "Testing GPU: AI fusion")
+            fuse = timeFusion(context, fbo)
         }
         search.delete()
         globalProg.delete()
@@ -230,7 +235,7 @@ void main() {
         GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
         GLES30.glDeleteVertexArrays(1, vao, 0)
         onProgress(1f, "Done")
-        return GpuOutcome(pairMs, warp, floatOk && pairMs.isNotEmpty(), basis.takeIf { floatOk })
+        return GpuOutcome(pairMs, warp, floatOk && pairMs.isNotEmpty(), basis.takeIf { floatOk }, fuse)
     }
 
     /** The renderer's per-pair work: fw + bw hierarchical search (with the dominant-motion pass) at the preset's settings. */
@@ -295,6 +300,112 @@ void main() {
         } finally {
             prog.delete()
             GLES30.glDeleteTextures(5, intArrayOf(a, b, fw, bw, dst), 0)
+        }
+    }
+
+
+    /**
+     * Cost of the AI fusion pass: the booster's real fusion program (flow_interp.frag with FUSE_PASS + the generated
+     * network) writing two RGBA16F attachments at the fusion-map size of the Balanced preset. The inputs are noise with
+     * a non-zero flow, so no pixel takes the static early-out: this is the worst case, which is what a gate needs.
+     * Returns [BenchmarkResult.FUSE_NOT_MEASURED] if the shader does not compile or the GPU rejects two float targets,
+     * and never throws (AI fusion is optional; a failure here must not fail the whole device test).
+     */
+    private fun timeFusion(context: Context, fbo: Int): Float {
+        val ids = ArrayList<Int>()
+        var prog: Program? = null
+        try {
+            val base = context.assets.open("fpsbooster/flow_interp.frag").bufferedReader().use { it.readText() }
+            val weights = context.assets.open("fpsbooster/ai_fusion.glsl").bufferedReader().use { it.readText() }
+            val maxDraw = IntArray(1)
+            GLES30.glGetIntegerv(GLES30.GL_MAX_DRAW_BUFFERS, maxDraw, 0)
+            if (maxDraw[0] < 2) return BenchmarkResult.FUSE_NOT_MEASURED
+            prog = Program(VERTEX, InterpShaderSource.build(base, fuse = true, weights = weights))
+
+            val (workW, workH) = workSize(BoosterQuality.BALANCED)
+            val (fw, fh) = InterpShaderSource.fuseSize(workW, workH)
+            val gw = workW / PITCH; val gh = workH / PITCH
+            val rnd = Random(11)
+            GLES30.glPixelStorei(GLES30.GL_UNPACK_ALIGNMENT, 1)
+
+            fun noiseRgba(w: Int, h: Int): Int {
+                val t = newTexture(w, h, GLES30.GL_RGBA8, linear = true); ids.add(t)
+                val bytes = ByteArray(w * h * 4); rnd.nextBytes(bytes)
+                val buf = ByteBuffer.allocateDirect(bytes.size); buf.put(bytes).position(0)
+                GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE, buf)
+                return t
+            }
+            fun floatRgba(w: Int, h: Int, linear: Boolean, texel: (Int) -> FloatArray): Int {
+                val t = newTexture(w, h, GLES30.GL_RGBA16F, linear); ids.add(t)
+                val buf = ByteBuffer.allocateDirect(w * h * 16).order(java.nio.ByteOrder.nativeOrder())
+                val fb = buf.asFloatBuffer()
+                for (i in 0 until w * h) fb.put(texel(i))
+                buf.position(0)
+                GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, w, h, GLES30.GL_RGBA, GLES30.GL_FLOAT, buf)
+                return t
+            }
+            val a = noiseRgba(1920, 1080)
+            val b = noiseRgba(1920, 1080)
+            // flow: x/y vary a little around a real-looking motion, a = forward/backward inconsistency, b = match cost
+            val fwTex = floatRgba(gw, gh, true) { floatArrayOf(6f + rnd.nextFloat() * 2f, 3f + rnd.nextFloat(), 0.4f, 0.05f) }
+            val bwTex = floatRgba(gw, gh, true) { floatArrayOf(-6f - rnd.nextFloat() * 2f, -3f - rnd.nextFloat(), 0.4f, 0.05f) }
+            val cut = newTexture(1, 1, GLES30.GL_RGBA8, linear = false); ids.add(cut)
+            // explicit zeros: b < 0.5 means "no scene cut" (texture storage is not guaranteed to start cleared)
+            GLES30.glTexSubImage2D(GLES30.GL_TEXTURE_2D, 0, 0, 0, 1, 1, GLES30.GL_RGBA, GLES30.GL_UNSIGNED_BYTE,
+                ByteBuffer.allocateDirect(4).also { it.put(ByteArray(4)).position(0) })
+            val glob = floatRgba(1, 1, false) { floatArrayOf(5f, 2f, 0.5f, 0f) }
+            val dst0 = newTexture(fw, fh, GLES30.GL_RGBA16F, linear = true); ids.add(dst0)
+            val dst1 = newTexture(fw, fh, GLES30.GL_RGBA16F, linear = true); ids.add(dst1)
+
+            GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, dst0, 0)
+            GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0 + 1, GLES30.GL_TEXTURE_2D, dst1, 0)
+            GLES30.glDrawBuffers(2, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_COLOR_ATTACHMENT0 + 1), 0)
+            try {
+                if (GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) != GLES30.GL_FRAMEBUFFER_COMPLETE) {
+                    return BenchmarkResult.FUSE_NOT_MEASURED
+                }
+                GLES30.glViewport(0, 0, fw, fh)
+                prog.use()
+                for ((unit, pair) in listOf("uA" to a, "uB" to b, "uFw" to fwTex, "uBw" to bwTex, "uCut" to cut, "uGlobal" to glob).withIndex()) {
+                    GLES30.glActiveTexture(GLES30.GL_TEXTURE0 + unit)
+                    GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, pair.second)
+                    GLES30.glUniform1i(prog.loc(pair.first), unit)
+                }
+                GLES30.glUniform1i(prog.loc("uWarp"), 1)
+                GLES30.glUniform2f(prog.loc("uWork"), workW.toFloat(), workH.toFloat())
+                GLES30.glUniform2f(prog.loc("uFlowUv"), workW.toFloat() / (gw * PITCH), workH.toFloat() / (gh * PITCH))
+                GLES30.glUniform3f(prog.loc("uGrade"), 0f, 1f, 1f)
+                GLES30.glUniformMatrix3fv(prog.loc("uColorDelta"), 1, false, FloatArray(9), 0)
+                GLES30.glUniform1f(prog.loc("uConsLo"), 0.5f)
+                GLES30.glUniform1f(prog.loc("uConsHi"), 2.5f)
+                GLES30.glUniform1i(prog.loc("uSharp"), 1)
+                fun one(t: Float): Float {
+                    val t0 = System.nanoTime()
+                    GLES30.glUniform1f(prog.loc("uT"), t)
+                    GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+                    GLES30.glFinish()
+                    return (System.nanoTime() - t0) / 1e6f
+                }
+                while (GLES30.glGetError() != GLES30.GL_NO_ERROR) { /* drop errors left by earlier code */ }
+                val first = one(0.5f)   // driver warm-up / shader finalisation
+                if (GLES30.glGetError() != GLES30.GL_NO_ERROR) return BenchmarkResult.FUSE_NOT_MEASURED
+                if (first > GIVE_UP_PAIR_MS * 2) return first
+                one(0.5f)
+                return median(List(TIMED_RUNS) { one(0.25f + (it % 3) * 0.25f) })
+            } finally {
+                // back to the single-target state every other pass assumes
+                GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0 + 1, GLES30.GL_TEXTURE_2D, 0, 0)
+                GLES30.glDrawBuffers(1, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0), 0)
+            }
+        } catch (e: InterruptedException) {
+            throw e
+        } catch (t: Throwable) {
+            Log.w(TAG, "AI fusion benchmark unavailable", t)
+            return BenchmarkResult.FUSE_NOT_MEASURED
+        } finally {
+            prog?.delete()
+            if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         }
     }
 

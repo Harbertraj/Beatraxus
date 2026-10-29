@@ -22,6 +22,11 @@ COARSEST_EDGE = 40   # keep in sync with FlowPyramid.COARSEST_EDGE: the coarsest
 MAX_LEVELS = 6       # ... and FlowPyramid.MAX_LEVELS
 GLOBAL_SAMPLES = (12, 8)   # keep in sync with OpticalFlowRenderer.GLOBAL_SAMPLES_X / _Y
 GLOBAL_MAX_COST = 0.08     # ... GLOBAL_MAX_COST
+FUSE_MAX_EDGE = 960        # keep in sync with InterpShaderSource.FUSE_MAX_EDGE: the AI fusion map is at most this wide
+AI_NF = 22                 # network inputs   (flow_interp.frag, ai_fusion.glsl)
+AI_NK = 6                  # candidates       (flow_interp.frag, ai_fusion.glsl)
+DUMP_PAGES = 11            # 4 floats each: AI_NF inputs + 3 * AI_NK candidate colours + valid flag, padded to 44
+AI_WEIGHTS = Path(os.environ.get("FPSB_AI_WEIGHTS") or ASSETS / "ai_fusion.glsl")
 
 PRESETS = {  # work_edge, coarsest search range, sub-pixel refinement on the finest level
     "performance": dict(work_edge=640, range=10, subpel=0),
@@ -48,6 +53,28 @@ def _src(name: str) -> str:
     return (ASSETS / name).read_text()
 
 
+def fuse_size(work_w: int, work_h: int) -> tuple[int, int]:
+    """Size of the AI fusion map: the motion-search size, capped at FUSE_MAX_EDGE on the long side."""
+    sc = min(1.0, FUSE_MAX_EDGE / max(work_w, work_h))
+    return max(16, int(round(work_w * sc))), max(16, int(round(work_h * sc)))
+
+
+DUMP_STUB = f"""const int AI_NF = {AI_NF};
+const int AI_NK = {AI_NK};
+void aiNet(in float x[AI_NF], out float w[AI_NK]) {{ w[0] = 1.0; w[1] = 0.0; w[2] = 0.0; w[3] = 0.0; w[4] = 0.0; w[5] = 0.0; }}
+"""
+
+
+def interp_source(*, ai: bool = False, fuse: bool = False, dump: bool = False, weights: str | None = None) -> str:
+    """Mirror of InterpShaderSource.build (Kotlin): prepend the #defines after the #version line, insert the weights."""
+    src = _src("flow_interp.frag")
+    head, rest = src.split("\n", 1)
+    defs = f"#define AI_FUSION {int(ai)}\n#define FUSE_PASS {int(fuse)}\n#define AI_DUMP {int(dump)}\n"
+    if fuse:
+        rest = rest.replace("// @AI_FUSION_WEIGHTS@", weights if weights is not None else AI_WEIGHTS.read_text())
+    return head + "\n" + defs + rest
+
+
 class NewEngine(Engine):
     """`over` overrides preset / pipeline settings (used to reproduce the pre-fix behaviour as a baseline):
     stop (pyramid stop edge), range, subpel, work_edge, use_global (dominant-motion candidate)."""
@@ -64,7 +91,14 @@ class NewEngine(Engine):
         self.p_search = gl.program(_src("flow_search.frag"))
         self.p_cons = gl.program(_src("flow_consistency.frag"))
         self.p_cut = gl.program(_src("cut_detect.frag"))
-        self.p_interp = gl.program(_src("flow_interp.frag"))
+        self.ai = bool(self.cfg.get("ai", False))
+        self.sharp = int(self.cfg.get("sharp", 1))      # the app ships with 1 (PRESERVE_SHARPNESS)
+        if self.ai:
+            self.p_interp = gl.program(interp_source(ai=True))
+            self.p_fuse = gl.program(interp_source(fuse=True, weights=self.cfg.get("weights")))
+        else:
+            self.p_interp = gl.program(interp_source())
+        self.p_dump = None
         gm = ASSETS / "global_motion.frag"
         self.p_glob = gl.program(gm.read_text()) if gm.exists() else None
         self.size = None
@@ -103,6 +137,9 @@ class NewEngine(Engine):
         self.gcoarse = {d: gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST) for d in ("fw", "bw")}   # dominant motion, coarsest field
         self.gfinal = gl.texture(1, 1, G.GL_RGBA16F, G.GL_NEAREST)                                # dominant motion, final fw field
         self.out = gl.texture(self.frameW, self.frameH, G.GL_RGBA8)
+        self.fuseW, self.fuseH = fuse_size(self.workW, self.workH)
+        self.fuse = [gl.texture(self.fuseW, self.fuseH, G.GL_RGBA16F, G.GL_LINEAR) for _ in range(2)]
+        self.dump_tex = [gl.texture(self.fuseW, self.fuseH, G.GL_RGBA32F, G.GL_NEAREST) for _ in range(2)]
         self.size = (w, h)
 
     def _free(self) -> None:
@@ -117,7 +154,7 @@ class NewEngine(Engine):
             for pair in d:
                 for t in pair:
                     gl.delete_texture(t)
-        for t in (*self.final.values(), *self.gcoarse.values(), self.cut, self.gfinal, self.out):
+        for t in (*self.final.values(), *self.gcoarse.values(), self.cut, self.gfinal, self.out, *self.fuse, *self.dump_tex):
             gl.delete_texture(t)
         self.slots = []
         self.size = None
@@ -226,21 +263,64 @@ class NewEngine(Engine):
         gl.draw()
         self.flow_for = self.cur
 
-    def interpolate(self, t: float) -> np.ndarray:
-        gl = self.gl
+    def _bind_interp_inputs(self, p, A, B, t: float, warp: bool) -> None:
+        gw, gh = self.grids[0]
+        p.tex(0, "uA", A["full"]).tex(1, "uB", B["full"]).tex(2, "uFw", self.final["fw"]) \
+            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut).tex(5, "uGlobal", self.gfinal)
+        if warp:
+            p.f1("uT", t).i1("uWarp", 1)
+        else:  # nothing to interpolate with: show the only frame
+            p.f1("uT", 1.0).i1("uWarp", 0)
+        p.f2("uWork", *self.sizes[0]).f2("uFlowUv", self.sizes[0][0] / (gw * PITCH), self.sizes[0][1] / (gh * PITCH))
+        p.f3("uGrade", 0.0, 1.0, 1.0).f1("uConsLo", self.cons[0]).f1("uConsHi", self.cons[1])
+        p.i1("uSharp", self.sharp)
+
+    def _prepare(self) -> tuple[dict, dict, bool]:
         A = self.prev if self.prev is not None else self.cur
         B = self.cur
         if self.prev is not None and self.flow_for is not self.cur:
             self._estimate(self.prev, self.cur)
-        gw, gh = self.grids[0]
+        return A, B, self.prev is not None
+
+    def fuse_pass(self, A, B, t: float, warp: bool) -> None:
+        """Writes the AI fusion map (two RGBA16F attachments) at fuse size."""
+        gl = self.gl
+        gl.bind_targets(self.fuse[0], self.fuse[1], self.fuseW, self.fuseH)
+        p = self.p_fuse.use()
+        self._bind_interp_inputs(p, A, B, t, warp)
+        gl.draw()
+        self.gpu_passes += 1
+
+    def interpolate(self, t: float) -> np.ndarray:
+        gl = self.gl
+        A, B, warp = self._prepare()
+        if self.ai and warp:
+            self.fuse_pass(A, B, t, warp)
         gl.bind_target(self.out, self.frameW, self.frameH)
-        p = self.p_interp.use().tex(0, "uA", A["full"]).tex(1, "uB", B["full"]).tex(2, "uFw", self.final["fw"]) \
-            .tex(3, "uBw", self.final["bw"]).tex(4, "uCut", self.cut).tex(5, "uGlobal", self.gfinal)
-        if self.prev is None:  # nothing to interpolate with: show the only frame
-            p.f1("uT", 1.0).i1("uWarp", 0)
-        else:
-            p.f1("uT", t).i1("uWarp", 1)
-        p.f2("uWork", *self.sizes[0]).f2("uFlowUv", self.sizes[0][0] / (gw * PITCH), self.sizes[0][1] / (gh * PITCH))
-        p.f3("uGrade", 0.0, 1.0, 1.0).f1("uConsLo", self.cons[0]).f1("uConsHi", self.cons[1])
+        p = self.p_interp.use()
+        self._bind_interp_inputs(p, A, B, t, warp)
+        if self.ai:
+            p.tex(6, "uFuse0", self.fuse[0]).tex(7, "uFuse1", self.fuse[1])
         gl.draw()
         return gl.read_rgba8(self.out, self.frameW, self.frameH)[:, :, :3]
+
+    def dump(self, t: float) -> dict:
+        """Training record at fuse size for the pair currently held: network inputs, six candidate colours (bilinear)
+        and a valid flag per pixel (pixels the shader would not send through the network are invalid). Rows are top-first.
+        Uses the weights-free stub network, so it is independent of the weights under training."""
+        gl = self.gl
+        if self.p_dump is None:
+            self.p_dump = gl.program(interp_source(fuse=True, dump=True, weights=DUMP_STUB))
+        A, B, warp = self._prepare()
+        assert warp, "dump needs two frames"
+        W, H = self.fuseW, self.fuseH
+        rec = np.empty((H, W, DUMP_PAGES * 4), np.float32)
+        for page in range(DUMP_PAGES):
+            gl.bind_targets(self.dump_tex[0], self.dump_tex[1], W, H)
+            p = self.p_dump.use()
+            self._bind_interp_inputs(p, A, B, t, True)
+            p.i1("uDumpPage", page)
+            gl.draw()
+            rec[:, :, page * 4:(page + 1) * 4] = gl.read_rgba32f(self.dump_tex[0], W, H)
+        nf, nk = AI_NF, AI_NK
+        return dict(x=rec[:, :, :nf], cand=rec[:, :, nf:nf + 3 * nk].reshape(H, W, nk, 3), valid=rec[:, :, nf + 3 * nk] > 0.5)

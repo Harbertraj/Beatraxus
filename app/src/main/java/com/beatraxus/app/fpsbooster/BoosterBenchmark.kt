@@ -14,6 +14,9 @@ import com.beatraxus.app.motionboost.MotionBoostTiming
  *   per quality preset at 16:9. A preset that was not measured (device too slow to bother) is absent.
  * @property warpMs milliseconds to produce one 1080p output frame (the work done for every displayed frame).
  * @property floatRtOk false when the GPU cannot render to float textures: Optical flow cannot run at all.
+ * @property fuseMs milliseconds the AI fusion pass needs for one generated frame (real shader, 960x540 fusion map,
+ *   worst case: every pixel goes through the network). [FUSE_NOT_MEASURED] when it could not be measured: the GPU
+ *   rejected two float render targets or the shader did not compile, so AI fusion is not offered.
  */
 data class BenchmarkResult(
     val cpuScore: Int,
@@ -22,6 +25,7 @@ data class BenchmarkResult(
     val pairMs: Map<BoosterQuality, Float>,
     val warpMs: Float,
     val floatRtOk: Boolean,
+    val fuseMs: Float = FUSE_NOT_MEASURED,
     val measuredAt: Long = 0L,
     val version: Int = VERSION
 ) {
@@ -29,25 +33,29 @@ data class BenchmarkResult(
     fun toStored(): String = buildString {
         append(version).append('|').append(cpuScore).append('|').append(gpuScore).append('|').append(cores).append('|')
         append(BoosterQuality.entries.joinToString(",") { q -> pairMs[q]?.toString() ?: "-" }).append('|')
-        append(warpMs).append('|').append(if (floatRtOk) 1 else 0).append('|').append(measuredAt)
+        append(warpMs).append('|').append(if (floatRtOk) 1 else 0).append('|').append(measuredAt).append('|').append(fuseMs)
     }
 
     companion object {
         /** Bump when the test changes so old results are discarded and the test runs again. */
-        const val VERSION = 1
+        const val VERSION = 2
+
+        /** [fuseMs] value for "the fusion pass could not run on this GPU". */
+        const val FUSE_NOT_MEASURED = -1f
 
         fun fromStored(s: String?): BenchmarkResult? {
             if (s.isNullOrBlank()) return null
             return try {
                 val p = s.split('|')
-                if (p.size != 8 || p[0].toInt() != VERSION) return null
+                if (p.size != 9 || p[0].toInt() != VERSION) return null
                 val ms = p[4].split(',')
                 if (ms.size != BoosterQuality.entries.size) return null
                 val map = HashMap<BoosterQuality, Float>()
                 BoosterQuality.entries.forEachIndexed { i, q -> ms[i].toFloatOrNull()?.let { map[q] = it } }
                 BenchmarkResult(
                     cpuScore = p[1].toInt(), gpuScore = p[2].toInt(), cores = p[3].toInt(),
-                    pairMs = map, warpMs = p[5].toFloat(), floatRtOk = p[6] == "1", measuredAt = p[7].toLong()
+                    pairMs = map, warpMs = p[5].toFloat(), floatRtOk = p[6] == "1",
+                    fuseMs = p[8].toFloat(), measuredAt = p[7].toLong()
                 )
             } catch (e: NumberFormatException) {
                 null
@@ -88,6 +96,33 @@ object BoosterRecommender {
     /** Below this CPU score the target is capped at 60 FPS (the CPU also decodes and feeds the GPU). */
     const val WEAK_CPU_SCORE = 500
 
+    /** AI fusion is refused when one pass alone costs more than this (ms, 960x540 map, worst case). */
+    const val FUSE_MAX_MS = 4f
+
+    /**
+     * The benchmark gate for AI fusion. Per second the GPU already spends 30 pair estimations + one warp per displayed
+     * frame (see [recommend]); fusion adds one fusion pass per displayed frame and the AI composite costs about as much
+     * as the hand-tuned warp it replaces. Allowed only if the same [GPU_BUDGET_MS_PER_S] still holds with that added.
+     * Pure: unit tested without a GPU.
+     */
+    fun aiFusionVerdict(r: BenchmarkResult?, quality: BoosterQuality, targetFps: Int): AiFusionVerdict {
+        if (r == null) return AiFusionVerdict.NOT_TESTED
+        if (!r.floatRtOk || r.fuseMs <= 0f) return AiFusionVerdict.UNSUPPORTED
+        val pair = r.pairMs[quality] ?: return AiFusionVerdict.TOO_SLOW
+        if (pair > PAIR_BUDGET_MS || r.fuseMs > FUSE_MAX_MS) return AiFusionVerdict.TOO_SLOW
+        val perSecond = SOURCE_FPS * pair + targetFps * (r.warpMs + r.fuseMs)
+        return if (perSecond <= GPU_BUDGET_MS_PER_S) AiFusionVerdict.OK else AiFusionVerdict.TOO_SLOW
+    }
+
+    /**
+     * The single decision the player acts on: AI fusion runs only if the user turned it on, the optical-flow engine is
+     * the one running (not RIFE / Classic), battery saver is off and the device test passed the gate for the quality and
+     * target that are actually in use. Anything else keeps the hand-tuned blend.
+     */
+    fun aiFusionEnabled(s: FpsBoosterSettings, plan: BoosterPlan, bench: BenchmarkState): Boolean =
+        s.aiFusion && !s.batterySaver && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW &&
+            aiFusionVerdict((bench as? BenchmarkState.Done)?.result, plan.quality, plan.targetFps) == AiFusionVerdict.OK
+
     fun recommend(r: BenchmarkResult, panelRates: List<Float>): Recommendation {
         val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isRateSupported(panelRates, it) }.ifEmpty { listOf(30) }
         val weakCpu = r.cpuScore in 1 until WEAK_CPU_SCORE
@@ -121,6 +156,14 @@ object BoosterRecommender {
             "Entry device: $why, so Classic at up to $target FPS is the smooth choice."
         )
     }
+}
+
+/** Whether the learned fusion may run, as decided by [BoosterRecommender.aiFusionVerdict]. */
+enum class AiFusionVerdict(val message: String?) {
+    OK(null),
+    NOT_TESTED("Run the device test to find out whether your GPU can run AI fusion."),
+    UNSUPPORTED("This GPU cannot run AI fusion (it needs two float render targets)."),
+    TOO_SLOW("Too heavy for this GPU at the current quality and FPS target. Lower either one to use AI fusion.")
 }
 
 /** What the settings sheet shows for the device test. */

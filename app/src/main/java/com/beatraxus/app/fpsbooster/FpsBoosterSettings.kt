@@ -79,7 +79,12 @@ data class FpsBoosterSettings(
     /** Cap target FPS at 60, force Performance quality and never raise quality automatically. */
     val batterySaver: Boolean = false,
     /** Show the live statistics overlay in the settings sheet. */
-    val showStats: Boolean = true
+    val showStats: Boolean = true,
+    /**
+     * Learned fusion of the optical-flow candidates (see `docs/FPS_BOOSTER.md` section 13). Off by default and only
+     * honoured when the device test says the GPU can afford it ([BoosterRecommender.aiFusionVerdict]).
+     */
+    val aiFusion: Boolean = false
 ) {
     val isOn: Boolean get() = mode != BoosterMode.OFF
 
@@ -87,7 +92,7 @@ data class FpsBoosterSettings(
         /** Builds settings from raw stored values; unknown / missing / corrupt values fall back to defaults. */
         fun fromStored(
             mode: String?, targetFps: Int?, engine: String?, quality: String?,
-            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?
+            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null
         ) = FpsBoosterSettings(
             mode = BoosterMode.fromName(mode),
             targetFps = BoosterTargets.sanitize(targetFps ?: BoosterTargets.DEFAULT),
@@ -95,7 +100,8 @@ data class FpsBoosterSettings(
             quality = BoosterQuality.fromName(quality),
             adaptiveResolution = adaptive ?: true,
             batterySaver = batterySaver ?: false,
-            showStats = showStats ?: true
+            showStats = showStats ?: true,
+            aiFusion = aiFusion ?: false
         )
 
         /**
@@ -129,6 +135,7 @@ object FpsBoosterPrefs {
     const val ADAPTIVE = "fpsb_adaptive"
     const val BATTERY = "fpsb_battery"
     const val SHOW_STATS = "fpsb_stats"
+    const val AI_FUSION = "fpsb_ai_fusion"
     const val MIGRATED = "fpsb_migrated_v1"
     const val BENCH = "fpsb_bench"
     const val BENCH_SKIPPED = "fpsb_bench_skipped"

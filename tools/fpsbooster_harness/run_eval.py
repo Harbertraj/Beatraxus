@@ -34,9 +34,16 @@ def make_engine(name: str) -> E.Engine:
         return E.BlendEngine()
     if name == "legacy":
         return E.LegacyEngine()
-    if name == "new":
+    base, _, preset = name.partition(":")      # "new", "new:performance", "new_ai:quality" ...
+    preset = preset or "balanced"
+    if base == "new":
         import new_engine
-        return new_engine.NewEngine()
+        return new_engine.NewEngine(preset)
+    if base == "new_ai":  # same engine, AI fusion composite (weights: FPSB_AI_WEIGHTS or assets/ai_fusion.glsl)
+        import new_engine
+        e = new_engine.NewEngine(preset, ai=True)
+        e.name += " +AI"
+        return e
     raise SystemExit(f"unknown engine {name}")
 
 

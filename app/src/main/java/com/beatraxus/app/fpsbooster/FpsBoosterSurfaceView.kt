@@ -52,6 +52,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private var temperature = 0f
     private var orientation = VideoOrientation.NONE
     private var deinterlace = DeinterlaceMode.OFF
+    private var aiFusion = false
 
     private val playerListener = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -114,6 +115,17 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer?.setDeinterlace(mode.shaderValue)
     }
 
+    /**
+     * Learned fusion of the optical-flow candidates. The caller passes the final decision (user setting AND device-test
+     * verdict, see [BoosterRecommender.aiFusionVerdict]); this class does not re-check it. Only a change is passed on,
+     * and a renderer created later (surface recreation, rotation) gets the stored value in surfaceCreated.
+     */
+    fun setAiFusion(enabled: Boolean) {
+        if (enabled == aiFusion) return
+        aiFusion = enabled
+        renderer?.setAiFusion(enabled)
+    }
+
     private fun startManager() {
         manager?.release()
         val p = plan ?: return
@@ -151,6 +163,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         created.setColorTune(hue, temperature)
         created.setOrientation(orientation)
         created.setDeinterlace(deinterlace.shaderValue)
+        if (aiFusion) created.setAiFusion(true)
         player?.let { pl ->
             pl.addListener(playerListener)
             val size = pl.videoSize

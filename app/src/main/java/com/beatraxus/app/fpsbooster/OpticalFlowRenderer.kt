@@ -117,7 +117,16 @@ class OpticalFlowRenderer(
     private var consProg: Prog? = null
     private var cutProg: Prog? = null
     private var globalProg: Prog? = null
-    private var interpProg: Prog? = null
+    private var interpProg: Prog? = null            // the hand-tuned blend; always present, also the fallback
+    private var aiInterpProg: Prog? = null          // composite that reads the fusion map (only with fuseProg + fuseTex)
+
+    // ---- AI fusion (optional, off by default; see [setAiFusion]) ----
+    /** Writes the fusion map: a small network picks the blend weights of six candidate colours per pixel. */
+    private var fuseProg: Prog? = null
+    private var fuseTex = IntArray(0)                       // two RGBA16F attachments (weights of candidates 0..3 and 4..5)
+    private var fuseW = 0
+    private var fuseH = 0
+    @Volatile private var aiFusionWanted = false
 
     private var slots: Array<Slot> = emptyArray()
     private val queue = ArrayList<Slot>(SLOT_COUNT)        // decoded frames, ascending timestamp
@@ -248,6 +257,17 @@ class OpticalFlowRenderer(
         handler.post { runGuarded("resize failed") { applySourceSize(width, height) } }
     }
 
+    /**
+     * Replaces the hand-tuned "is this warp trustworthy" logic by a small trained network (generated GLSL, no runtime,
+     * no model file). Off by default. If the GPU cannot build it the renderer keeps the hand-tuned path and this stays
+     * off: it never takes the booster down.
+     */
+    fun setAiFusion(enabled: Boolean) {
+        if (aiFusionWanted == enabled) return
+        aiFusionWanted = enabled
+        handler.post { if (!released && eglContext != EGL14.EGL_NO_CONTEXT) applyAiFusion() }
+    }
+
     /** Stops rendering and frees all GL / EGL resources; waits briefly for the GL thread. */
     fun release() {
         if (released) return
@@ -306,6 +326,7 @@ class OpticalFlowRenderer(
         cutProg = Prog(VERTEX, asset("cut_detect.frag"))
         globalProg = Prog(VERTEX, asset("global_motion.frag"))
         interpProg = Prog(PRESENT_VERTEX, asset("flow_interp.frag"))
+        if (aiFusionWanted) applyAiFusion()
 
         val ids = IntArray(1)
         GLES30.glGenFramebuffers(1, ids, 0)
@@ -367,6 +388,12 @@ class OpticalFlowRenderer(
             )
         }
         flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
+        if (fuseProg != null) {
+            try { allocFuseTextures() } catch (t: Throwable) {
+                Log.w(TAG, "AI fusion map allocation failed, keeping the hand-tuned blend", t)
+                dropAiFusion()
+            }
+        }
         globalCoarse = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F) }
         queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
         holdCtl.reset()
@@ -676,7 +703,111 @@ class OpticalFlowRenderer(
         callbacks.onWindow(w, sourceFps, levelW.firstOrNull() ?: 0, lastHoldNs / 1e6f)
     }
 
+    /**
+     * Builds (or removes) the AI programs on the GL thread. The plain hand-tuned program ([interpProg]) is never
+     * replaced: the AI composite is a separate program ([aiInterpProg]) that [drawOutput] only uses while the fusion map
+     * exists, so a failure at any point (compile, two float targets, allocation) leaves the picture exactly as it was.
+     */
+    private fun applyAiFusion() {
+        val want = aiFusionWanted
+        if (want == (fuseProg != null)) return
+        if (!want) {
+            aiInterpProg?.delete(); fuseProg?.delete()
+            aiInterpProg = null; fuseProg = null
+            freeFuseTextures()
+            dirty = true
+            return
+        }
+        var newInterp: Prog? = null
+        var newFuse: Prog? = null
+        try {
+            val base = asset("flow_interp.frag")
+            val maxDraw = IntArray(1)
+            GLES30.glGetIntegerv(GLES30.GL_MAX_DRAW_BUFFERS, maxDraw, 0)
+            check(maxDraw[0] >= 2) { "needs 2 draw buffers" }
+            newFuse = Prog(VERTEX, InterpShaderSource.build(base, fuse = true, weights = asset("ai_fusion.glsl")))
+            newInterp = Prog(PRESENT_VERTEX, InterpShaderSource.build(base, ai = true))
+            fuseProg = newFuse
+            aiInterpProg = newInterp
+            freeFuseTextures()
+            allocFuseTextures()          // no-op until the source size is known; applySourceSize allocates then
+        } catch (t: Throwable) {
+            Log.w(TAG, "AI fusion unavailable, keeping the hand-tuned blend", t)
+            newFuse?.delete(); newInterp?.delete()
+            fuseProg = null; aiInterpProg = null
+            dropAiFusion()
+        }
+        dirty = true
+    }
+
+    /** Back to the hand-tuned blend for good (until [setAiFusion] is called again): frees the AI programs and the map. */
+    private fun dropAiFusion() {
+        aiInterpProg?.delete(); fuseProg?.delete()
+        aiInterpProg = null; fuseProg = null
+        freeFuseTextures()           // (allocFuseTextures already restored the single-target state before it failed)
+        aiFusionWanted = false
+    }
+
+    private fun allocFuseTextures() {
+        if (levelW.isEmpty()) return   // sizes not known yet: applySourceSize allocates
+        val (w, h) = InterpShaderSource.fuseSize(levelW[0], levelH[0])
+        fuseW = w; fuseH = h
+        fuseTex = IntArray(2) { newTexture(w, h, GLES30.GL_RGBA16F) }
+        // verify once that the GPU accepts two float attachments
+        bindFuseTargets()
+        val ok = GLES30.glCheckFramebufferStatus(GLES30.GL_FRAMEBUFFER) == GLES30.GL_FRAMEBUFFER_COMPLETE
+        releaseFuseTargets()
+        check(ok) { "fusion map framebuffer incomplete" }
+    }
+
+    private fun freeFuseTextures() {
+        if (fuseTex.isNotEmpty()) GLES30.glDeleteTextures(fuseTex.size, fuseTex, 0)
+        fuseTex = IntArray(0)
+    }
+
+    private fun bindFuseTargets() {
+        GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, fbo)
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_TEXTURE_2D, fuseTex[0], 0)
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0 + 1, GLES30.GL_TEXTURE_2D, fuseTex[1], 0)
+        GLES30.glDrawBuffers(2, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0, GLES30.GL_COLOR_ATTACHMENT0 + 1), 0)
+    }
+
+    /** Back to the single-target state every other pass assumes. */
+    private fun releaseFuseTargets() {
+        GLES30.glFramebufferTexture2D(GLES30.GL_FRAMEBUFFER, GLES30.GL_COLOR_ATTACHMENT0 + 1, GLES30.GL_TEXTURE_2D, 0, 0)
+        GLES30.glDrawBuffers(1, intArrayOf(GLES30.GL_COLOR_ATTACHMENT0), 0)
+    }
+
+    /** Uniforms / textures the hand-tuned program, the fusion pass and the AI composite all read. */
+    private fun setInterpInputs(p: Prog, a: Slot, b: Slot, alpha: Float, warp: Boolean) {
+        tex(0, p, "uA", a.full); tex(1, p, "uB", b.full)
+        tex(2, p, "uFw", b.fw); tex(3, p, "uBw", b.bw); tex(4, p, "uCut", b.cut); tex(5, p, "uGlobal", b.glob)
+        GLES30.glUniform1f(p.loc("uT"), if (warp) alpha else 1f)
+        GLES30.glUniform1i(p.loc("uWarp"), if (warp) 1 else 0)
+        GLES30.glUniform2f(p.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
+        GLES30.glUniform2f(p.loc("uFlowUv"), levelW[0].toFloat() / (gridW[0] * PITCH), levelH[0].toFloat() / (gridH[0] * PITCH))
+        GLES30.glUniform3f(p.loc("uGrade"), brightness, contrast, saturation)
+        GLES30.glUniformMatrix3fv(p.loc("uColorDelta"), 1, false, colorDelta, 0)
+        GLES30.glUniform1f(p.loc("uConsLo"), CONS_LO)
+        GLES30.glUniform1f(p.loc("uConsHi"), CONS_HI)
+        GLES30.glUniform1i(p.loc("uSharp"), if (PRESERVE_SHARPNESS) 1 else 0)
+    }
+
+    /** Writes the fusion map for this pair / phase (once per generated frame, at motion-search size). */
+    private fun fusePass(p: Prog, a: Slot, b: Slot, alpha: Float) {
+        bindFuseTargets()
+        GLES30.glViewport(0, 0, fuseW, fuseH)
+        p.use()
+        setInterpInputs(p, a, b, alpha, true)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        releaseFuseTargets()
+    }
+
     private fun drawOutput(a: Slot, b: Slot, alpha: Float, warp: Boolean) {
+        val fp = fuseProg
+        val aip = aiInterpProg
+        val aiReady = fp != null && aip != null && fuseTex.size == 2
+        if (aiReady && warp) fusePass(fp!!, a, b, alpha)
         val w = IntArray(1)
         val h = IntArray(1)
         EGL14.eglQuerySurface(eglDisplay, eglSurface, EGL14.EGL_WIDTH, w, 0)
@@ -684,19 +815,10 @@ class OpticalFlowRenderer(
         GLES30.glBindFramebuffer(GLES30.GL_FRAMEBUFFER, 0)
         GLES30.glViewport(0, 0, max(1, w[0]), max(1, h[0]))
 
-        val ip = interpProg!!
+        val ip = if (aiReady) aip!! else interpProg!!
         ip.use()
-        tex(0, ip, "uA", a.full); tex(1, ip, "uB", b.full)
-        tex(2, ip, "uFw", b.fw); tex(3, ip, "uBw", b.bw); tex(4, ip, "uCut", b.cut); tex(5, ip, "uGlobal", b.glob)
-        GLES30.glUniform1f(ip.loc("uT"), if (warp) alpha else 1f)
-        GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
-        GLES30.glUniform2f(ip.loc("uWork"), levelW[0].toFloat(), levelH[0].toFloat())
-        GLES30.glUniform2f(ip.loc("uFlowUv"), levelW[0].toFloat() / (gridW[0] * PITCH), levelH[0].toFloat() / (gridH[0] * PITCH))
-        GLES30.glUniform3f(ip.loc("uGrade"), brightness, contrast, saturation)
-        GLES30.glUniformMatrix3fv(ip.loc("uColorDelta"), 1, false, colorDelta, 0)
-        GLES30.glUniform1f(ip.loc("uConsLo"), CONS_LO)
-        GLES30.glUniform1f(ip.loc("uConsHi"), CONS_HI)
-        GLES30.glUniform1i(ip.loc("uSharp"), if (PRESERVE_SHARPNESS) 1 else 0)
+        setInterpInputs(ip, a, b, alpha, warp)
+        if (aiReady) { tex(6, ip, "uFuse0", fuseTex[0]); tex(7, ip, "uFuse1", fuseTex[1]) }
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -734,6 +856,8 @@ class OpticalFlowRenderer(
         slots.forEach { sl -> ids.add(sl.full); sl.luma.forEach { ids.add(it) }; ids.add(sl.fw); ids.add(sl.bw); ids.add(sl.cut); ids.add(sl.glob) }
         flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { ids.add(it) } } }
         globalCoarse.forEach { ids.add(it) }
+        fuseTex.forEach { ids.add(it) }
+        fuseTex = IntArray(0)
         if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         if (fence != 0L) { GLES30.glDeleteSync(fence); fence = 0L }
         slots = emptyArray(); flowTex = emptyArray(); globalCoarse = IntArray(0)
@@ -748,7 +872,7 @@ class OpticalFlowRenderer(
             freeResources()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, globalProg, interpProg).forEach { it?.delete() }
+            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, globalProg, interpProg, aiInterpProg, fuseProg).forEach { it?.delete() }
         }
         surfaceTexture = null
         inputSurface = null

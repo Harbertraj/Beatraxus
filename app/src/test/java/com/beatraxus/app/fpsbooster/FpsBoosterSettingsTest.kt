@@ -11,6 +11,12 @@ class FpsBoosterSettingsTest {
         assertEquals(BoosterMode.OFF, s.mode); assertTrue(!s.isOn)
         assertEquals(BoosterEngine.AUTO, s.engine); assertEquals(BoosterQuality.PERFORMANCE, s.quality)
         assertTrue(s.adaptiveResolution); assertTrue(!s.batterySaver)
+        assertTrue("AI fusion ships off", !s.aiFusion)
+    }
+
+    @Test fun aiFusionStoredValueRoundTripsAndDefaultsOff() {
+        assertTrue(!FpsBoosterSettings.fromStored("ON", 60, "OPTICAL_FLOW", "BALANCED", true, false, true).aiFusion)
+        assertTrue(FpsBoosterSettings.fromStored("ON", 60, "OPTICAL_FLOW", "BALANCED", true, false, true, aiFusion = true).aiFusion)
     }
 
     @Test fun corruptStoredValuesFallBackToDefaults() {
@@ -30,8 +36,11 @@ class FpsBoosterSettingsTest {
         assertEquals(60, BoosterTargets.sanitize(59)); assertEquals(120, BoosterTargets.sanitize(120))
     }
 
-    @Test fun aiEngineIsNotOffered() {
-        assertTrue(BoosterEngine.entries.none { it.name.contains("AI") })
+    @Test fun enginesAreTheDocumentedSet() {
+        // (was aiEngineIsNotOffered, which contradicted the RIFE engine added in "add new fps engine")
+        assertEquals(listOf("AUTO", "AI_RIFE", "OPTICAL_FLOW", "CLASSIC"), BoosterEngine.entries.map { it.name })
+        assertEquals(BoosterEngine.AI_RIFE, BoosterEngine.fromName("RIFE"))
+        assertEquals(BoosterEngine.AUTO, BoosterEngine.fromName("nonsense"))
     }
 
     @Test fun legacyPreferenceMigration() {

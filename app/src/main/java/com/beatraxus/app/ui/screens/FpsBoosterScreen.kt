@@ -29,8 +29,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.fpsbooster.BenchmarkState
 import com.beatraxus.app.fpsbooster.BoosterEngine
+import com.beatraxus.app.fpsbooster.AiFusionVerdict
 import com.beatraxus.app.fpsbooster.BoosterMode
 import com.beatraxus.app.fpsbooster.BoosterQuality
+import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterTargets
 import com.beatraxus.app.fpsbooster.FpsBoosterSettings
 import com.beatraxus.app.motionboost.DisplayRefreshRate
@@ -43,8 +45,8 @@ private val Orange = Color(0xFFFF8F00)
  * FPS Booster settings and live statistics (opened from the video player's tool row).
  *
  * Only implemented options are shown: Off/On/Auto, targets the panel can pace evenly, the Optical flow and
- * Classic engines, three quality presets, adaptive resolution, battery saver. There is no AI engine and no
- * "motion strength" slider because neither exists. The display refresh rate is shown separately from the
+ * Classic engines, three quality presets, adaptive resolution, battery saver, and the benchmark-gated
+ * AI fusion switch. There is no "motion strength" slider because it does not exist. The display refresh rate is shown separately from the
  * generated frame rate on purpose: they are different things.
  */
 @Composable
@@ -164,6 +166,26 @@ fun FpsBoosterSheetContent(
             else "Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution."
         )
 
+        // AI fusion: offered only for the Optical flow engine, and only switchable when the device test says the GPU
+        // can afford it at the quality / target in use. A verdict other than OK shows the reason instead of a dead switch.
+        if (!classicEngine && s.engine != BoosterEngine.AI_RIFE) {
+            val gateResult = (bench as? BenchmarkState.Done)?.result
+            val verdict = BoosterRecommender.aiFusionVerdict(
+                gateResult,
+                if (plan.active) plan.quality else s.quality,
+                if (plan.active) plan.targetFps else s.targetFps
+            )
+            val usable = verdict == AiFusionVerdict.OK && !s.batterySaver
+            ToggleRow(
+                "AI fusion (experimental)",
+                "A small neural network, built into the shader, decides per pixel which candidate picture to show. " +
+                    "Fewer ghosting and stretching artifacts on fast motion; uses more GPU.",
+                s.aiFusion && usable,
+                enabled = usable
+            ) { onSettingsChange(s.copy(aiFusion = it)) }
+            val why = if (s.batterySaver) "Not available while battery saver is on." else verdict.message
+            if (why != null) Hint(why)
+        }
         ToggleRow(
             "Adaptive resolution",
             "Off: always uses the quality you chose. On: may lower the motion-analysis size when the device is struggling. The booster stays on either way.",
@@ -296,25 +318,28 @@ private fun Chip(label: String, selected: Boolean, enabled: Boolean = true, onCl
 }
 
 @Composable
-private fun ToggleRow(title: String, subtitle: String?, checked: Boolean, onChange: (Boolean) -> Unit) {
+private fun ToggleRow(
+    title: String, subtitle: String?, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(if (checked) Orange.copy(alpha = 0.2f) else Color.White.copy(alpha = 0.06f))
             .border(1.dp, if (checked) Orange.copy(alpha = 0.8f) else Color.White.copy(alpha = 0.08f), RoundedCornerShape(12.dp))
-            .clickable { onChange(!checked) }
+            .clickable(enabled = enabled) { onChange(!checked) }
             .padding(horizontal = 14.dp, vertical = 10.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(title, color = Color.White, fontSize = 15.sp, fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium)
-            if (subtitle != null) Text(subtitle, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+            Text(title, color = Color.White.copy(alpha = if (enabled) 1f else 0.4f), fontSize = 15.sp, fontWeight = if (checked) FontWeight.Bold else FontWeight.Medium)
+            if (subtitle != null) Text(subtitle, color = Color.White.copy(alpha = if (enabled) 0.55f else 0.3f), fontSize = 12.sp)
         }
         Switch(
             checked = checked,
             onCheckedChange = onChange,
+            enabled = enabled,
             colors = SwitchDefaults.colors(checkedThumbColor = Orange, checkedTrackColor = Orange.copy(0.4f))
         )
     }
