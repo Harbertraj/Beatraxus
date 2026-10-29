@@ -46,6 +46,15 @@ object MotionBoostTiming {
     }
 
     /**
+     * Drift-free output frame step for frame pacing on panel refresh grids (e.g. 60 FPS on 120 Hz).
+     */
+    fun stepNs(intervalNs: Long, vsyncPeriodNs: Long): Long {
+        val ratio = intervalNs.toDouble() / vsyncPeriodNs
+        val n = Math.round(ratio)
+        return if (n >= 1 && abs(ratio - n) < 0.03) n * vsyncPeriodNs else intervalNs
+    }
+
+    /**
      * Frame pacing: true when the output frame scheduled for [dueNs] should be drawn on the vsync at
      * [vsyncNs]. A frame is drawn on the vsync nearest to its due time, so 90 FPS on a 120 Hz panel
      * really produces 90 frames/s (a plain "time since last frame" gate would round it down to 60).

@@ -144,4 +144,53 @@ class MotionBoostTimingTest {
         assertEquals(null, MotionBoostTiming.pickWindowRefreshRate(emptyList(), 30, uiHz = 120f))
         assertEquals(null, MotionBoostTiming.pickWindowRefreshRate(modes, 0, uiHz = 120f))
     }
+
+    @Test
+    fun stepNsRoundsToVsyncPeriodMultiple() {
+        assertEquals(2 * 8_333_333L, MotionBoostTiming.stepNs(16_666_667L, 8_333_333L))
+        assertEquals(11_111_111L, MotionBoostTiming.stepNs(11_111_111L, 8_333_333L))
+    }
+
+    @Test
+    fun nextDueStaysAnchoredOver100kFramesWithRealVsync() {
+        val vsync = 8_333_300L
+        val interval = 16_666_666L
+        val step = MotionBoostTiming.stepNs(interval, vsync)
+        var due = 0L
+        var v = 0L
+        var drawn = 0
+        repeat(100_000) {
+            if (MotionBoostTiming.isDue(v, due, vsync)) {
+                drawn++
+                due = MotionBoostTiming.nextDue(due, v, step)
+            }
+            v += vsync
+        }
+        assertEquals(50_000, drawn)
+    }
+
+    @Test
+    fun medianIgnoresSingleOutlier() {
+        val ring = LongArray(9)
+        var count = 0
+        var head = 0
+        val scratch = LongArray(9)
+
+        fun addPeriod(p: Long): Long {
+            if (p in 3_000_000L..40_000_000L) {
+                ring[head] = p
+                head = (head + 1) % 9
+                if (count < 9) count++
+                System.arraycopy(ring, 0, scratch, 0, count)
+                scratch.sort(0, count)
+                return scratch[count / 2]
+            }
+            return 8_333_333L
+        }
+
+        repeat(8) { addPeriod(8_333_333L) }
+        val median = addPeriod(16_666_667L)
+        assertEquals(8_333_333L, median)
+    }
 }
+
