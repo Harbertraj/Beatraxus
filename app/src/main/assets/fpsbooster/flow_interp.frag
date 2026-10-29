@@ -45,7 +45,7 @@ uniform sampler2D uA;        // RGBA8 frame A, LINEAR
 uniform sampler2D uB;        // RGBA8 frame B, LINEAR
 uniform sampler2D uFw;       // RGBA16F, LINEAR: rg = A->B flow (work px), b = match cost, a = fw/bw inconsistency (px)
 uniform sampler2D uBw;       // RGBA16F, LINEAR: B->A
-uniform sampler2D uCut;      // 1x1 RGBA8/16F: b = 1 on a scene cut
+uniform sampler2D uCut;      // 1x1 RGBA8/16F: b = 1 on a scene cut, a = share of untrustworthy motion in the picture (0..1)
 uniform sampler2D uGlobal;   // 1x1 RGBA16F, NEAREST: rg = dominant A->B motion (work px), b = share of the picture that agrees
 uniform sampler2D uFuse0;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 0..3
 uniform sampler2D uFuse1;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 4, 5
@@ -73,6 +73,12 @@ const float STATIC_DIFF = 0.008;      // max channel difference (0..1) between A
 const float STATIC_FLOW2 = 0.12;      // squared flow length (px^2) below which there is no motion around the pixel
 const float GLOBAL_MIN_SHARE = 0.30;  // dominant motion needs this share of the picture behind it (as in flow_search.frag)
 const float GLOBAL_MIN_SPEED = 1.0;   // below this (px) the nearest frame is as good as a warp
+// Whole-frame safeguard (cut_detect.frag, .a): when this share of the motion field is inconsistent the flow has failed
+// across the picture (whip pans, heavy motion blur) and the per-pixel decisions turn into ragged patches. Fade to a plain
+// blend of the two real frames between these shares. Measured on the harness: normal scenes <= 0.15, blurred pan at
+// 300 px/frame ~0.3, at 500 px/frame ~0.8.
+const float FAIL_LO = 0.30;
+const float FAIL_HI = 0.60;
 const float AI_MIN_WEIGHT = 0.02;     // a candidate with less weight than this is not fetched at all
 
 // Bilinear fetch of a flow field with the VECTOR weighted by how trustworthy each of the 4 neighbouring blocks
@@ -410,6 +416,9 @@ void main() {
         }
       }
 #endif
+      // flow failed across the picture: soft blend of the two real frames instead of patchwork
+      float fail = smoothstep(FAIL_LO, FAIL_HI, texture(uCut, vec2(0.5)).a);
+      rgb = mix(rgb, mix(pa, pb, uT), fail);
     }
   }
 

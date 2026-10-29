@@ -145,16 +145,14 @@ class BoosterBenchmarkTest {
             BoosterRecommender.aiFusionVerdict(result(p = 3f), BoosterQuality.QUALITY, 60))
     }
 
-    @Test fun fusionOnlyRunsWhenEverythingAgrees() {
-        val done = BenchmarkState.Done(result(b = 5f, p = 3f), BoosterRecommender.recommend(result(b = 5f, p = 3f), panel60and120))
+    @Test fun fusionIsNeverBlockedByTheDeviceTest() {
         val on = FpsBoosterSettings(mode = BoosterMode.ON, aiFusion = true)
-        val plan = BoosterPlan(true, 60, BoosterEngine.OPTICAL_FLOW, BoosterQuality.BALANCED, null)
-        assertTrue(BoosterRecommender.aiFusionEnabled(on, plan, done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on.copy(aiFusion = false), plan, done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on.copy(batterySaver = true), plan, done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(engine = BoosterEngine.CLASSIC), done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(engine = BoosterEngine.AI_RIFE), done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(active = false), done))
-        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan, BenchmarkState.Idle))
+        val plan = BoosterPlan(true, 90, BoosterEngine.OPTICAL_FLOW, BoosterQuality.PERFORMANCE, null)
+        assertTrue(BoosterRecommender.aiFusionEnabled(on, plan))
+        assertTrue(BoosterRecommender.aiFusionEnabled(on.copy(batterySaver = true), plan))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on.copy(aiFusion = false), plan))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(engine = BoosterEngine.CLASSIC)))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(engine = BoosterEngine.AI_RIFE)))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(active = false)))
     }
 }

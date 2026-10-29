@@ -413,13 +413,13 @@ settings toggle and an on-device benchmark gate, larger training set.
 
 **Wiring.** `FpsBoosterSettings.aiFusion` (default off, stored as `fpsb_ai_fusion`) is shown in the FPS Booster sheet as
 "AI fusion (experimental)". The player calls `FpsBoosterSurfaceView.setAiFusion(...)` with
-`BoosterRecommender.aiFusionEnabled(settings, plan, benchmark)`: user switch on, Optical flow engine running, battery
-saver off, and the device test passes `aiFusionVerdict`.
+`BoosterRecommender.aiFusionEnabled(settings, plan)`: user switch on and the Optical flow engine running. It is always
+available: the device test no longer blocks it.
 
-**Benchmark gate.** The device test (now `BenchmarkResult.VERSION = 2`, so old results are re-measured once) times the real
+**Benchmark hint (advisory).** The device test (now `BenchmarkResult.VERSION = 2`, so old results are re-measured once) times the real
 fusion shader writing two RGBA16F targets at the Balanced fusion-map size, worst case. `aiFusionVerdict` returns OK only if
-`fuseMs <= 4 ms` and `30 * pairMs + target * (warpMs + fuseMs) <= 650 ms/s`. Otherwise the switch is disabled and the reason is shown
-(not tested / GPU cannot do two float targets / too heavy for this quality and target).
+`fuseMs <= 4 ms` and `30 * pairMs + target * (warpMs + fuseMs) <= 650 ms/s`. Otherwise a hint is shown under the switch
+(not tested / GPU could not run it / heavy for this quality and target); the switch stays usable and the renderer falls back by itself.
 
 **Renderer fix.** The hand-tuned program is never replaced any more; the AI composite is a separate program used only while
 the fusion map exists. Any failure (compile, two float targets, map allocation) drops back to the hand-tuned picture.
@@ -438,3 +438,17 @@ shipped weights were kept. A better result needs more and more varied real video
 loss weighted towards the contested pixels of fast pans.
 
 **Still open: on-device.** Shader compile on real GPUs, the actual `fuseMs` on phones, and thermal behaviour.
+
+### 13.y Part 5: whip-pan patchwork (whole-frame safeguard)
+
+Reported on a real film (24 FPS, dark, handheld, fast blurred pans and crossings): torn "peeling paint" patches. Reproduced in the
+harness with `scenarios.whip` (a pan of 500 px/frame with a 130 px shutter blur): the flow fails across the whole picture, each
+pixel is then decided on its own (motion-compensated or the unmoved nearest frame), and the result is ragged patches. Dropped frames
+were ruled out: it happens at 45 FPS too, and on the harness there is no load at all.
+
+Fix: `cut_detect.frag` now also writes, in `.a`, the share of the picture whose forward/backward inconsistency exceeds
+`FAIL_BAD_PX` (2 px, speed-scaled), sampled on a 32x18 lattice. `flow_interp.frag` fades to a plain blend of the two real
+frames between `FAIL_LO = 0.30` and `FAIL_HI = 0.60` of that share (both the hand-tuned and the AI composite). Measured shares:
+normal scenes <= 0.15, whip 300 ~0.3, whip 500 ~0.8. Whip 500 goes from patchwork to a soft blend (14.4 dB, equal to blend); all
+earlier regression floors are unchanged. Edge strips where new content enters the frame are not covered (no flow can know them).
+Not verified on a phone: the real clip, and the cost of the extra 576-tap reduction (small: it replaces nothing and runs once per source pair).

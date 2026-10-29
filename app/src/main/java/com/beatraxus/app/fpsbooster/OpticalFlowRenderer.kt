@@ -610,7 +610,10 @@ class OpticalFlowRenderer(
         bindTarget(b.cut, 1, 1)
         cut.use()
         tex(0, cut, "uFlow", flowTex[0][n - 1][1])
+        tex(1, cut, "uCons", b.fw)
         GLES30.glUniform2i(cut.loc("uGrid"), gridW[n - 1], gridH[n - 1])
+        GLES30.glUniform2i(cut.loc("uConsGrid"), gridW[0], gridH[0])
+        GLES30.glUniform1f(cut.loc("uBadPx"), FAIL_BAD_PX)
         GLES30.glUniform1f(cut.loc("uMeanThresh"), CUT_MEAN)
         GLES30.glUniform1f(cut.loc("uPoorThresh"), CUT_POOR)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
@@ -944,6 +947,8 @@ class OpticalFlowRenderer(
         private const val PRESERVE_SHARPNESS = true
         private const val CUT_MEAN = 0.12f
         private const val CUT_POOR = 0.10f
+        /** Inconsistency (px) above which a vector counts as untrustworthy for the whole-frame safeguard. */
+        private const val FAIL_BAD_PX = 2.0f
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 

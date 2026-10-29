@@ -120,6 +120,18 @@ def layers(w: int, h: int, bg_v: float = 4.0, fg_v: float = -22.0, radius: int =
     return Scene(f"layers bg {bg_v:g} / fg {fg_v:g}px/f", render, "disc over panning background (occlusion)")
 
 
+def whip(w: int, h: int, speed: float, blur: int) -> Scene:
+    """Very fast pan with the camera's shutter blur (a whip pan): motion beyond what the search can follow, and the
+    blur removes the texture block matching needs. The flow fails across the whole picture."""
+    base = pan(w, h, speed)
+    k = np.full((1, blur), 1.0 / blur, np.float32)
+
+    def render(tau: float) -> np.ndarray:
+        return cv2.filter2D(base.render(tau), -1, k, borderType=cv2.BORDER_REFLECT)
+
+    return Scene(f"whip {speed:g}px/f blur {blur}", render, "blurred whip pan (flow fails everywhere)")
+
+
 def scene_cut(w: int, h: int) -> Scene:
     a = make_canvas("building.jpg", w, h, 5)
     b = make_canvas("butterfly.jpg", w, h, 6)

@@ -100,7 +100,7 @@ object BoosterRecommender {
     const val FUSE_MAX_MS = 4f
 
     /**
-     * The benchmark gate for AI fusion. Per second the GPU already spends 30 pair estimations + one warp per displayed
+     * The device test's opinion on AI fusion (advisory; see [aiFusionEnabled]). Per second the GPU already spends 30 pair estimations + one warp per displayed
      * frame (see [recommend]); fusion adds one fusion pass per displayed frame and the AI composite costs about as much
      * as the hand-tuned warp it replaces. Allowed only if the same [GPU_BUDGET_MS_PER_S] still holds with that added.
      * Pure: unit tested without a GPU.
@@ -115,13 +115,13 @@ object BoosterRecommender {
     }
 
     /**
-     * The single decision the player acts on: AI fusion runs only if the user turned it on, the optical-flow engine is
-     * the one running (not RIFE / Classic), battery saver is off and the device test passed the gate for the quality and
-     * target that are actually in use. Anything else keeps the hand-tuned blend.
+     * The single decision the player acts on. AI fusion is always available: it runs whenever the user turned it on and
+     * the Optical flow engine is the one running (RIFE and Classic have no fusion pass). The device-test verdict is
+     * deliberately NOT a condition; it is only shown as a hint. If the GPU really cannot do it, the renderer drops back to
+     * the hand-tuned blend on its own.
      */
-    fun aiFusionEnabled(s: FpsBoosterSettings, plan: BoosterPlan, bench: BenchmarkState): Boolean =
-        s.aiFusion && !s.batterySaver && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW &&
-            aiFusionVerdict((bench as? BenchmarkState.Done)?.result, plan.quality, plan.targetFps) == AiFusionVerdict.OK
+    fun aiFusionEnabled(s: FpsBoosterSettings, plan: BoosterPlan): Boolean =
+        s.aiFusion && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW
 
     fun recommend(r: BenchmarkResult, panelRates: List<Float>): Recommendation {
         val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isRateSupported(panelRates, it) }.ifEmpty { listOf(30) }
@@ -158,12 +158,12 @@ object BoosterRecommender {
     }
 }
 
-/** Whether the learned fusion may run, as decided by [BoosterRecommender.aiFusionVerdict]. */
+/** What the device test says about AI fusion. Advisory only: it never blocks the switch (see [BoosterRecommender.aiFusionEnabled]). */
 enum class AiFusionVerdict(val message: String?) {
     OK(null),
-    NOT_TESTED("Run the device test to find out whether your GPU can run AI fusion."),
-    UNSUPPORTED("This GPU cannot run AI fusion (it needs two float render targets)."),
-    TOO_SLOW("Too heavy for this GPU at the current quality and FPS target. Lower either one to use AI fusion.")
+    NOT_TESTED("The device test has not measured AI fusion yet."),
+    UNSUPPORTED("The device test could not run AI fusion on this GPU (it needs two float render targets). If it cannot start, the normal picture is kept."),
+    TOO_SLOW("Heavy for this GPU at the current quality and FPS target, so frames may drop. Lower either one if playback stutters.")
 }
 
 /** What the settings sheet shows for the device test. */

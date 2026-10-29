@@ -30,6 +30,21 @@ AI_FLOORS = {
 AI_MAX_LOSS_DB = 0.5   # the AI path may never be worse than the hand-tuned one by more than this, on any scene
 
 
+def check_whip(eng, ai, blend) -> bool:
+    """Whole-frame safeguard (cut_detect.frag .a / FAIL_LO..HI in flow_interp.frag): when the flow fails across the picture
+    the output fades to a plain blend, so it must never be worse than blend (the failure it replaces is ragged patchwork)."""
+    ok = True
+    for speed, blur in ((300, 80), (500, 130)):
+        sc = S.whip(W, H, speed, blur)
+        b = R.eval_scene(blend, sc, False, "x")["psnr"]
+        for label, e in (("hand-tuned", eng), ("AI", ai)):
+            r = R.eval_scene(e, sc, False, "x")["psnr"]
+            good = r >= b - 0.5
+            ok &= good
+            print(f"{'PASS' if good else 'FAIL'}  whip {speed}px/f {label:10s} {r:5.1f} dB  (blend {b:.1f}, must not be worse)")
+    return ok
+
+
 def check_ai(eng, ai, scenes, blend) -> bool:
     """AI fusion regression: floors, never worse than the hand-tuned path, clean scene cut, real footage, fast interior motion."""
     ok = True
@@ -103,6 +118,7 @@ def main() -> int:
     good = real["ssim"] >= rb["ssim"] - 0.002
     ok &= good
     print(f"{'PASS' if good else 'FAIL'}  real footage SSIM {real['ssim']:.3f} vs blend {rb['ssim']:.3f}")
+    ok &= check_whip(eng, N.NewEngine("balanced", ai=True) if "--no-ai" not in sys.argv else eng, blend)
     if "--no-ai" not in sys.argv:
         ok &= check_ai(eng, N.NewEngine("balanced", ai=True), scenes, blend)
     return 0 if ok else 1

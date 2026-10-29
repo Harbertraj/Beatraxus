@@ -259,6 +259,7 @@ class NewEngine(Engine):
         cw, ch = self.grids[n - 1]
         gl.bind_target(self.cut, 1, 1)
         self.p_cut.use().tex(0, "uFlow", self.flow["fw"][n - 1][1]).i2("uGrid", cw, ch)
+        self.p_cut.tex(1, "uCons", self.final["fw"]).i2("uConsGrid", gw, gh).f1("uBadPx", 2.0)
         self.p_cut.f1("uMeanThresh", 0.12).f1("uPoorThresh", 0.10)
         gl.draw()
         self.flow_for = self.cur

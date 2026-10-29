@@ -602,7 +602,7 @@ fun VideoPlayerScreen(
         val boostPlan = uiState.fpsBoosterPlan
         val boostActive = boostPlan.active
         val boostEngine = boostPlan.engine
-        val aiFusionOn = BoosterRecommender.aiFusionEnabled(uiState.fpsBooster, boostPlan, uiState.fpsBoosterBenchmark)
+        val aiFusionOn = BoosterRecommender.aiFusionEnabled(uiState.fpsBooster, boostPlan)
         // Rotate / flip / mirror also needs the TextureView: a SurfaceView cannot be transformed. (With the FPS Booster
         // the GL renderer does it itself.)
         val orientation = uiState.videoOrientation

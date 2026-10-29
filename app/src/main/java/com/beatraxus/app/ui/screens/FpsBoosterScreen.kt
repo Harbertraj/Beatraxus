@@ -45,8 +45,7 @@ private val Orange = Color(0xFFFF8F00)
  * FPS Booster settings and live statistics (opened from the video player's tool row).
  *
  * Only implemented options are shown: Off/On/Auto, targets the panel can pace evenly, the Optical flow and
- * Classic engines, three quality presets, adaptive resolution, battery saver, and the benchmark-gated
- * AI fusion switch. There is no "motion strength" slider because it does not exist. The display refresh rate is shown separately from the
+ * Classic engines, three quality presets, adaptive resolution, battery saver, and the AI fusion switch. There is no "motion strength" slider because it does not exist. The display refresh rate is shown separately from the
  * generated frame rate on purpose: they are different things.
  */
 @Composable
@@ -166,8 +165,8 @@ fun FpsBoosterSheetContent(
             else "Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution."
         )
 
-        // AI fusion: offered only for the Optical flow engine, and only switchable when the device test says the GPU
-        // can afford it at the quality / target in use. A verdict other than OK shows the reason instead of a dead switch.
+        // AI fusion: offered for the Optical flow engine and always switchable. The device test only adds a hint when
+        // it expects this GPU to struggle at the quality / target in use.
         if (!classicEngine && s.engine != BoosterEngine.AI_RIFE) {
             val gateResult = (bench as? BenchmarkState.Done)?.result
             val verdict = BoosterRecommender.aiFusionVerdict(
@@ -175,16 +174,13 @@ fun FpsBoosterSheetContent(
                 if (plan.active) plan.quality else s.quality,
                 if (plan.active) plan.targetFps else s.targetFps
             )
-            val usable = verdict == AiFusionVerdict.OK && !s.batterySaver
             ToggleRow(
                 "AI fusion (experimental)",
                 "A small neural network, built into the shader, decides per pixel which candidate picture to show. " +
                     "Fewer ghosting and stretching artifacts on fast motion; uses more GPU.",
-                s.aiFusion && usable,
-                enabled = usable
+                s.aiFusion
             ) { onSettingsChange(s.copy(aiFusion = it)) }
-            val why = if (s.batterySaver) "Not available while battery saver is on." else verdict.message
-            if (why != null) Hint(why)
+            verdict.message?.let { Hint(it) }
         }
         ToggleRow(
             "Adaptive resolution",
