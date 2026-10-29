@@ -113,4 +113,35 @@ class MotionBoostTimingTest {
         assertEquals(120f, MotionBoostTiming.pickRefreshRate(listOf(60f, 120f), 144))
         assertEquals(null, MotionBoostTiming.pickRefreshRate(emptyList(), 90))
     }
+
+    @Test
+    fun windowRefreshRateKeepsPlayerUiFast() {
+        val modes = listOf(30f, 60f, 90f, 120f)
+        // The reported bug: a 30 FPS target used to pin the whole window (controls, sheets) to 30 Hz.
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(modes, 30, uiHz = 120f))
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 120f), 30, uiHz = 120f))
+        // 60 used to be pinned to exactly 60 Hz; 120 is an equally even multiple and keeps the UI smooth.
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(modes, 60, uiHz = 120f))
+        // 45 FPS needs 90 Hz (nothing else is a multiple), 90 stays 90 on a 90/120 panel.
+        assertEquals(90f, MotionBoostTiming.pickWindowRefreshRate(modes, 45, uiHz = 120f))
+        assertEquals(90f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 90f, 120f), 90, uiHz = 120f))
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 90f, 120f), 120, uiHz = 120f))
+    }
+
+    @Test
+    fun windowRefreshRateFollowsAppSettingAndFallsBack() {
+        val modes = listOf(60f, 90f, 120f)
+        // The user pinned the app to 60 Hz: 30 FPS then runs on 60 Hz, not above what they asked for.
+        assertEquals(60f, MotionBoostTiming.pickWindowRefreshRate(modes, 30, uiHz = 60f))
+        // Closest multiple wins; on a tie the higher one (smoother).
+        assertEquals(90f, MotionBoostTiming.pickWindowRefreshRate(modes, 30, uiHz = 90f))
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 120f), 30, uiHz = 90f))
+        // No multiple at all (45 on 60/120, 144 on 120): stay on the app's rate instead of dropping the UI to the target.
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 120f), 45, uiHz = 120f))
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(listOf(60f, 120f), 144, uiHz = 120f))
+        // Unknown app rate: as fast as possible. Nothing to choose: null.
+        assertEquals(120f, MotionBoostTiming.pickWindowRefreshRate(modes, 30, uiHz = null))
+        assertEquals(null, MotionBoostTiming.pickWindowRefreshRate(emptyList(), 30, uiHz = 120f))
+        assertEquals(null, MotionBoostTiming.pickWindowRefreshRate(modes, 0, uiHz = 120f))
+    }
 }

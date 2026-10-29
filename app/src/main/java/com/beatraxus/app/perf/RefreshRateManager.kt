@@ -91,6 +91,15 @@ object RefreshRateManager {
         return (1000f / hz).toLong().coerceIn(4L, 33L)
     }
 
+    /**
+     * The refresh rate (Hz) [applyTo] pins the app window to, or null when the panel's modes are unknown. The video
+     * boosters use it as the rate the player UI should keep while they run.
+     */
+    fun appRate(context: Context): Float? {
+        val display = defaultDisplay(context) ?: return null
+        return pickMode(modesAtCurrentSize(display), _selected.value)?.refreshRate
+    }
+
     /** Pins [window] to the mode that matches the saved choice. Does nothing when the window already asks for it. */
     fun applyTo(window: Window, context: Context) {
         if (videoModeOverride) return

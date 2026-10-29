@@ -204,7 +204,13 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
             val choice = DisplayRefreshRate.preferredMode(context, fps) ?: return
             com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
             val lp = window.attributes
-            if (lp.preferredDisplayModeId != choice.modeId) { lp.preferredDisplayModeId = choice.modeId; window.attributes = lp }
+            // Set both, like RefreshRateManager.applyTo does, so a stale preferredRefreshRate (the app's own rate)
+            // never disagrees with the mode the booster picked.
+            if (lp.preferredDisplayModeId != choice.modeId || lp.preferredRefreshRate != choice.refreshRate) {
+                lp.preferredDisplayModeId = choice.modeId
+                lp.preferredRefreshRate = choice.refreshRate
+                window.attributes = lp
+            }
         } catch (t: Throwable) { Log.w(TAG, "preferred display mode failed", t) }
     }
 

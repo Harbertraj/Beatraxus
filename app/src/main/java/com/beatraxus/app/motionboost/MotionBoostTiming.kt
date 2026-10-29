@@ -78,6 +78,27 @@ object MotionBoostTiming {
     }
 
     /**
+     * The panel refresh rate (Hz) to pin the *whole app window* to while a booster plays at [targetFps].
+     *
+     * The window also carries the player controls, the option sheets and every Compose animation, so it must not be
+     * dragged down to the video rate: [pickRefreshRate] returns the lowest match, which put a 30 FPS target on a
+     * 30 / 60 Hz window and made the entire player UI run at that rate. The booster paces its own output on vsync
+     * ([isDue]), so any integer multiple of [targetFps] shows it evenly. Choose the multiple closest to [uiHz] (the
+     * rate the app would run at anyway; ties go to the higher one). With no multiple at all, use the mode closest to
+     * [uiHz]. [uiHz] null means "as fast as possible".
+     */
+    fun pickWindowRefreshRate(modes: List<Float>, targetFps: Int, uiHz: Float?): Float? {
+        if (targetFps <= 0 || modes.isEmpty()) return null
+        val want = uiHz ?: modes.max()
+        val multiples = modes.filter { hz ->
+            val ratio = hz / targetFps
+            val multiple = ratio.roundToInt()
+            multiple >= 1 && abs(ratio - multiple) < 0.02f
+        }
+        return multiples.ifEmpty { modes }.minWithOrNull(compareBy<Float>({ abs(it - want) }, { -it }))
+    }
+
+    /**
      * Whether a panel with the given refresh [modes] (Hz) can show [targetFps] evenly, i.e. some mode is
      * an integer multiple of it (45 -> 45 or 90 Hz, 60 -> 60 or 120 Hz, ...).
      */

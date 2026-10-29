@@ -3,6 +3,7 @@ package com.beatraxus.app.motionboost
 import android.content.Context
 import android.hardware.display.DisplayManager
 import android.view.Display
+import com.beatraxus.app.perf.RefreshRateManager
 import kotlin.math.abs
 
 /** Reads the refresh rates the device panel supports, to tell which FPS Booster targets make sense. */
@@ -27,9 +28,14 @@ object DisplayRefreshRate {
     data class ModeChoice(val modeId: Int, val refreshRate: Float)
 
     /**
-     * Picks the best display mode for [targetFps], keeping the current resolution so the screen does not
-     * flicker through a resolution change. Without this, many phones stay in a 60 Hz mode (battery saver,
-     * "standard" refresh setting, adaptive heuristics) and every FPS target ends up showing 60.
+     * Picks the display mode to pin the app window to while a booster plays at [targetFps], keeping the current
+     * resolution so the screen does not flicker through a resolution change. Without this, many phones stay in a
+     * 60 Hz mode (battery saver, "standard" refresh setting, adaptive heuristics) and every FPS target ends up
+     * showing 60.
+     *
+     * The mode is an integer multiple of the target (so the output is evenly paced) but is NOT the lowest one: the
+     * window also draws the player controls and sheets, which must keep the app's normal refresh rate. See
+     * [MotionBoostTiming.pickWindowRefreshRate].
      */
     fun preferredMode(context: Context, targetFps: Int): ModeChoice? {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
@@ -38,7 +44,9 @@ object DisplayRefreshRate {
         val sameSize = display.supportedModes.filter {
             it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
         }
-        val hz = MotionBoostTiming.pickRefreshRate(sameSize.map { it.refreshRate }, targetFps) ?: return null
+        val hz = MotionBoostTiming.pickWindowRefreshRate(
+            sameSize.map { it.refreshRate }, targetFps, RefreshRateManager.appRate(context)
+        ) ?: return null
         val mode = sameSize.firstOrNull { abs(it.refreshRate - hz) < 0.01f } ?: return null
         return ModeChoice(mode.modeId, mode.refreshRate)
     }

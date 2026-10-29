@@ -305,10 +305,28 @@ class OpticalFlowRenderer(
         check(EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) && numConfigs[0] > 0) {
             "no ES3 EGL config"
         }
-        eglContext = EGL14.eglCreateContext(
-            eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT,
-            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0
-        )
+        // The motion search is heavy GPU work that shares the GPU with the app's UI (controls, sheets, Compose
+        // animations). Ask for a LOW priority context where the driver supports it, so the UI's frames preempt the
+        // booster instead of waiting behind it. Optional: any failure falls back to the default priority.
+        var ctx = EGL14.EGL_NO_CONTEXT
+        if (EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS)?.contains("EGL_IMG_context_priority") == true) {
+            ctx = EGL14.eglCreateContext(
+                eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT,
+                intArrayOf(
+                    EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                    EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_LOW_IMG,
+                    EGL14.EGL_NONE
+                ), 0
+            )
+            if (ctx == EGL14.EGL_NO_CONTEXT) Log.w(TAG, "low-priority EGL context refused, using default priority")
+        }
+        if (ctx == EGL14.EGL_NO_CONTEXT) {
+            ctx = EGL14.eglCreateContext(
+                eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT,
+                intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE), 0
+            )
+        }
+        eglContext = ctx
         check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], outputSurface, intArrayOf(EGL14.EGL_NONE), 0)
         check(eglSurface != EGL14.EGL_NO_SURFACE) { "eglCreateWindowSurface" }
@@ -950,7 +968,10 @@ class OpticalFlowRenderer(
 
     companion object {
         private const val TAG = "FpsBoosterGL"
-        private const val SLOT_COUNT = 4          // bounded frame queue: the shown pair plus up to two frames that arrived early
+        // EGL_IMG_context_priority (not in android.opengl.EGL14)
+        private const val EGL_CONTEXT_PRIORITY_LEVEL_IMG = 0x3100
+        private const val EGL_CONTEXT_PRIORITY_LOW_IMG = 0x3103
+        private const val SLOT_COUNT = 4         // bounded frame queue: the shown pair plus up to two frames that arrived early
         private const val PITCH = FlowPyramid.PITCH   // flow block pitch (matches flow_search.frag)
         private const val LAMBDA = 0.003f         // flow smoothness penalty per px
         private const val CONS_LO = 1.0f          // forward/backward inconsistency (px): trusted below
