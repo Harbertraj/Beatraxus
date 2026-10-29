@@ -21,6 +21,11 @@ import android.view.Choreographer
 import android.view.Surface
 import com.beatraxus.app.colorgrade.ColorTune
 import com.beatraxus.app.deinterlace.DeinterlaceGlsl
+import com.beatraxus.app.fpsbooster.EstimateLatency
+import com.beatraxus.app.fpsbooster.FramePacing
+import com.beatraxus.app.fpsbooster.StatsAccumulator
+import com.beatraxus.app.fpsbooster.TimestampRegularizer
+import com.beatraxus.app.fpsbooster.WindowStats
 import com.beatraxus.app.model.VideoOrientation
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -29,21 +34,15 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * FPS Booster engine: takes the decoded video from ExoPlayer, builds the in-between frames on the GPU
- * and presents them at the chosen rate (45 / 60 / 90 / 120).
+ * FPS Booster engine: takes decoded video from ExoPlayer, builds intermediate frames on the GPU,
+ * and presents them at the chosen target rate (45 / 60 / 90 / 120 FPS).
  *
- * Pipeline (all on one dedicated GL thread):
- *  1. ExoPlayer renders into [inputSurface] (a SurfaceTexture). Every decoded frame is copied into a
- *     slot (RGBA texture) together with a small luma copy (1/4 size) used for motion search.
- *  2. For the newest pair of frames a block-matching motion field is computed on the GPU (16px blocks,
- *     +-32px search, coarse-to-fine, zero-motion early-out).
- *  3. On every display vsync that is due, an interpolated frame is rendered for the matching point in
- *     time: both source frames are warped along the motion vectors and blended. Where the vectors are
- *     unreliable (scene cuts, occlusions, fast complex motion) it falls back to the nearest real frame,
- *     so errors show up as judder instead of ghosting.
- *
- * Source frames carry the time ExoPlayer wants them on screen (SurfaceTexture timestamp), so the output
- * stays in sync with audio apart from the small hold-back (see [MotionBoostTiming.holdNs]).
+ * Classic engine with full Optical-Flow safeguards ported:
+ *  1. Asynchronous, fence-gated motion estimation (1 estimate in flight, non-blocking vsync thread).
+ *  2. Timestamp regularization and drift-free stepNs pacing.
+ *  3. GPU-resident 1x1 scene-cut detector.
+ *  4. Soft blend fallback + regional risk fading.
+ *  5. StatsAccumulator reporting WindowStats for FpsBoosterManager integration.
  */
 class MotionBoostRenderer(
     private val outputSurface: Surface,
@@ -55,8 +54,11 @@ class MotionBoostRenderer(
         /** Called on the GL thread once ExoPlayer can be pointed at the input surface. */
         fun onInputSurfaceReady(surface: Surface)
 
-        /** Called on the GL thread about once per second. */
+        /** Called on the GL thread about once per second with raw FPS. */
         fun onStats(sourceFps: Float, outputFps: Float)
+
+        /** Full statistics window for FpsBoosterManager / AdaptiveQualityController integration. */
+        fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {}
 
         fun onError(message: String)
     }
@@ -97,17 +99,30 @@ class MotionBoostRenderer(
     private var meProg: Prog? = null
     private var refineProg: Prog? = null
     private var smoothProg: Prog? = null
+    private var cutProg: Prog? = null
     private var interpProg: Prog? = null
     private var slots: Array<Slot> = emptyArray()
     private var mvTexture = 0   // final (smoothed) motion field, sampled with LINEAR filtering
     private var mvScratch = 0   // intermediate field between the passes
+    private var cutTexture = 0  // 1x1 scene cut result texture
+
+    // ---- Fence and Async Estimation ----
+    private var estimateFence: Long = 0L
+    private var estimateInFlight = false
+    private var estimateStartNs = 0L
+    private var flowSkipped = false
+    private val estimateLatency = EstimateLatency()
+
+    // ---- Safeguard Helpers ----
+    private val regularizer = TimestampRegularizer()
+    private val statsAcc = StatsAccumulator()
 
     // ---- sizes ----
     private var srcW = 0
     private var srcH = 0
     private var workW = 0   // motion-estimation working size
     private var workH = 0
-    private var frameW = 0  // size of the stored frames that are shown on screen
+    private var frameW = 0  // size of stored frames shown on screen
     private var frameH = 0
     private var lumaW = 0
     private var lumaH = 0
@@ -128,17 +143,18 @@ class MotionBoostRenderer(
     private var lastVsyncNs = 0L
     @Volatile private var orientationMatrix: FloatArray = VideoOrientation.NONE.videoFromScreen()
     @Volatile private var deinterlaceMode = 0
-    private var lastPresentNs = 0L
     private var nextDueNs = 0L
+
+    // ---- Vsync Median Ring (9 samples) ----
+    private val vsyncRing = LongArray(9)
+    private var vsyncHead = 0
+    private var vsyncCount = 0
+    private val vsyncScratch = LongArray(9)
 
     // ---- redraw bookkeeping ----
     private var lastDrawnCur: Slot? = null
     private var lastDrawnPrev: Slot? = null
     private var lastDrawnAlpha = -1f
-
-    // ---- stats ----
-    private var statsWindowStartNs = 0L
-    private var drawnInWindow = 0
 
     private val frameCallback = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
@@ -162,7 +178,11 @@ class MotionBoostRenderer(
     }
 
     fun setTargetFps(fps: Int) {
+        val changed = fps != targetFps
         targetFps = fps.coerceIn(1, 240)
+        if (changed) {
+            handler.post { cancelEstimate() }
+        }
     }
 
     fun setExtreme(enabled: Boolean) {
@@ -183,19 +203,16 @@ class MotionBoostRenderer(
         dirty = true
     }
 
-    /** Hue (degrees) and colour temperature (-1 cool .. 1 warm); the booster draws the video itself, so it does both. */
     fun setColorTune(hueDegrees: Float, temperature: Float) {
         colorDelta = ColorTune.deltaColumnMajor(hueDegrees, temperature)
         dirty = true
     }
 
-    /** Rotate / flip / mirror of the picture; applied in the present pass only (see [PRESENT_VERTEX]). */
     fun setOrientation(orientation: VideoOrientation) {
         orientationMatrix = orientation.videoFromScreen()
         dirty = true
     }
 
-    /** Deinterlacing done in the copy pass: 0 = off, 1 = auto, 2 = always (see [DeinterlaceGlsl]). */
     fun setDeinterlace(mode: Int) {
         if (mode == deinterlaceMode) return
         deinterlaceMode = mode
@@ -206,10 +223,6 @@ class MotionBoostRenderer(
         handler.post { runGuarded("resize failed") { applySourceSize(width, height) } }
     }
 
-    /**
-     * Stops rendering and frees all GL / EGL resources. Waits (briefly) for the GL thread so the output
-     * Surface is no longer in use when the caller lets it go (e.g. in surfaceDestroyed).
-     */
     fun release() {
         if (released) return
         released = true
@@ -217,6 +230,7 @@ class MotionBoostRenderer(
         val done = CountDownLatch(1)
         val posted = handler.post {
             choreographer?.removeFrameCallback(frameCallback)
+            cancelEstimate()
             releaseGl()
             thread.quitSafely()
             done.countDown()
@@ -248,7 +262,19 @@ class MotionBoostRenderer(
         check(EGL14.eglChooseConfig(eglDisplay, configAttribs, 0, configs, 0, 1, numConfigs, 0) && numConfigs[0] > 0) {
             "no ES3 EGL config"
         }
-        val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
+
+        val ext = EGL14.eglQueryString(eglDisplay, EGL14.EGL_EXTENSIONS) ?: ""
+        val lowPrioritySupported = ext.contains("EGL_IMG_context_priority")
+        val ctxAttribs = if (lowPrioritySupported && targetFps <= 60) {
+            intArrayOf(
+                EGL14.EGL_CONTEXT_CLIENT_VERSION, 3,
+                0x3100, 0x3103, // EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_LOW_IMG
+                EGL14.EGL_NONE
+            )
+        } else {
+            intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 3, EGL14.EGL_NONE)
+        }
+
         eglContext = EGL14.eglCreateContext(eglDisplay, configs[0], EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
         check(eglContext != EGL14.EGL_NO_CONTEXT) { "eglCreateContext" }
         eglSurface = EGL14.eglCreateWindowSurface(eglDisplay, configs[0], outputSurface, intArrayOf(EGL14.EGL_NONE), 0)
@@ -262,6 +288,7 @@ class MotionBoostRenderer(
         meProg = Prog(VERTEX, MOTION_FRAGMENT)
         refineProg = Prog(VERTEX, REFINE_FRAGMENT)
         smoothProg = Prog(VERTEX, SMOOTH_FRAGMENT)
+        cutProg = Prog(VERTEX, CUT_FRAGMENT)
         interpProg = Prog(PRESENT_VERTEX, INTERP_FRAGMENT)
 
         val ids = IntArray(2)
@@ -288,16 +315,14 @@ class MotionBoostRenderer(
         choreographer?.postFrameCallback(frameCallback)
     }
 
-    /** (Re)allocates the frame slots for a new source resolution and resets the frame history. */
     private fun applySourceSize(width: Int, height: Int) {
         if (released || width <= 0 || height <= 0 || eglContext == EGL14.EGL_NO_CONTEXT) return
         if (width == srcW && height == srcH && slots.isNotEmpty() && appliedExtreme == extreme) return
+        cancelEstimate()
         srcW = width
         srcH = height
         appliedExtreme = extreme
 
-        // Stored frames keep (up to) the source resolution so the picture stays at original quality;
-        // only the motion search runs on a capped size. Extreme trades resolution for speed on both.
         val frameEdge = if (appliedExtreme) EXTREME_FRAME_EDGE else MAX_FRAME_EDGE
         val meEdge = if (appliedExtreme) EXTREME_ME_EDGE else MAX_WORK_EDGE
         val frameScale = min(1f, frameEdge.toFloat() / max(width, height))
@@ -306,12 +331,10 @@ class MotionBoostRenderer(
         val scale = min(1f, meEdge.toFloat() / max(width, height))
         workW = max(16, ((width * scale).toInt()) and 1.inv())
         workH = max(16, ((height * scale).toInt()) and 1.inv())
-        // luma + motion grid: multiples of the 4-texel block so uv <-> block lookups are exact
         lumaW = max(BLOCK, ((workW / 4 + BLOCK - 1) / BLOCK) * BLOCK)
         lumaH = max(BLOCK, ((workH / 4 + BLOCK - 1) / BLOCK) * BLOCK)
         blocksW = lumaW / BLOCK
         blocksH = lumaH / BLOCK
-        // half-resolution luma for the fine motion pass: a block is exactly 8x8 texels there
         halfW = lumaW * 2
         halfH = lumaH * 2
 
@@ -325,6 +348,7 @@ class MotionBoostRenderer(
         }
         mvTexture = newTexture(blocksW, blocksH, GLES30.GL_RGBA8, GLES30.GL_LINEAR)
         mvScratch = newTexture(blocksW, blocksH, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
+        cutTexture = newTexture(1, 1, GLES30.GL_RGBA8, GLES30.GL_NEAREST)
         cur = null
         prev = null
         mvFor = null
@@ -332,11 +356,23 @@ class MotionBoostRenderer(
         lastDrawnPrev = null
         dirty = true
 
-        // A frame may have been waiting for the size.
         if (pendingFrame) {
             pendingFrame = false
             onFrameAvailable()
         }
+    }
+
+    private fun cancelEstimate() {
+        if (estimateFence != 0L) {
+            GLES30.glDeleteSync(estimateFence)
+            estimateFence = 0L
+        }
+        estimateInFlight = false
+        mvFor = null
+        flowSkipped = false
+        regularizer.reset()
+        estimateLatency.reset()
+        nextDueNs = 0L
     }
 
     // =====================================================================
@@ -347,7 +383,6 @@ class MotionBoostRenderer(
         if (released) return
         val st = surfaceTexture ?: return
         if (slots.isEmpty()) {
-            // Size not known yet: leave the frame queued in the SurfaceTexture and pick it up later.
             pendingFrame = true
             return
         }
@@ -360,27 +395,40 @@ class MotionBoostRenderer(
         st.getTransformMatrix(texMatrix)
 
         val now = System.nanoTime()
-        var ts = st.timestamp
-        // If the codec did not stamp a render time the value is not on our clock: use arrival time.
-        if (abs(ts - now) > 2_000_000_000L) ts = now
+        var rawTs = st.timestamp
+        if (abs(rawTs - now) > 2_000_000_000L) rawTs = now
 
-        val newSlot = slots.first { it !== cur && it !== prev }
+        val regTs = regularizer.next(rawTs, vsyncPeriodNs)
+
+        // Protect in-flight slots from recycling
+        val newSlot = slots.firstOrNull { it !== cur && it !== prev && (mvFor == null || it !== mvFor) }
+            ?: slots.first { it !== cur && it !== prev }
         copyFrameInto(newSlot)
-        newSlot.tsNs = ts
+        newSlot.tsNs = regTs
+
+        statsAcc.onSourceFrame()
 
         val c = cur
-        if (c != null && MotionBoostTiming.isContinuous(c.tsNs, ts)) {
-            val interval = ts - c.tsNs
+        val continuous = c != null && MotionBoostTiming.isContinuous(c.tsNs, regTs) && !FramePacing.isGap(c.tsNs, regTs)
+        if (c != null && continuous) {
+            val interval = regTs - c.tsNs
             if (interval in MIN_FRAME_NS..MAX_FRAME_NS) {
                 frameIntervalNs = if (frameIntervalNs == 0L) interval else (frameIntervalNs * 7 + interval) / 8
             }
             prev = c
         } else {
-            prev = null // seek, pause, new clip: never interpolate across it
+            prev = null
+            cancelEstimate()
         }
         cur = newSlot
-        val lead = (ts - now).coerceIn(-50_000_000L, 200_000_000L)
+        val lead = (regTs - now).coerceIn(-50_000_000L, 200_000_000L)
         leadNs = (leadNs * 7 + lead) / 8
+
+        // Trigger fence-gated estimate off the intake path if continuous pair exists
+        val p = prev
+        if (p != null && cur != null && mvFor !== cur) {
+            triggerAsyncEstimate(p, cur!!)
+        }
     }
 
     private fun copyFrameInto(slot: Slot) {
@@ -414,15 +462,16 @@ class MotionBoostRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    /**
-     * Three passes over the block grid:
-     *  1. coarse search on 1/4-size luma (+-32 px reach, 4 px steps)  -> mvScratch
-     *  2. fine search on 1/2-size luma around the coarse vector (2 px)  -> mvTexture
-     *  3. 3x3 median filter removes outlier vectors (the cause of shimmering) -> mvScratch
-     * The result is left in [mvScratch]; it is swapped into [mvTexture] so the interpolator reads it.
-     */
-    private fun estimateMotion(a: Slot, b: Slot) {
-        // 1. coarse
+    private fun triggerAsyncEstimate(a: Slot, b: Slot) {
+        if (estimateInFlight) {
+            flowSkipped = true
+            statsAcc.onEstimateSkipped()
+            return
+        }
+        estimateInFlight = true
+        estimateStartNs = System.nanoTime()
+
+        // Pass 1: coarse search
         val me = meProg!!
         bindTarget(mvScratch, blocksW, blocksH)
         me.use()
@@ -435,7 +484,7 @@ class MotionBoostRenderer(
         GLES30.glUniform2i(me.loc("uLumaSize"), lumaW, lumaH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
-        // 2. refine
+        // Pass 2: refine search
         val refine = refineProg!!
         bindTarget(mvTexture, blocksW, blocksH)
         refine.use()
@@ -451,7 +500,7 @@ class MotionBoostRenderer(
         GLES30.glUniform2i(refine.loc("uHalfSize"), halfW, halfH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
-        // 3. smooth (reads mvTexture, writes mvScratch)
+        // Pass 3: smooth
         val smooth = smoothProg!!
         bindTarget(mvScratch, blocksW, blocksH)
         smooth.use()
@@ -461,12 +510,46 @@ class MotionBoostRenderer(
         GLES30.glUniform2i(smooth.loc("uBlocks"), blocksW, blocksH)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
 
-        // keep the sampled (LINEAR) texture in mvTexture, scratch is the NEAREST one
         val t = mvTexture
         mvTexture = mvScratch
         mvScratch = t
         setMvFilters()
+
+        // Pass 4: GPU 1x1 Scene Cut Detector
+        val cut = cutProg!!
+        bindTarget(cutTexture, 1, 1)
+        cut.use()
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, a.luma)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE1)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, b.luma)
+        GLES30.glUniform1i(cut.loc("uA"), 0)
+        GLES30.glUniform1i(cut.loc("uB"), 1)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+
         mvFor = b
+        flowSkipped = false
+
+        if (estimateFence != 0L) GLES30.glDeleteSync(estimateFence)
+        estimateFence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+        GLES30.glFlush()
+    }
+
+    private fun pollEstimateFence(): Boolean {
+        if (!estimateInFlight) return mvFor != null
+        val fence = estimateFence
+        if (fence == 0L) return false
+        val status = GLES30.glClientWaitSync(fence, 0, 0L)
+        if (status == GLES30.GL_ALREADY_SIGNALED || status == GLES30.GL_CONDITION_SATISFIED) {
+            GLES30.glDeleteSync(fence)
+            estimateFence = 0L
+            estimateInFlight = false
+            val durNs = System.nanoTime() - estimateStartNs
+            estimateLatency.onSample(durNs)
+            statsAcc.onEstimateMs(durNs / 1e6f)
+            return true
+        }
+        return false
     }
 
     private fun setMvFilters() {
@@ -486,15 +569,22 @@ class MotionBoostRenderer(
     private fun tick(vsyncNs: Long) {
         if (lastVsyncNs != 0L) {
             val period = vsyncNs - lastVsyncNs
-            if (period in 3_000_000L..40_000_000L) vsyncPeriodNs = (vsyncPeriodNs * 7 + period) / 8
+            if (period in 3_000_000L..40_000_000L) {
+                vsyncRing[vsyncHead] = period
+                vsyncHead = (vsyncHead + 1) % 9
+                if (vsyncCount < 9) vsyncCount++
+                System.arraycopy(vsyncRing, 0, vsyncScratch, 0, vsyncCount)
+                vsyncScratch.sort(0, vsyncCount)
+                vsyncPeriodNs = vsyncScratch[vsyncCount / 2]
+            }
         }
         lastVsyncNs = vsyncNs
 
         val c = cur ?: return
         val fps = targetFps
-        val intervalNs = (1_000_000_000.0 / fps).toLong()
-        // Draw only on the vsync nearest to the next output frame's due time. (The old "time since the
-        // last frame" gate rounded 90 FPS on a 120 Hz panel down to 60.)
+        val rawStepNs = (1_000_000_000.0 / fps).toLong()
+        val stepNs = MotionBoostTiming.stepNs(rawStepNs, vsyncPeriodNs)
+
         if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) return
         val workStartNs = System.nanoTime()
 
@@ -503,33 +593,35 @@ class MotionBoostRenderer(
         val interpolate = p != null && !MotionBoostTiming.shouldBypass(sourceFps, fps)
 
         var alpha = 1f
+        var warp = false
         if (interpolate) {
-            val hold = MotionBoostTiming.holdNs(frameIntervalNs, leadNs, vsyncPeriodNs)
-            // The buffer we draw now reaches the screen about one vsync from now.
+            val hold = MotionBoostTiming.holdNs(frameIntervalNs, leadNs, vsyncPeriodNs, estimateLatency.smoothedNs)
             val contentTime = vsyncNs + vsyncPeriodNs - hold
             alpha = MotionBoostTiming.alpha(contentTime, p!!.tsNs, c.tsNs)
+            warp = pollEstimateFence() && !flowSkipped
         }
 
-        if (!dirty && c === lastDrawnCur && p === lastDrawnPrev && alpha == lastDrawnAlpha) {
+        if (!dirty && c === lastDrawnCur && p === lastDrawnPrev && alpha == lastDrawnAlpha && warp) {
             reportStats(vsyncNs, sourceFps)
-            return // paused / nothing new: leave the last presented frame on screen
+            return
         }
 
-        if (interpolate && mvFor !== c) estimateMotion(p!!, c)
-
-        drawOutput(a = if (interpolate) p!! else c, b = c, alpha = alpha, warp = interpolate)
+        drawOutput(a = if (interpolate) p!! else c, b = c, alpha = alpha, warp = warp)
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
             fail("eglSwapBuffers failed (0x${Integer.toHexString(EGL14.eglGetError())})", null)
             return
         }
-        lastPresentNs = vsyncNs
-        nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, intervalNs)
-        reportWorkDuration(System.nanoTime() - workStartNs, intervalNs)
+
+        val drawDurationMs = (System.nanoTime() - workStartNs) / 1e6f
+        statsAcc.onDrawMs(drawDurationMs)
+        statsAcc.onPresented(warp)
+
+        nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, stepNs)
+        reportWorkDuration((drawDurationMs * 1e6f).toLong(), stepNs)
         lastDrawnCur = c
         lastDrawnPrev = p
         lastDrawnAlpha = alpha
         dirty = false
-        drawnInWindow++
         reportStats(vsyncNs, sourceFps)
     }
 
@@ -549,9 +641,13 @@ class MotionBoostRenderer(
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, b.full)
         GLES30.glActiveTexture(GLES30.GL_TEXTURE2)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, mvTexture)
+        GLES30.glActiveTexture(GLES30.GL_TEXTURE3)
+        GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, cutTexture)
+
         GLES30.glUniform1i(ip.loc("uA"), 0)
         GLES30.glUniform1i(ip.loc("uB"), 1)
         GLES30.glUniform1i(ip.loc("uMV"), 2)
+        GLES30.glUniform1i(ip.loc("uCutTex"), 3)
         GLES30.glUniform1f(ip.loc("uAlpha"), alpha)
         GLES30.glUniform1i(ip.loc("uWarp"), if (warp) 1 else 0)
         GLES30.glUniform2f(ip.loc("uInvHalf"), 1f / halfW, 1f / halfH)
@@ -561,7 +657,6 @@ class MotionBoostRenderer(
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
 
-    /** Extreme mode: tells the system how long a frame took so it can ramp CPU / GPU clocks up in time. */
     private fun reportWorkDuration(workNs: Long, targetNs: Long) {
         val session = hintSession ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
@@ -594,13 +689,10 @@ class MotionBoostRenderer(
     }
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
-        if (statsWindowStartNs == 0L) statsWindowStartNs = nowNs
-        val elapsed = nowNs - statsWindowStartNs
-        if (elapsed >= 1_000_000_000L) {
-            val out = drawnInWindow * 1_000_000_000f / elapsed
-            callbacks.onStats(sourceFps, out)
-            statsWindowStartNs = nowNs
-            drawnInWindow = 0
+        val win = statsAcc.poll(nowNs)
+        if (win != null) {
+            callbacks.onStats(sourceFps, win.renderedFps)
+            callbacks.onWindow(win, sourceFps, if (appliedExtreme) EXTREME_ME_EDGE else MAX_WORK_EDGE, estimateLatency.smoothedNs / 1e6f)
         }
     }
 
@@ -630,15 +722,17 @@ class MotionBoostRenderer(
 
     private fun freeSlots() {
         if (slots.isNotEmpty()) {
-            val ids = IntArray(slots.size * 3 + 2)
+            val ids = IntArray(slots.size * 3 + 3)
             slots.forEachIndexed { i, s -> ids[i * 3] = s.full; ids[i * 3 + 1] = s.luma; ids[i * 3 + 2] = s.half }
-            ids[ids.size - 2] = mvTexture
-            ids[ids.size - 1] = mvScratch
+            ids[ids.size - 3] = mvTexture
+            ids[ids.size - 2] = mvScratch
+            ids[ids.size - 1] = cutTexture
             GLES30.glDeleteTextures(ids.size, ids, 0)
         }
         slots = emptyArray()
         mvTexture = 0
         mvScratch = 0
+        cutTexture = 0
     }
 
     private fun releaseGl() {
@@ -652,7 +746,7 @@ class MotionBoostRenderer(
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
             copyProg?.delete(); lumaProg?.delete(); halfProg?.delete(); meProg?.delete()
-            refineProg?.delete(); smoothProg?.delete(); interpProg?.delete()
+            refineProg?.delete(); smoothProg?.delete(); cutProg?.delete(); interpProg?.delete()
         }
         surfaceTexture = null
         inputSurface = null
@@ -722,16 +816,15 @@ class MotionBoostRenderer(
 
     companion object {
         private const val TAG = "MotionBoost"
-        private const val SLOT_COUNT = 3
-        private const val BLOCK = 4 // motion block = 4x4 luma texels = 16x16 working pixels
-        private const val MAX_WORK_EDGE = 1920      // motion search size cap
-        private const val MAX_FRAME_EDGE = 3840     // stored / shown frame cap (original quality up to 4K)
-        private const val EXTREME_FRAME_EDGE = 1280 // Extreme performance
+        private const val SLOT_COUNT = 4
+        private const val BLOCK = 4
+        private const val MAX_WORK_EDGE = 1920
+        private const val MAX_FRAME_EDGE = 3840
+        private const val EXTREME_FRAME_EDGE = 1280
         private const val EXTREME_ME_EDGE = 960
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 
-        /** Full-screen triangle strip generated from gl_VertexID (no vertex buffers needed). */
         private const val VERTEX = """#version 300 es
 out vec2 vUv;
 void main() {
@@ -741,11 +834,6 @@ void main() {
 }
 """
 
-        /**
-         * Vertex shader of the final (on-screen) pass only. uOrient maps a screen position to the picture position to
-         * sample, about the picture centre, so rotate / flip / mirror cost nothing and every texture read of the
-         * fragment shader (frames, motion vectors) stays in picture space.
-         */
         private const val PRESENT_VERTEX = """#version 300 es
 uniform mat2 uOrient;
 out vec2 vUv;
@@ -756,10 +844,8 @@ void main() {
 }
 """
 
-        /** Copies the decoded OES frame, deinterlacing it on the way (see [DeinterlaceGlsl]). */
         private val COPY_OES_FRAGMENT: String = DeinterlaceGlsl.oesCopyFragment()
 
-        /** 4x4 box average of luma: four bilinear taps at +-1 source pixel. */
         private const val LUMA_FRAGMENT = """#version 300 es
 precision highp float;
 uniform sampler2D uSrc;
@@ -775,7 +861,6 @@ void main() {
 }
 """
 
-        /** Half-size luma (slightly blurred, which calms sensor noise before matching). */
         private const val HALF_FRAGMENT = """#version 300 es
 precision highp float;
 uniform sampler2D uSrc;
@@ -791,10 +876,6 @@ void main() {
 }
 """
 
-        /**
-         * Pass 1 - coarse search. One fragment per 4x4 luma-texel block (16 px). Output r,g = vector in
-         * luma texels encoded as (d * 8 + 128) / 255. A vector is only used if it clearly beats "no motion".
-         */
         private const val MOTION_FRAGMENT = """#version 300 es
 precision highp float;
 precision highp int;
@@ -828,9 +909,9 @@ void main() {
   }
   ivec2 best = ivec2(0);
   float zero = sad(org, best);
-  float amb = 0.0;                              // 1 = several very different vectors fit equally well
+  float amb = 0.0;
   if (zero > 0.015) {
-    float bestCost = zero * 0.85 - 0.002;     // must clearly beat zero motion
+    float bestCost = zero * 0.85 - 0.002;
     float costs[81];
     for (int dy = -8; dy <= 8; dy += 2) {
       for (int dx = -8; dx <= 8; dx += 2) {
@@ -850,9 +931,6 @@ void main() {
           if (c < bestCost) { bestCost = c; best = d; }
         }
       }
-      // Repeating patterns (window blinds, fences, grids, text): a vector one period away matches
-      // almost as well as the true one. If another, clearly different vector is nearly as good, the
-      // match is a guess - flag it so the picture falls back to the real frame there.
       float farCost = 1.0e9;
       for (int iy = 0; iy < 9; iy++) {
         for (int ix = 0; ix < 9; ix++) {
@@ -867,10 +945,6 @@ void main() {
 }
 """
 
-        /**
-         * Pass 2 - fine search on half-size luma (8x8 texels per block, 2 px accuracy) around the coarse
-         * vector. Output r,g = vector in half-size texels encoded as (d * 4 + 128) / 255, b = residual * 2.
-         */
         private const val REFINE_FRAGMENT = """#version 300 es
 precision highp float;
 precision highp int;
@@ -905,8 +979,8 @@ void main() {
     }
   }
   vec4 coarseT = texelFetch(uCoarse, blk, 0);
-  vec2 coarse = (coarseT.rg * 255.0 - 128.0) / 8.0;                        // luma texels
-  ivec2 start = ivec2(floor(coarse * 2.0 + 0.5));                          // half-size texels
+  vec2 coarse = (coarseT.rg * 255.0 - 128.0) / 8.0;
+  ivec2 start = ivec2(floor(coarse * 2.0 + 0.5));
 
   ivec2 best = ivec2(0);
   float zero = sad(org, best);
@@ -923,12 +997,11 @@ void main() {
     if (best != ivec2(0)) bestSad = sad(org, best);
   }
   float res = clamp(bestSad * 2.0, 0.0, 1.0);
-  if (coarseT.b > 0.5) res = max(res, 0.6);     // ambiguous (periodic) match: treat as unreliable
+  if (coarseT.b > 0.5) res = max(res, 0.6);
   o = vec4((vec2(best) * 4.0 + 128.0) / 255.0, res, 1.0);
 }
 """
 
-        /** Pass 3 - 3x3 component-wise median of the vectors; residual = mean of own and worst neighbour. */
         private const val SMOOTH_FRAGMENT = """#version 300 es
 precision highp float;
 precision highp int;
@@ -963,8 +1036,6 @@ void main() {
     float tx = vx[i]; vx[i] = vx[mx]; vx[mx] = tx;
     float ty = vy[i]; vy[i] = vy[my]; vy[my] = ty;
   }
-  // Vector disagreement around this block (half-size texels). A clean field is locally uniform;
-  // a noisy one (periodic texture, fast motion past the search range) is not.
   float dev = 0.0;
   for (int i = 0; i < 9; i++) dev += abs(vx[i] - vx[4]) + abs(vy[i] - vy[4]);
   dev = dev / 9.0 / 4.0;
@@ -973,16 +1044,36 @@ void main() {
 }
 """
 
+        /** 1x1 GPU Scene Cut Detector pass */
+        private const val CUT_FRAGMENT = """#version 300 es
+precision highp float;
+uniform sampler2D uA;
+uniform sampler2D uB;
+out vec4 o;
+void main() {
+  float diff = 0.0;
+  for (int y = 0; y < 8; y++) {
+    for (int x = 0; x < 8; x++) {
+      vec2 uv = vec2((float(x) + 0.5) / 8.0, (float(y) + 0.5) / 8.0);
+      diff += abs(texture(uA, uv).r - texture(uB, uv).r);
+    }
+  }
+  float mean = diff / 64.0;
+  o = vec4(mean, (mean > 0.12) ? 1.0 : 0.0, 0.0, 1.0);
+}
+"""
+
         private const val INTERP_FRAGMENT = """#version 300 es
 precision highp float;
 uniform sampler2D uA;
 uniform sampler2D uB;
-uniform sampler2D uMV;      // LINEAR filtered: vectors vary smoothly across block borders
+uniform sampler2D uMV;
+uniform sampler2D uCutTex;
 uniform float uAlpha;
 uniform int uWarp;
-uniform vec2 uInvHalf;      // 1 / half-size luma dimensions (vector unit = half-size texel)
-uniform vec3 uGrade;        // brightness, contrast, saturation
-uniform mat3 uColorDelta;   // hue + colour temperature matrix minus identity (zeros = off)
+uniform vec2 uInvHalf;
+uniform vec3 uGrade;
+uniform mat3 uColorDelta;
 in vec2 vUv;
 out vec4 o;
 
@@ -990,10 +1081,12 @@ vec2 decode(vec2 e) { return (e * 255.0 - 128.0) / 4.0; }
 
 void main() {
   vec3 rgb;
-  if (uWarp == 0) {
-    rgb = texture(uB, vUv).rgb;
+  float isCut = texture(uCutTex, vec2(0.5)).g;
+  if (uWarp == 0 || isCut > 0.5) {
+    vec3 pa = texture(uA, vUv).rgb;
+    vec3 pb = texture(uB, vUv).rgb;
+    rgb = (uAlpha < 0.5) ? pa : pb;
   } else {
-    // motion at this pixel, then re-read it where the object was in frame A
     vec2 d0 = decode(texture(uMV, vUv).rg);
     vec4 m = texture(uMV, vUv - uAlpha * d0 * uInvHalf);
     vec2 d = decode(m.rg);
@@ -1003,22 +1096,10 @@ void main() {
     vec3 cb = texture(uB, vUv + (1.0 - uAlpha) * d * uInvHalf).rgb;
     vec3 warped = mix(ca, cb, uAlpha);
 
-    // Soft fallback: where the match is poor, drift towards a plain cross-fade of the unmoved frames
-    // (smooth, no per-pixel switching) rather than hard-switching between frames.
     vec3 pa = texture(uA, vUv).rgb;
     vec3 pb = texture(uB, vUv).rgb;
     vec3 plain = mix(pa, pb, uAlpha);
-    // Very bad match (scene cut): show the nearest real frame instead of a dissolve. The choice is the
-    // same for the whole picture, only the blend amount varies smoothly with the block residual.
-    vec3 nearest = (uAlpha < 0.5) ? pa : pb;
-    // Where the warp is not trusted, show the real frame (identical to the cross-fade in static areas,
-    // but never a ghosted double image on moving ones).
-    plain = nearest;
-    // Trust the warp only when every test agrees:
-    //  - block match error is low,
-    //  - the two warped samples really show the same picture (full-resolution check),
-    //  - the vector is the same where the pixel came from (no tearing at occlusions / streaks),
-    //  - the vector is not at the edge of the search range (true motion may be even faster).
+
     float conf = (1.0 - smoothstep(0.035, 0.09, residual))
                * (1.0 - smoothstep(0.10, 0.26, length(ca - cb)))
                * (1.0 - smoothstep(1.5, 4.0, length(d - d0)))

@@ -43,20 +43,46 @@ data class BoosterPlan(
  */
 object FpsBoosterPlanner {
 
-    fun plan(settings: FpsBoosterSettings, caps: DeviceCaps, source: SourceInfo): BoosterPlan {
+    fun plan(
+        settings: FpsBoosterSettings,
+        caps: DeviceCaps,
+        source: SourceInfo,
+        rifeModelInstalled: Boolean = false
+    ): BoosterPlan {
         if (settings.mode == BoosterMode.OFF) return BoosterPlan.inactive("Off")
         if (source.isHdr) return BoosterPlan.inactive("Not available for HDR videos")
         if (!caps.glEs3) return BoosterPlan.inactive("This device does not support OpenGL ES 3")
 
-        val engine = when (settings.engine) {
-            BoosterEngine.AUTO -> if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
-            BoosterEngine.AI_RIFE -> BoosterEngine.AI_RIFE
-            BoosterEngine.OPTICAL_FLOW ->
-                if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
-            BoosterEngine.CLASSIC -> BoosterEngine.CLASSIC
+        val engine: BoosterEngine
+        var engineNote: String? = null
+
+        when (settings.engine) {
+            BoosterEngine.AUTO -> {
+                engine = if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
+            }
+            BoosterEngine.AI_RIFE -> {
+                if (!caps.floatRenderTargets) {
+                    engine = BoosterEngine.CLASSIC
+                    engineNote = "GPU cannot render to float textures: using Classic engine"
+                } else if (!rifeModelInstalled) {
+                    engine = BoosterEngine.OPTICAL_FLOW
+                    engineNote = "RIFE model not installed: using Optical flow"
+                } else {
+                    engine = BoosterEngine.AI_RIFE
+                }
+            }
+            BoosterEngine.OPTICAL_FLOW -> {
+                if (caps.floatRenderTargets) {
+                    engine = BoosterEngine.OPTICAL_FLOW
+                } else {
+                    engine = BoosterEngine.CLASSIC
+                    engineNote = "GPU cannot render to float textures: using Classic engine"
+                }
+            }
+            BoosterEngine.CLASSIC -> {
+                engine = BoosterEngine.CLASSIC
+            }
         }
-        val engineNote = if (settings.engine == BoosterEngine.OPTICAL_FLOW && engine == BoosterEngine.CLASSIC)
-            "GPU cannot render to float textures: using Classic engine" else null
 
         var quality = settings.quality
         var ceiling = BoosterTargets.ALL.max()

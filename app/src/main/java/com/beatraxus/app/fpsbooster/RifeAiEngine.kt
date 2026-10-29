@@ -26,8 +26,45 @@ class RifeAiEngine(private val context: Context) {
 
     companion object {
         private const val TAG = "RifeAiEngine"
-        private const val MODEL_ASSET_NAME = "models/rife_v426.onnx"
-        private const val LITE_MODEL_ASSET_NAME = "models/rife_lite.onnx"
+        private val MODEL_ASSET_NAMES = listOf(
+            "models/rife_v4.26.onnx",
+            "models/rife_v426.onnx",
+            "models/rife_lite.onnx",
+            "models/rife.onnx"
+        )
+        private val CACHE_FILE_NAMES = listOf(
+            "rife_v4.26.onnx",
+            "rife_v426.onnx",
+            "rife_lite.onnx",
+            "rife.onnx"
+        )
+
+        /**
+         * Returns whether a valid RIFE ONNX model file exists in app assets or cache.
+         */
+        fun isModelInstalled(context: Context?): Boolean {
+            if (context == null) return false
+            val cacheDir = try { context.cacheDir } catch (_: Throwable) { null }
+            if (cacheDir != null) {
+                for (name in CACHE_FILE_NAMES) {
+                    val file = File(cacheDir, name)
+                    if (file.exists() && file.length() > 0) return true
+                }
+            }
+            try {
+                val assets = context.assets ?: return false
+                for (assetName in MODEL_ASSET_NAMES) {
+                    try {
+                        assets.open(assetName).use { return true }
+                    } catch (_: Throwable) {
+                        // check next asset name
+                    }
+                }
+            } catch (_: Throwable) {
+                // context.assets threw (e.g. unattached ContextWrapper in tests)
+            }
+            return false
+        }
     }
 
     private var ortEnv: OrtEnvironment? = null
@@ -37,48 +74,52 @@ class RifeAiEngine(private val context: Context) {
     @Volatile private var isInitialized = false
     @Volatile private var isNnapiSupported = false
 
-    private var modelWidth = 640
-    private var modelHeight = 360
+    var modelWidth = 640
+        private set
+    var modelHeight = 360
+        private set
 
     /**
      * Initializes the ONNX Runtime session and loads the RIFE 4.26 model asset.
      */
     fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE): Boolean {
-        if (isInitialized) return true
+        if (isInitialized) return ortSession != null
 
         return try {
             ortEnv = OrtEnvironment.getEnvironment()
-            val sessionOptions = OrtSession.SessionOptions().apply {
+            val sessionOptions = OrtSession.SessionOptions()
+            try {
                 try {
-                    addNnapi()
+                    sessionOptions.addNnapi()
                     isNnapiSupported = true
                     Log.i(TAG, "ONNX Runtime NNAPI acceleration enabled for RIFE AI")
                 } catch (e: Exception) {
                     Log.w(TAG, "NNAPI acceleration unavailable, falling back to CPU/XNNPACK: ${e.message}")
                     isNnapiSupported = false
                 }
-                setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                setInterOpNumThreads(2)
-                setIntraOpNumThreads(4)
-            }
+                sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                sessionOptions.setInterOpNumThreads(2)
+                sessionOptions.setIntraOpNumThreads(4)
 
-            // Set inference resolution based on quality preset
-            when (quality) {
-                BoosterQuality.PERFORMANCE -> { modelWidth = 640; modelHeight = 360 }
-                BoosterQuality.BALANCED -> { modelWidth = 960; modelHeight = 540 }
-                BoosterQuality.QUALITY -> { modelWidth = 1280; modelHeight = 720 }
-            }
+                when (quality) {
+                    BoosterQuality.PERFORMANCE -> { modelWidth = 640; modelHeight = 360 }
+                    BoosterQuality.BALANCED -> { modelWidth = 960; modelHeight = 540 }
+                    BoosterQuality.QUALITY -> { modelWidth = 1280; modelHeight = 720 }
+                }
 
-            val modelFile = getOrExtractModelFile()
-            if (modelFile != null && modelFile.exists()) {
-                ortSession = ortEnv?.createSession(modelFile.absolutePath, sessionOptions)
-                isInitialized = true
-                Log.i(TAG, "RIFE 4.26 ONNX model initialized successfully (${modelWidth}x${modelHeight})")
-                true
-            } else {
-                Log.i(TAG, "RIFE model file not pre-bundled; RIFE AI engine ready with active GPU neural synthesis pipeline")
-                isInitialized = true
-                true
+                val modelFile = getOrExtractModelFile()
+                if (modelFile != null && modelFile.exists() && modelFile.length() > 0) {
+                    ortSession = ortEnv?.createSession(modelFile.absolutePath, sessionOptions)
+                    isInitialized = true
+                    Log.i(TAG, "RIFE 4.26 ONNX model initialized successfully (${modelWidth}x${modelHeight})")
+                    true
+                } else {
+                    Log.i(TAG, "RIFE model file not present in assets/cache")
+                    isInitialized = true
+                    false
+                }
+            } finally {
+                sessionOptions.close()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing RIFE AI Engine: ${e.message}", e)
@@ -86,38 +127,85 @@ class RifeAiEngine(private val context: Context) {
         }
     }
 
-    /**
-     * Checks if model asset exists or extracts it from app assets to cache dir.
-     */
     private fun getOrExtractModelFile(): File? {
-        val cacheFile = File(context.cacheDir, "rife_v426.onnx")
-        if (cacheFile.exists() && cacheFile.length() > 0) return cacheFile
-
-        return try {
-            context.assets.open(MODEL_ASSET_NAME).use { input ->
-                FileOutputStream(cacheFile).use { output ->
-                    input.copyTo(output)
-                }
-            }
-            cacheFile
-        } catch (e: Exception) {
-            try {
-                context.assets.open(LITE_MODEL_ASSET_NAME).use { input ->
-                    FileOutputStream(cacheFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                cacheFile
-            } catch (ex: Exception) {
-                null
+        val cacheDir = try { context.cacheDir } catch (_: Throwable) { null }
+        if (cacheDir != null) {
+            for (name in CACHE_FILE_NAMES) {
+                val file = File(cacheDir, name)
+                if (file.exists() && file.length() > 0) return file
             }
         }
+
+        try {
+            val assets = context.assets
+            if (assets != null) {
+                for (assetName in MODEL_ASSET_NAMES) {
+                    try {
+                        assets.open(assetName).use { input ->
+                            val fileName = assetName.substringAfterLast('/')
+                            val cacheFile = File(cacheDir ?: context.cacheDir, fileName)
+                            FileOutputStream(cacheFile).use { output ->
+                                input.copyTo(output)
+                            }
+                            if (cacheFile.exists() && cacheFile.length() > 0) return cacheFile
+                        }
+                    } catch (_: Throwable) {
+                        // Try next asset
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+        return null
     }
 
     /**
-     * Performs RIFE 4.26 neural frame interpolation between frame A and frame B at timestep [timestep] (0.0 .. 1.0).
-     * Returns the generated Bitmap, or null if inference falls back.
+     * Direct float buffer inference entry point for GPU pipeline integration (no Bitmap allocation).
      */
+    fun interpolateBuffer(
+        bufferA: FloatBuffer,
+        bufferB: FloatBuffer,
+        outputBuffer: FloatBuffer,
+        timestep: Float = 0.5f
+    ): Boolean {
+        if (!isInitialized && !initialize()) return false
+        val session = ortSession ?: return false
+        val env = ortEnv ?: return false
+
+        return try {
+            val tensorShape = longArrayOf(1, 3, modelHeight.toLong(), modelWidth.toLong())
+            val tensorT = OnnxTensor.createTensor(env, FloatBuffer.wrap(floatArrayOf(timestep.coerceIn(0f, 1f))), longArrayOf(1, 1))
+            val tensorA = OnnxTensor.createTensor(env, bufferA, tensorShape)
+            val tensorB = OnnxTensor.createTensor(env, bufferB, tensorShape)
+
+            val inputNames = session.inputNames
+            val img0Name = if (inputNames.contains("img0")) "img0" else inputNames.elementAtOrElse(0) { "img0" }
+            val img1Name = if (inputNames.contains("img1")) "img1" else inputNames.elementAtOrElse(1) { "img1" }
+            val timestepName = if (inputNames.contains("timestep")) "timestep" else inputNames.elementAtOrElse(2) { "timestep" }
+
+            val inputs = mapOf(
+                img0Name to tensorA,
+                img1Name to tensorB,
+                timestepName to tensorT
+            )
+
+            val result = session.run(inputs)
+            val outputTensor = result.get(0) as OnnxTensor
+            val outBuf = outputTensor.floatBuffer
+            outputBuffer.rewind()
+            outputBuffer.put(outBuf)
+            outputBuffer.rewind()
+
+            tensorA.close()
+            tensorB.close()
+            tensorT.close()
+            result.close()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "RIFE float buffer inference error: ${e.message}", e)
+            false
+        }
+    }
+
     fun interpolateFrame(
         frameA: Bitmap,
         frameB: Bitmap,
@@ -167,13 +255,9 @@ class RifeAiEngine(private val context: Context) {
             }
         }
 
-        // Fallback or preview frame synthesis when ONNX model is not present
         return synthesizeNeuralFallback(frameA, frameB, timestep, outputWidth, outputHeight)
     }
 
-    /**
-     * Converts a Bitmap into NCHW FloatBuffer normalized to [0, 1].
-     */
     private fun bitmapToFloatBuffer(bitmap: Bitmap): FloatBuffer {
         val w = bitmap.width
         val h = bitmap.height
@@ -195,9 +279,6 @@ class RifeAiEngine(private val context: Context) {
         return floatBuffer
     }
 
-    /**
-     * Converts NCHW FloatBuffer output back into a Bitmap.
-     */
     private fun floatBufferToBitmap(buffer: FloatBuffer, width: Int, height: Int): Bitmap {
         val pixels = IntArray(width * height)
         val rOffset = 0
@@ -213,9 +294,6 @@ class RifeAiEngine(private val context: Context) {
         return Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888)
     }
 
-    /**
-     * Lightweight high-quality smooth neural blending fallback.
-     */
     private fun synthesizeNeuralFallback(
         frameA: Bitmap,
         frameB: Bitmap,
@@ -240,12 +318,10 @@ class RifeAiEngine(private val context: Context) {
         executor.execute {
             try {
                 ortSession?.close()
-                ortEnv?.close()
             } catch (e: Exception) {
                 Log.e(TAG, "Error closing RIFE AI session: ${e.message}")
             } finally {
                 ortSession = null
-                ortEnv = null
                 isInitialized = false
             }
         }

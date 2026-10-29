@@ -13,6 +13,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.Surface
 import androidx.lifecycle.AndroidViewModel
+import com.beatraxus.app.fpsbooster.RifeAiEngine
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.media3.common.AudioAttributes
@@ -584,7 +585,12 @@ class VideoPlayerViewModel(
             s.fpsBoosterSuspended != null -> BoosterPlan.inactive(s.fpsBoosterSuspended)
             effectsInstalled -> BoosterPlan.inactive("Replay the video to use the FPS Booster with video effects (deinterlacing, upscaler, sharpness)")
             caps == null -> BoosterPlan.inactive("Checking device")
-            else -> FpsBoosterPlanner.plan(s.fpsBooster, caps, SourceInfo(s.sourceFps, s.videoSize.width, s.videoSize.height, s.isHdr))
+            else -> FpsBoosterPlanner.plan(
+                s.fpsBooster,
+                caps,
+                SourceInfo(s.sourceFps, s.videoSize.width, s.videoSize.height, s.isHdr),
+                rifeModelInstalled = RifeAiEngine.isModelInstalled(getApplication<Application>())
+            )
         }
         return if (plan == s.fpsBoosterPlan) s else s.copy(fpsBoosterPlan = plan, fpsBoosterStats = BoosterStats())
     }

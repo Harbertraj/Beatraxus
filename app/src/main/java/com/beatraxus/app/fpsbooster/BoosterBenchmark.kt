@@ -123,7 +123,7 @@ object BoosterRecommender {
     fun aiFusionEnabled(s: FpsBoosterSettings, plan: BoosterPlan): Boolean =
         s.aiFusion && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW
 
-    fun recommend(r: BenchmarkResult, panelRates: List<Float>): Recommendation {
+    fun recommend(r: BenchmarkResult, panelRates: List<Float>, rifeModelInstalled: Boolean = false): Recommendation {
         val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isRateSupported(panelRates, it) }.ifEmpty { listOf(30) }
         val weakCpu = r.cpuScore in 1 until WEAK_CPU_SCORE
         val ceiling = if (weakCpu) 60 else usableTargets.max()
@@ -138,7 +138,7 @@ object BoosterRecommender {
                 val target = targetFor(SOURCE_FPS * pair) ?: continue
                 val tier = when (q) { BoosterQuality.QUALITY -> DeviceTier.HIGH; BoosterQuality.BALANCED -> DeviceTier.MID; else -> DeviceTier.LOW }
                 val cpuNote = if (weakCpu) " The CPU is on the slow side, so the target is capped at 60." else ""
-                val recommendedEngine = if (q == BoosterQuality.QUALITY && r.gpuScore > 1200) BoosterEngine.AI_RIFE else BoosterEngine.OPTICAL_FLOW
+                val recommendedEngine = if (q == BoosterQuality.QUALITY && r.gpuScore > 1200 && rifeModelInstalled) BoosterEngine.AI_RIFE else BoosterEngine.OPTICAL_FLOW
                 val engineLabel = if (recommendedEngine == BoosterEngine.AI_RIFE) "RIFE AI" else "Optical flow"
                 return Recommendation(
                     recommendedEngine, q, target, tier,

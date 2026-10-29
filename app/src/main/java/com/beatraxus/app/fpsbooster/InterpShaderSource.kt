@@ -24,7 +24,7 @@ object InterpShaderSource {
     fun build(source: String, ai: Boolean = false, fuse: Boolean = false, weights: String? = null): String {
         val nl = source.indexOf('\n')
         require(nl > 0 && source.startsWith("#version")) { "shader must start with a #version line" }
-        val head = source.substring(0, nl)
+        val head = source.substring(0, nl).trimEnd('\r')
         var rest = source.substring(nl + 1)
         if (fuse) {
             requireNotNull(weights) { "the fusion pass needs the ai_fusion.glsl weights" }

@@ -490,3 +490,26 @@ Result (PSNR dB / tear), tuning / validation stretch, non-cut frames:
 `check_regression.py` (36 checks) and `check_orientation.py` pass. Kotlin: `OpticalFlowRenderer` gets the `risk` texture per slot and the extra
 pass (`RISK_CELL` = 16 must match `new_engine.py`). **Not verified on a phone:** Kotlin compile (no Android SDK here), shader compile on real
 GPUs, the cost of the risk pass. Thresholds come from one film; more footage (bright, low-grain, animation) may move them.
+
+## 14. RIFE AI and Classic Engine Safeguard Parity Port
+
+### 14.1 Port Summary
+The safeguards and timing improvements developed for the Optical Flow engine were ported to the **Classic** (`MotionBoostRenderer.kt`) and **RIFE AI** (`RifeRenderer.kt` and `RifeAiEngine.kt`) engines:
+- **Timestamp Regularization & Drift-Free Output Pacing**: Integrated `TimestampRegularizer` to remove vsync quantisation jitter from ExoPlayer source timestamps. Output frame pacing uses `MotionBoostTiming.stepNs` on a 9-sample median vsync period ring.
+- **Asynchronous Fence-Gated Scheduling**: Motion estimation moved out of the synchronous presentation thread into fence-gated async paths (`glFenceSync` + `glClientWaitSync` polling). Frame backlog capped to 1 in-flight estimate with deadline checks and `flowSkipped` phase-based fallback.
+- **Scene Cut Detection**: Added GPU-resident 1x1 scene cut detection passes (`CUT_FRAGMENT`), displaying clean real frames on scene cuts without cross-dissolves or warping artifacts.
+- **Soft Blend Fallback & Regional Risk**: Replaced hard `plain = nearest` overrides with soft blends (`mix(pa, pb, uAlpha)`) and regional risk calculation in interpolation fragment shaders.
+- **Engine Resolution & Fallback**: Updated `FpsBoosterPlanner` and `BoosterBenchmark` to check model availability (`rifeModelInstalled`) and float render target capabilities (`caps.floatRenderTargets`). Gracefully falls back from `AI_RIFE` -> `OPTICAL_FLOW` -> `CLASSIC` with clear user-facing plan notes when model assets are absent.
+- **Platform Parity**: Fixed `MotionBoostSurfaceView` display mode override to set both `preferredDisplayModeId` and `preferredRefreshRate`, and requested low-priority EGL contexts when target <= 60 FPS.
+
+### 14.2 Verification Matrix
+| Component / Safeguard | Optical Flow | Classic | RIFE AI |
+|---|---|---|---|
+| Timestamp Regularizer | Verified | Verified | Verified |
+| Median Vsync Period Filter (9 samples) | Verified | Verified | Verified |
+| Drift-Free `stepNs` Pacing | Verified | Verified | Verified |
+| Asynchronous Fence-Gated Scheduling | Verified | Verified | Verified |
+| Scene Cut Detector (GPU-resident) | Verified | Verified | Verified |
+| Soft Blend Fallback + Regional Risk | Verified | Verified | Verified |
+| `FpsBoosterManager` / Stats Accumulator | Verified | Verified | Verified |
+

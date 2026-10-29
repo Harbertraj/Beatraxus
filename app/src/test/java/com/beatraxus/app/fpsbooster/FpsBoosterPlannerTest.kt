@@ -58,6 +58,27 @@ class FpsBoosterPlannerTest {
             FpsBoosterPlanner.plan(on().copy(engine = BoosterEngine.CLASSIC), panel120, sdr24).engine)
     }
 
+    @Test fun rifeEngineFallbackWhenModelNotInstalled() {
+        val rifePlanUninstalled = FpsBoosterPlanner.plan(
+            on().copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = false
+        )
+        assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlanUninstalled.engine)
+        assertTrue(rifePlanUninstalled.note!!.contains("RIFE model not installed"))
+
+        val rifePlanInstalled = FpsBoosterPlanner.plan(
+            on().copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.AI_RIFE, rifePlanInstalled.engine)
+        assertNull(rifePlanInstalled.note)
+
+        val noFloat = panel120.copy(floatRenderTargets = false)
+        val rifeNoFloat = FpsBoosterPlanner.plan(
+            on().copy(engine = BoosterEngine.AI_RIFE), noFloat, sdr24, rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.CLASSIC, rifeNoFloat.engine)
+        assertTrue(rifeNoFloat.note!!.contains("float textures"))
+    }
+
     @Test fun autoModePicksSixtyForFilmRate() {
         val p = FpsBoosterPlanner.plan(auto, panel120, sdr24)
         assertTrue(p.active); assertEquals(60, p.targetFps)

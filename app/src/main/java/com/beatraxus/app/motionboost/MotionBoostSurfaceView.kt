@@ -177,8 +177,9 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
             val choice = DisplayRefreshRate.preferredMode(context, targetFps) ?: return
             com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
             val lp = window.attributes
-            if (lp.preferredDisplayModeId != choice.modeId) {
+            if (lp.preferredDisplayModeId != choice.modeId || lp.preferredRefreshRate != choice.refreshRate) {
                 lp.preferredDisplayModeId = choice.modeId
+                lp.preferredRefreshRate = choice.refreshRate
                 window.attributes = lp
             }
         } catch (t: Throwable) {
