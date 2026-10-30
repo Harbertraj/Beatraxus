@@ -413,7 +413,7 @@ private fun SeekbarMock(style: String, c1: Color, c2: Color, modifier: Modifier)
                     x += gap; i++
                 }
             }
-            "LIVE_WAVEFORM" -> wave(c1, c2, track, px, w, mid, h)
+            "LIVE_WAVEFORM", "WAVY_GLASS" -> wave(c1, c2, track, px, w, mid, h)
             else -> { // BEATRAXUS_PULSE
                 drawLine(track, Offset(0f, mid), Offset(w, mid), stroke, StrokeCap.Round)
                 drawLine(c1, Offset(0f, mid), Offset(px, mid), stroke, StrokeCap.Round)

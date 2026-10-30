@@ -6168,6 +6168,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun setNowPlayingAnimatedBackground(enabled: Boolean) {
+        viewModelScope.launch {
+            appearancePreferences.setNowPlayingAnimatedBackground(enabled)
+        }
+    }
+
     fun setNowPlayingHdCover(enabled: Boolean) {
         viewModelScope.launch {
             appearancePreferences.setNowPlayingHdCover(enabled)

@@ -178,6 +178,8 @@ enum class AlbumArtTransform { NONE, SOFT_FADE, SLIDE, DEPTH, POP }
 enum class QualityBadgeStyle { NONE, GOLDEN_SHIMMER, MINIMAL_OUTLINE, GLASSMORPHIC, NEON_PULSE }
 
 enum class SeekbarStyle {
+    // Animated frosted-glass wave seekbar
+    WAVY_GLASS,
     // Beatraxus exclusive styles
     BEATRAXUS_PULSE,
     BEATRAXUS_THREAD,
@@ -203,9 +205,11 @@ data class AppearanceConfig(
     val nowPlayingHdCover: Boolean = true,
     /** Full Cover Art: hide the "Now Playing" title, info icon and close arrow on the main player (not on queue / lyrics). */
     val nowPlayingHideTopBar: Boolean = false,
+    /** Animated (moving, blurred cover-art) Now Playing background. With Full Cover Art on it replaces the bottom backdrop; off, it fills the whole screen. */
+    val nowPlayingAnimatedBackground: Boolean = false,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
-    val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,
+    val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVY_GLASS,
 
     // Main Screen Background
     val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,

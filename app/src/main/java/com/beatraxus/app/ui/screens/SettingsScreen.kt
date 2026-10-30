@@ -1457,41 +1457,59 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             )
         }
 
-        if (appearance.nowPlayingFullCoverArt) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text("Hide Top Bar", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text(
-                        "Hides the \"Now Playing\" title, the info icon and the close arrow on the player. Queue and lyrics keep their top bar",
-                        color = Color.White.copy(0.6f), fontSize = 12.sp
-                    )
-                }
-                PremiumSwitch(
-                    checked = appearance.nowPlayingHideTopBar,
-                    onCheckedChange = { playerViewModel.setNowPlayingHideTopBar(it) }
+        // Animated background: moving blurred cover art. Full Cover Art ON -> it replaces the bottom backdrop
+        // behind the cover; Full Cover Art OFF -> it fills the whole Now Playing screen.
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Animated Background", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "Moving, blurred cover-art colours. With Full Cover Art on it animates the bottom background; with it off it animates the whole Now Playing screen. Needs Android 12+",
+                    color = Color.White.copy(0.6f), fontSize = 12.sp
                 )
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-                    Text("HD Cover", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text(
-                        "Uses the original embedded cover and sharpens it. The cover is always shown whole, so faces and text are not cut off",
-                        color = Color.White.copy(0.6f), fontSize = 12.sp
-                    )
-                }
-                PremiumSwitch(
-                    checked = appearance.nowPlayingHdCover,
-                    onCheckedChange = { playerViewModel.setNowPlayingHdCover(it) }
+            PremiumSwitch(
+                checked = appearance.nowPlayingAnimatedBackground,
+                onCheckedChange = { playerViewModel.setNowPlayingAnimatedBackground(it) }
+            )
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("Hide Top Bar", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "Hides the \"Now Playing\" title, the info icon and the close arrow on the player (works with or without Full Cover Art). Queue and lyrics keep their top bar",
+                    color = Color.White.copy(0.6f), fontSize = 12.sp
                 )
             }
+            PremiumSwitch(
+                checked = appearance.nowPlayingHideTopBar,
+                onCheckedChange = { playerViewModel.setNowPlayingHideTopBar(it) }
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text("HD Cover", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "Uses the original embedded cover and sharpens it, on the normal Now Playing art and on Full Cover Art",
+                    color = Color.White.copy(0.6f), fontSize = 12.sp
+                )
+            }
+            PremiumSwitch(
+                checked = appearance.nowPlayingHdCover,
+                onCheckedChange = { playerViewModel.setNowPlayingHdCover(it) }
+            )
         }
 
         HorizontalDivider(color = Color.White.copy(0.05f))

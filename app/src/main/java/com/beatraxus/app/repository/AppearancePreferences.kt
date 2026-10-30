@@ -42,6 +42,7 @@ class AppearancePreferences(context: Context) {
             nowPlayingFullCoverArt = preferences[NOW_PLAYING_FULL_COVER_ART] ?: false,
             nowPlayingHdCover = preferences[NOW_PLAYING_HD_COVER] ?: true,
             nowPlayingHideTopBar = preferences[NOW_PLAYING_HIDE_TOP_BAR] ?: false,
+            nowPlayingAnimatedBackground = preferences[NOW_PLAYING_ANIMATED_BG] ?: false,
             // Animations removed in older versions fall back to the soft fade.
             albumArtTransform = runCatching {
                 AlbumArtTransform.valueOf(preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.SOFT_FADE.name)
@@ -51,8 +52,8 @@ class AppearancePreferences(context: Context) {
             ),
             // Removed styles saved by older versions safely fall back to Beatraxus Pulse.
             seekbarStyle = runCatching {
-                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.BEATRAXUS_MATRIX.name)
-            }.getOrDefault(SeekbarStyle.BEATRAXUS_MATRIX),
+                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVY_GLASS.name)
+            }.getOrDefault(SeekbarStyle.WAVY_GLASS),
 
             // Home Screen Sections
             showGreetingHeader = preferences[SHOW_GREETING_HEADER] ?: true,
@@ -389,6 +390,10 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[NOW_PLAYING_HIDE_TOP_BAR] = enabled }
     }
 
+    suspend fun setNowPlayingAnimatedBackground(enabled: Boolean) {
+        dataStore.edit { it[NOW_PLAYING_ANIMATED_BG] = enabled }
+    }
+
     suspend fun setNowPlayingBlurIntensity(value: Float) {
         dataStore.edit { it[BLUR_INTENSITY] = value }
     }
@@ -693,6 +698,7 @@ class AppearancePreferences(context: Context) {
         private val NOW_PLAYING_FULL_COVER_ART = booleanPreferencesKey("now_playing_full_cover_art")
         private val NOW_PLAYING_HD_COVER = booleanPreferencesKey("now_playing_hd_cover")
         private val NOW_PLAYING_HIDE_TOP_BAR = booleanPreferencesKey("now_playing_hide_top_bar")
+        private val NOW_PLAYING_ANIMATED_BG = booleanPreferencesKey("now_playing_animated_bg")
         private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
 

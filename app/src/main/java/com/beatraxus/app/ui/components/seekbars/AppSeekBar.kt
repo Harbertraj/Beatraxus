@@ -7,6 +7,11 @@ import com.beatraxus.app.model.ChapterEntity
 import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.SeekbarStyle
 import com.beatraxus.app.ui.components.WaveformSeekBar
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.requiredHeight
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.unit.dp
 
 /**
  * Seekbar dispatcher. Available styles: five Beatraxus exclusives (Pulse, Thread, Prism, Matrix, Comet), Waveform,
@@ -31,6 +36,22 @@ fun AppSeekBar(
     isPlaying: Boolean = false
 ) {
     when (style) {
+        SeekbarStyle.WAVY_GLASS -> Box(modifier, contentAlignment = Alignment.Center) {
+            // The wave canvas is 50dp tall by design; it is centred in whatever slot the caller gives.
+            WavySeekBar(
+                positionMs = (progress * durationMs).toLong(),
+                durationMs = durationMs,
+                isPlaying = isPlaying,
+                onSeek = { ms -> if (durationMs > 0L) onProgressFinished(ms.toFloat() / durationMs.toFloat()) },
+                modifier = Modifier.requiredHeight(50.dp),
+                isTranslucent = true,
+                trackKey = seed.toString(),
+                showTimeLabels = false,
+                primaryColor = dominantColor,
+                secondaryColor = lerp(dominantColor, Color.White, 0.35f),
+                tertiaryColor = lerp(dominantColor, Color.White, 0.15f),
+            )
+        }
         SeekbarStyle.BEATRAXUS_PULSE -> BeatraxusPulseSeekBar(
             progress = progress,
             onProgressChange = onProgressChange,

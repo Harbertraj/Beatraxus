@@ -98,7 +98,10 @@ import com.beatraxus.app.ui.components.CoverMeshBackground
 import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
 import com.beatraxus.app.ui.components.FullCoverBackdrop
+import com.beatraxus.app.ui.components.FluidArtworkBackground
 import com.beatraxus.app.ui.components.FullCoverLayer
+import com.beatraxus.app.ui.components.cachedHdCover
+import com.beatraxus.app.ui.components.resolveHdCover
 import com.beatraxus.app.ui.components.prefetchCover
 import com.beatraxus.app.ui.components.KaraokeLyricsView
 import com.beatraxus.app.ui.components.PremiumSwitch
@@ -227,7 +230,7 @@ fun NowPlayingScreen(
 
     // Full Cover Art + HD: prepare the covers of this and the neighbouring songs ahead of time so a
     // song change shows its HD cover instantly.
-    if (uiState.appearance.nowPlayingFullCoverArt) {
+    if (uiState.appearance.nowPlayingFullCoverArt || uiState.appearance.nowPlayingHdCover) {
         val hdCover = uiState.appearance.nowPlayingHdCover
         val nextSong = upcomingSongs.firstOrNull()
         val next2Song = upcomingSongs.getOrNull(1)
@@ -409,6 +412,8 @@ fun NowPlayingScreen(
         // With Full Cover Art on, the cover is simply drawn over its top part and fades into it.
         // Full Cover Art ON: the background is a full-screen blurred copy of the cover (reference style).
         // Full Cover Art OFF: the normal background modes below, untouched.
+        // Static backgrounds (unchanged). Used directly, or as the fallback of the animated background.
+        val staticBackground: @Composable () -> Unit = {
         if (fullCoverArt) {
             FullCoverBackdrop(
                 uri = song.albumArtUri,
@@ -475,6 +480,19 @@ fun NowPlayingScreen(
                 )
             }
         }
+        }
+        // Animated background: Full Cover Art ON -> replaces the backdrop behind the cover (the cover melts into it);
+        // Full Cover Art OFF -> fills the whole screen. Below Android 12 / low-RAM it falls back to the static one.
+        if (appearance.nowPlayingAnimatedBackground) {
+            FluidArtworkBackground(
+                artworkUrl = song.albumArtUri?.toString(),
+                seedKey = song.id,
+                modifier = Modifier.fillMaxSize(),
+                fallback = staticBackground
+            )
+        } else {
+            staticBackground()
+        }
 
         if (fullCoverArt) {
             FullCoverArtBackground(
@@ -514,7 +532,7 @@ fun NowPlayingScreen(
 
         // Full Cover Art + "Hide Top Bar": the title, info icon and close arrow disappear on the main player
         // only. Queue and lyrics keep their top content exactly as before.
-        val hideTopBar = fullCoverArt && appearance.nowPlayingHideTopBar && !showQueue && !showLyrics
+        val hideTopBar = appearance.nowPlayingHideTopBar && !showQueue && !showLyrics
         val topBarAlpha by animateFloatAsState(
             targetValue = if (hideTopBar) 0f else 1f,
             animationSpec = tween(300),
@@ -798,9 +816,22 @@ fun NowPlayingScreen(
                                         label = "albumArtTransition",
                                         modifier = Modifier.fillMaxSize()
                                     ) { (targetId, targetArtUri) ->
+                                        // HD Cover on the normal art: original embedded cover, sharpened (falls back to the library art).
+                                        val hdOn = uiState.appearance.nowPlayingHdCover
+                                        val hdCtx = LocalContext.current
+                                        val hdModel by produceState<Any?>(
+                                            if (hdOn) cachedHdCover(hdCtx, targetId.toString()) else null,
+                                            targetId, targetArtUri, hdOn
+                                        ) {
+                                            value = if (!hdOn) null
+                                            else if (value != null) value
+                                            // Only the song that is current now may be resolved: the exiting art of the previous song keeps what it has.
+                                            else if (targetId == song.id) resolveHdCover(hdCtx, targetId.toString(), song.uri, targetArtUri)
+                                            else null
+                                        }
                                         AsyncImage(
                                             model = ImageRequest.Builder(LocalContext.current)
-                                                .data(targetArtUri)
+                                                .data(hdModel ?: targetArtUri)
                                                 .diskCachePolicy(CachePolicy.ENABLED)
                                                 .memoryCachePolicy(CachePolicy.ENABLED)
                                                 .size(600, 600) // Lower size for foreground too, enough for most screens
