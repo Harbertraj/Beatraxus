@@ -76,6 +76,15 @@ class OpticalFlowRenderer(
         fun onError(reason: FallbackReason, message: String)
     }
 
+    interface RifeOverlayHook {
+        fun onFrameCopied(slotFullTex: Int, tsNs: Long, frameW: Int, frameH: Int)
+        fun onTick()
+        fun getRifeTexture(aTsNs: Long, bTsNs: Long): Int
+        fun onGlRelease()
+    }
+
+    @Volatile var rifeOverlayHook: RifeOverlayHook? = null
+
     private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int, val glob: Int, val risk: Int) {
         var tsNs: Long = 0L
         /** fw / bw / cut / glob / risk hold the flow from the previous queued frame to this one. */
@@ -283,6 +292,11 @@ class OpticalFlowRenderer(
         if (aiFusionWanted == enabled) return
         aiFusionWanted = enabled
         handler.post { if (!released && eglContext != EGL14.EGL_NO_CONTEXT) applyAiFusion() }
+    }
+
+    /** Posts an action to run on the GL thread. */
+    fun postToGlThread(action: Runnable) {
+        if (!released) handler.post(action)
     }
 
     /** Stops rendering and frees all GL / EGL resources; waits briefly for the GL thread. */
@@ -502,6 +516,7 @@ class OpticalFlowRenderer(
         // arrives as 33 / 50 ms steps). Evenly spaced source frames get evenly spaced stamps back.
         ts = tsRegularizer.next(ts, vsyncPeriodNs)
         slot.tsNs = ts
+        rifeOverlayHook?.onFrameCopied(slot.full, ts, frameW, frameH)
         if (continuous) holdCtl.onFrame(ts - now)
         queue.add(slot)
 
@@ -763,6 +778,7 @@ class OpticalFlowRenderer(
             }
         }
         lastVsyncNs = vsyncNs
+        rifeOverlayHook?.onTick()
         emitWindow(vsyncNs)
 
         if (queue.isEmpty()) return
@@ -962,6 +978,9 @@ class OpticalFlowRenderer(
         ip.use()
         setInterpInputs(ip, a, b, alpha, warp)
         if (aiReady) { tex(6, ip, "uFuse0", fuseTex[0]); tex(7, ip, "uFuse1", fuseTex[1]) }
+        val rifeTex = rifeOverlayHook?.getRifeTexture(a.tsNs, b.tsNs) ?: 0
+        tex(8, ip, "uRife", if (rifeTex != 0) rifeTex else 0)
+        GLES30.glUniform1i(ip.loc("uRifeValid"), if (rifeTex != 0) 1 else 0)
         GLES30.glUniformMatrix2fv(ip.loc("uOrient"), 1, false, orientationMatrix, 0)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
     }
@@ -1009,6 +1028,7 @@ class OpticalFlowRenderer(
 
     private fun releaseGl() {
         runCatching {
+            rifeOverlayHook?.onGlRelease()
             surfaceTexture?.setOnFrameAvailableListener(null)
             inputSurface?.release()
             surfaceTexture?.release()

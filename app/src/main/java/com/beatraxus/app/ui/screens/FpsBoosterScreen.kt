@@ -209,11 +209,11 @@ fun FpsBoosterSheetContent(
                 } else {
                     StatLine("Engine", stats.engine.label + if (stats.qualityLabel.isNotEmpty()) " · ${stats.qualityLabel}" else "")
                     StatLine("Source", "%.1f FPS".format(stats.sourceFps))
-                    StatLine("Target", "${stats.targetFps} FPS")
+                    StatLine("Target", "${if (plan.active) plan.targetFps else stats.targetFps} FPS")
                     StatLine("Generated", "%.1f frames/s".format(stats.generatedFps))
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
                     StatLine("Dropped frames", stats.droppedFrames.toString())
-                    if (stats.engine == BoosterEngine.OPTICAL_FLOW || stats.engine == BoosterEngine.AI_RIFE) {
+                    if (stats.engine == BoosterEngine.OPTICAL_FLOW || stats.engine == BoosterEngine.AI_RIFE || stats.engine == BoosterEngine.HYBRID) {
                         StatLine("Processing latency", "%.1f ms / frame pair".format(stats.estimateLatencyMs))
                         StatLine("Motion analysis size", "${stats.workEdge} px")
                         StatLine("Video delay", "%.0f ms".format(stats.addedDelayMs))

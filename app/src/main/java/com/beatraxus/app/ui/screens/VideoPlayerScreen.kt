@@ -627,7 +627,7 @@ fun VideoPlayerScreen(
                     if (boostActive) {
                         // Same spot PlayerView uses for its own surface: under the subtitle layer.
                         val frame = findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-                        val boostView: android.view.View = if (boostEngine == BoosterEngine.OPTICAL_FLOW || boostEngine == BoosterEngine.AI_RIFE) {
+                        val boostView: android.view.View = if (boostEngine == BoosterEngine.OPTICAL_FLOW || boostEngine == BoosterEngine.AI_RIFE || boostEngine == BoosterEngine.HYBRID) {
                             FpsBoosterSurfaceView(ctx).apply {
                                 this.player = viewModel.getPlayer()
                                 listener = object : FpsBoosterSurfaceView.Listener {

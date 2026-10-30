@@ -17,7 +17,7 @@ import com.beatraxus.app.motionboost.DisplayRefreshRate
  */
 class FpsBoosterManager(
     context: Context,
-    private val plan: BoosterPlan,
+    @Volatile private var plan: BoosterPlan,
     settings: FpsBoosterSettings,
     private val panelRates: List<Float>,
     private val listener: Listener
@@ -28,7 +28,7 @@ class FpsBoosterManager(
         fun onFallback(reason: FallbackReason)
     }
 
-    private val appContext = context.applicationContext
+    private val appContext = runCatching { context.applicationContext }.getOrDefault(context)
     private val controller = AdaptiveQualityController(plan.quality, settings.adaptiveResolution, settings.batterySaver)
     private var thermal = ThermalLevel.NONE
     private var droppedTotal = 0L
@@ -39,9 +39,11 @@ class FpsBoosterManager(
      * on a healthy device; judging them used to trigger "could not keep up" right after a setting change.
      */
     private var graceWindows = START_GRACE_WINDOWS
-    private val main = Handler(Looper.getMainLooper())
+    private val main = runCatching { Handler(Looper.getMainLooper()) }.getOrNull()
 
-    private val power: PowerManager? = context.applicationContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    private val power: PowerManager? = runCatching {
+        appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+    }.getOrNull()
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
 
     /** Rung the renderer should start with. */
@@ -53,7 +55,7 @@ class FpsBoosterManager(
             runCatching {
                 val l = PowerManager.OnThermalStatusChangedListener { status -> thermal = ThermalLevel.fromAndroidStatus(status) }
                 thermal = ThermalLevel.fromAndroidStatus(pm.currentThermalStatus)
-                pm.addThermalStatusListener({ r -> main.post(r) }, l)
+                pm.addThermalStatusListener({ r -> main?.post(r) }, l)
                 thermalListener = l
             }.onFailure { Log.w(TAG, "thermal listener unavailable", it) }
         }
@@ -70,9 +72,10 @@ class FpsBoosterManager(
         if (evaluate) {
             // The presenter can never show more frames than the panel is refreshing right now (the system may be
             // running 60 Hz while the target is 120): that is not GPU overload and must not be judged as such.
+            val currentRate = runCatching { DisplayRefreshRate.currentRate(appContext) }.getOrDefault(60f)
             val expected = minOf(
                 FramePacing.achievableFps(plan.targetFps, panelRates).toFloat(),
-                DisplayRefreshRate.currentRate(appContext)
+                currentRate
             )
             val d = controller.onWindow(w, sourceFps, expected, thermal)
             if (d.changed) { graceWindows = CHANGE_GRACE_WINDOWS; listener.onQualityLevel(d.level) }
@@ -103,6 +106,12 @@ class FpsBoosterManager(
 
     /** Call after a settings change that re-paces or reallocates the pipeline without creating a new manager. */
     fun restartGrace() { graceWindows = START_GRACE_WINDOWS }
+
+    /** Updates the plan (e.g. on target FPS change) and resets grace windows. */
+    fun updatePlan(newPlan: BoosterPlan) {
+        plan = newPlan
+        restartGrace()
+    }
 
     fun release() {
         finished = true

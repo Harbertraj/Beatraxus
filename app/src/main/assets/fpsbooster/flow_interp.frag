@@ -51,6 +51,8 @@ uniform sampler2D uRisk;     // RGBA16F, LINEAR, ~1 texel per 16 work px (risk_m
 uniform sampler2D uGlobal;   // 1x1 RGBA16F, NEAREST: rg = dominant A->B motion (work px), b = share of the picture that agrees
 uniform sampler2D uFuse0;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 0..3
 uniform sampler2D uFuse1;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 4, 5
+uniform sampler2D uRife;     // HYBRID mode: RIFE AI synthesis texture (RGBA8, LINEAR)
+uniform int uRifeValid;      // 1 if uRife is valid for the current pair, 0 otherwise
 uniform float uT;
 uniform int uWarp;           // 0: just show the nearest real frame (no previous frame / flow not valid)
 uniform vec2 uWork;          // work resolution in pixels (flow vector unit)
@@ -429,6 +431,16 @@ void main() {
       // flow unreliable around here: soft blend of the two real frames instead of patchwork
       float risk = smoothstep(RISK_LO, RISK_HI, texture(uRisk, vUv).r);
       rgb = mix(rgb, mix(pa, pb, uT), risk);
+
+      if (uRifeValid == 1) {
+        vec3 rifeRgb = texture(uRife, vUv).rgb;
+        vec3 minVal = min(pa, pb) - vec3(0.02);
+        vec3 maxVal = max(pa, pb) + vec3(0.02);
+        vec3 err = max(vec3(0.0), minVal - rifeRgb) + max(vec3(0.0), rifeRgb - maxVal);
+        float maxErr = max(err.r, max(err.g, err.b));
+        float rifeConf = 1.0 - smoothstep(0.0, 0.08, maxErr);
+        rgb = mix(rgb, rifeRgb, rifeConf);
+      }
     }
   }
 

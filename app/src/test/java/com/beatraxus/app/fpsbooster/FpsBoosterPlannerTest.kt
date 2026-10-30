@@ -108,6 +108,32 @@ class FpsBoosterPlannerTest {
         assertNull(rifePlanFast.note)
     }
 
+    @Test fun hybridEngineSelectionAndFallbacks() {
+        // Hybrid runs on float render targets + rife model installed
+        val hybridPlanInstalled = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr24, rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.HYBRID, hybridPlanInstalled.engine)
+        assertNull(hybridPlanInstalled.note)
+
+        // Hybrid covers non-2x ratios without falling back (unlike pure RIFE)
+        assertEquals(60, hybridPlanInstalled.targetFps)
+
+        // Hybrid falls back to Optical flow when RIFE model is not installed
+        val hybridUninstalled = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr24, rifeModelInstalled = false
+        )
+        assertEquals(BoosterEngine.OPTICAL_FLOW, hybridUninstalled.engine)
+        assertTrue(hybridUninstalled.note!!.contains("RIFE model not installed"))
+
+        // Hybrid falls back to Classic when float render targets are not supported
+        val noFloat = panel120.copy(floatRenderTargets = false)
+        val hybridNoFloat = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), noFloat, sdr24, rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.CLASSIC, hybridNoFloat.engine)
+    }
+
     @Test fun autoModePicksSixtyForFilmRate() {
         val p = FpsBoosterPlanner.plan(auto, panel120, sdr24)
         assertTrue(p.active); assertEquals(60, p.targetFps)

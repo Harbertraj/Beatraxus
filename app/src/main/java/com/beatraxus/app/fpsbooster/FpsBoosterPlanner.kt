@@ -61,7 +61,26 @@ object FpsBoosterPlanner {
 
         when (settings.engine) {
             BoosterEngine.AUTO -> {
-                engine = if (caps.floatRenderTargets) BoosterEngine.OPTICAL_FLOW else BoosterEngine.CLASSIC
+                engine = if (caps.floatRenderTargets) {
+                    if (rifeModelInstalled && rifeInferenceMs != null && rifeInferenceMs <= 35f) {
+                        BoosterEngine.HYBRID
+                    } else {
+                        BoosterEngine.OPTICAL_FLOW
+                    }
+                } else {
+                    BoosterEngine.CLASSIC
+                }
+            }
+            BoosterEngine.HYBRID -> {
+                if (!caps.floatRenderTargets) {
+                    engine = BoosterEngine.CLASSIC
+                    engineNote = "GPU cannot render to float textures: using Classic engine"
+                } else if (!rifeModelInstalled) {
+                    engine = BoosterEngine.OPTICAL_FLOW
+                    engineNote = "RIFE model not installed: using Optical flow"
+                } else {
+                    engine = BoosterEngine.HYBRID
+                }
             }
             BoosterEngine.AI_RIFE -> {
                 if (!caps.floatRenderTargets) {

@@ -18,8 +18,8 @@ import androidx.media3.common.VideoSize
 import com.beatraxus.app.motionboost.DisplayRefreshRate
 
 /**
- * Video output used while the optical-flow or RIFE AI FPS Booster is running. ExoPlayer is pointed at the
- * renderer's input surface and [OpticalFlowRenderer] or [RifeRenderer] presents the (interpolated) frames here.
+ * Video output used while the optical-flow, RIFE AI, or HYBRID FPS Booster is running.
+ * ExoPlayer is pointed at the renderer's input surface and the active renderer presents the (interpolated) frames here.
  */
 class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHolder.Callback {
 
@@ -35,6 +35,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private val main = Handler(Looper.getMainLooper())
     private var renderer: OpticalFlowRenderer? = null
     private var rifeRenderer: RifeRenderer? = null
+    private var hybridRenderer: HybridRenderer? = null
     private var manager: FpsBoosterManager? = null
     private var inputSurface: Surface? = null
     private var plan: BoosterPlan? = null
@@ -53,6 +54,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             renderer?.setSourceSize(videoSize.width, videoSize.height)
             rifeRenderer?.setSourceSize(videoSize.width, videoSize.height)
+            hybridRenderer?.setSourceSize(videoSize.width, videoSize.height)
         }
     }
 
@@ -71,13 +73,17 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         applied = key
         renderer?.setTargetFps(plan.targetFps)
         rifeRenderer?.setTargetFps(plan.targetFps)
+        hybridRenderer?.setTargetFps(plan.targetFps)
         applyFrameRateHint()
         applyDisplayMode()
-        if (needsNewSession && (renderer != null || rifeRenderer != null)) {
+        if (needsNewSession && (renderer != null || rifeRenderer != null || hybridRenderer != null)) {
             startManager()
-            renderer?.setLevel(manager!!.initialLevel)
+            manager?.let { mgr ->
+                renderer?.setLevel(mgr.initialLevel)
+                hybridRenderer?.setLevel(mgr.initialLevel)
+            }
         } else if (targetChanged) {
-            manager?.restartGrace()
+            manager?.updatePlan(plan)
         }
     }
 
@@ -85,6 +91,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         this.brightness = brightness; this.contrast = contrast; this.saturation = saturation
         renderer?.setColorGrade(brightness, contrast, saturation)
         rifeRenderer?.setColorGrade(brightness, contrast, saturation)
+        hybridRenderer?.setColorGrade(brightness, contrast, saturation)
     }
 
     fun setColorTune(hueDegrees: Float, temperature: Float) {
@@ -93,12 +100,14 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         this.temperature = temperature
         renderer?.setColorTune(hueDegrees, temperature)
         rifeRenderer?.setColorTune(hueDegrees, temperature)
+        hybridRenderer?.setColorTune(hueDegrees, temperature)
     }
 
     fun setOrientation(orientation: VideoOrientation) {
         this.orientation = orientation
         renderer?.setOrientation(orientation)
         rifeRenderer?.setOrientation(orientation)
+        hybridRenderer?.setOrientation(orientation)
     }
 
     fun setDeinterlace(mode: DeinterlaceMode) {
@@ -106,12 +115,14 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         deinterlace = mode
         renderer?.setDeinterlace(mode.shaderValue)
         rifeRenderer?.setDeinterlace(mode.shaderValue)
+        hybridRenderer?.setDeinterlace(mode.shaderValue)
     }
 
     fun setAiFusion(enabled: Boolean) {
         if (enabled == aiFusion) return
         aiFusion = enabled
         renderer?.setAiFusion(enabled)
+        hybridRenderer?.setAiFusion(enabled)
     }
 
     private fun startManager() {
@@ -119,7 +130,12 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         val p = plan ?: return
         lateinit var created: FpsBoosterManager
         created = FpsBoosterManager(context, p, settings, DisplayRefreshRate.supportedRates(context), object : FpsBoosterManager.Listener {
-            override fun onQualityLevel(level: QualityLevel) { if (manager === created) renderer?.setLevel(level) }
+            override fun onQualityLevel(level: QualityLevel) {
+                if (manager === created) {
+                    renderer?.setLevel(level)
+                    hybridRenderer?.setLevel(level)
+                }
+            }
             override fun onStats(stats: BoosterStats) { if (manager === created) listener?.onStats(stats) }
             override fun onFallback(reason: FallbackReason) { if (manager === created) listener?.onFallback(reason, null) }
         })
@@ -130,68 +146,106 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         val p = plan ?: return
         if (manager == null) startManager()
 
-        if (p.engine == BoosterEngine.AI_RIFE) {
-            lateinit var createdRife: RifeRenderer
-            createdRife = RifeRenderer(holder.surface, object : RifeRenderer.Callbacks {
-                override fun onInputSurfaceReady(surface: Surface) {
-                    main.post { if (rifeRenderer === createdRife) { inputSurface = surface; player?.setVideoSurface(surface) } }
-                }
+        when (p.engine) {
+            BoosterEngine.HYBRID -> {
+                lateinit var createdHybrid: HybridRenderer
+                createdHybrid = HybridRenderer(holder.surface, object : HybridRenderer.Callbacks {
+                    override fun onInputSurfaceReady(surface: Surface) {
+                        main.post { if (hybridRenderer === createdHybrid) { inputSurface = surface; player?.setVideoSurface(surface) } }
+                    }
 
-                override fun onStats(stats: BoosterStats) {
-                    main.post { if (rifeRenderer === createdRife) listener?.onStats(stats) }
-                }
+                    override fun onStats(stats: BoosterStats) {
+                        main.post { if (hybridRenderer === createdHybrid) listener?.onStats(stats) }
+                    }
 
-                override fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
-                    main.post { if (rifeRenderer === createdRife) manager?.onWindow(stats, sourceFps, workEdge, addedDelayMs) }
-                }
+                    override fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
+                        main.post { if (hybridRenderer === createdHybrid) manager?.onWindow(stats, sourceFps, workEdge, addedDelayMs) }
+                    }
 
-                override fun onError(reason: FallbackReason, message: String) {
-                    Log.e(TAG, "RIFE AI Booster failed: $message")
-                    main.post { if (rifeRenderer === createdRife) listener?.onFallback(reason, message) }
+                    override fun onError(reason: FallbackReason, message: String) {
+                        Log.e(TAG, "Hybrid FPS Booster failed: $message")
+                        main.post { if (hybridRenderer === createdHybrid) listener?.onFallback(reason, message) }
+                    }
+                }, context.applicationContext)
+                hybridRenderer = createdHybrid
+                createdHybrid.setTargetFps(p.targetFps)
+                manager?.let { createdHybrid.setLevel(it.initialLevel) }
+                createdHybrid.setColorGrade(brightness, contrast, saturation)
+                createdHybrid.setColorTune(hue, temperature)
+                createdHybrid.setOrientation(orientation)
+                createdHybrid.setDeinterlace(deinterlace.shaderValue)
+                if (aiFusion) createdHybrid.setAiFusion(true)
+                player?.let { pl ->
+                    pl.addListener(playerListener)
+                    val size = pl.videoSize
+                    if (size.width > 0 && size.height > 0) createdHybrid.setSourceSize(size.width, size.height)
                 }
-            }, context.applicationContext, p.quality)
-            rifeRenderer = createdRife
-            createdRife.setTargetFps(p.targetFps)
-            createdRife.setColorGrade(brightness, contrast, saturation)
-            createdRife.setColorTune(hue, temperature)
-            createdRife.setOrientation(orientation)
-            createdRife.setDeinterlace(deinterlace.shaderValue)
-            player?.let { pl ->
-                pl.addListener(playerListener)
-                val size = pl.videoSize
-                if (size.width > 0 && size.height > 0) createdRife.setSourceSize(size.width, size.height)
+                createdHybrid.start()
             }
-            createdRife.start()
-        } else {
-            lateinit var created: OpticalFlowRenderer
-            created = OpticalFlowRenderer(holder.surface, object : OpticalFlowRenderer.Callbacks {
-                override fun onInputSurfaceReady(surface: Surface) {
-                    main.post { if (renderer === created) { inputSurface = surface; player?.setVideoSurface(surface) } }
-                }
+            BoosterEngine.AI_RIFE -> {
+                lateinit var createdRife: RifeRenderer
+                createdRife = RifeRenderer(holder.surface, object : RifeRenderer.Callbacks {
+                    override fun onInputSurfaceReady(surface: Surface) {
+                        main.post { if (rifeRenderer === createdRife) { inputSurface = surface; player?.setVideoSurface(surface) } }
+                    }
 
-                override fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
-                    main.post { if (renderer === created) manager?.onWindow(stats, sourceFps, workEdge, addedDelayMs) }
-                }
+                    override fun onStats(stats: BoosterStats) {
+                        main.post { if (rifeRenderer === createdRife) listener?.onStats(stats) }
+                    }
 
-                override fun onError(reason: FallbackReason, message: String) {
-                    Log.e(TAG, "FPS Booster failed: $message")
-                    main.post { if (renderer === created) listener?.onFallback(reason, message) }
+                    override fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
+                        main.post { if (rifeRenderer === createdRife) manager?.onWindow(stats, sourceFps, workEdge, addedDelayMs) }
+                    }
+
+                    override fun onError(reason: FallbackReason, message: String) {
+                        Log.e(TAG, "RIFE AI Booster failed: $message")
+                        main.post { if (rifeRenderer === createdRife) listener?.onFallback(reason, message) }
+                    }
+                }, context.applicationContext, p.quality)
+                rifeRenderer = createdRife
+                createdRife.setTargetFps(p.targetFps)
+                createdRife.setColorGrade(brightness, contrast, saturation)
+                createdRife.setColorTune(hue, temperature)
+                createdRife.setOrientation(orientation)
+                createdRife.setDeinterlace(deinterlace.shaderValue)
+                player?.let { pl ->
+                    pl.addListener(playerListener)
+                    val size = pl.videoSize
+                    if (size.width > 0 && size.height > 0) createdRife.setSourceSize(size.width, size.height)
                 }
-            }, context.applicationContext)
-            renderer = created
-            created.setTargetFps(p.targetFps)
-            manager?.let { created.setLevel(it.initialLevel) }
-            created.setColorGrade(brightness, contrast, saturation)
-            created.setColorTune(hue, temperature)
-            created.setOrientation(orientation)
-            created.setDeinterlace(deinterlace.shaderValue)
-            if (aiFusion) created.setAiFusion(true)
-            player?.let { pl ->
-                pl.addListener(playerListener)
-                val size = pl.videoSize
-                if (size.width > 0 && size.height > 0) created.setSourceSize(size.width, size.height)
+                createdRife.start()
             }
-            created.start()
+            else -> {
+                lateinit var created: OpticalFlowRenderer
+                created = OpticalFlowRenderer(holder.surface, object : OpticalFlowRenderer.Callbacks {
+                    override fun onInputSurfaceReady(surface: Surface) {
+                        main.post { if (renderer === created) { inputSurface = surface; player?.setVideoSurface(surface) } }
+                    }
+
+                    override fun onWindow(stats: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
+                        main.post { if (renderer === created) manager?.onWindow(stats, sourceFps, workEdge, addedDelayMs) }
+                    }
+
+                    override fun onError(reason: FallbackReason, message: String) {
+                        Log.e(TAG, "FPS Booster failed: $message")
+                        main.post { if (renderer === created) listener?.onFallback(reason, message) }
+                    }
+                }, context.applicationContext)
+                renderer = created
+                created.setTargetFps(p.targetFps)
+                manager?.let { created.setLevel(it.initialLevel) }
+                created.setColorGrade(brightness, contrast, saturation)
+                created.setColorTune(hue, temperature)
+                created.setOrientation(orientation)
+                created.setDeinterlace(deinterlace.shaderValue)
+                if (aiFusion) created.setAiFusion(true)
+                player?.let { pl ->
+                    pl.addListener(playerListener)
+                    val size = pl.videoSize
+                    if (size.width > 0 && size.height > 0) created.setSourceSize(size.width, size.height)
+                }
+                created.start()
+            }
         }
         applyFrameRateHint()
         applyDisplayMode()
@@ -208,6 +262,8 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer = null
         rifeRenderer?.release()
         rifeRenderer = null
+        hybridRenderer?.release()
+        hybridRenderer = null
         manager?.release()
         manager = null
         clearDisplayMode()

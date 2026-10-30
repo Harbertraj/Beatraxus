@@ -37,9 +37,10 @@ class FpsBoosterSettingsTest {
     }
 
     @Test fun enginesAreTheDocumentedSet() {
-        // (was aiEngineIsNotOffered, which contradicted the RIFE engine added in "add new fps engine")
-        assertEquals(listOf("AUTO", "AI_RIFE", "OPTICAL_FLOW", "CLASSIC"), BoosterEngine.entries.map { it.name })
+        assertEquals(listOf("AUTO", "HYBRID", "AI_RIFE", "OPTICAL_FLOW", "CLASSIC"), BoosterEngine.entries.map { it.name })
         assertEquals(BoosterEngine.AI_RIFE, BoosterEngine.fromName("RIFE"))
+        assertEquals(BoosterEngine.HYBRID, BoosterEngine.fromName("HYBRID"))
+        assertEquals(BoosterEngine.HYBRID, BoosterEngine.fromName("Hybrid"))
         assertEquals(BoosterEngine.AUTO, BoosterEngine.fromName("nonsense"))
     }
 

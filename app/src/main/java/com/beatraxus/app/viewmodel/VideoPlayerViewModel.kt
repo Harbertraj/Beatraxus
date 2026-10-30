@@ -1359,7 +1359,13 @@ class VideoPlayerViewModel(
     }
 
     fun updateFpsBoosterStats(stats: BoosterStats) {
-        _uiState.update { it.copy(fpsBoosterStats = stats) }
+        val activePlan = _uiState.value.fpsBoosterPlan
+        val updatedStats = if (activePlan.active && activePlan.targetFps > 0 && stats.targetFps != activePlan.targetFps) {
+            stats.copy(targetFps = activePlan.targetFps)
+        } else {
+            stats
+        }
+        _uiState.update { it.copy(fpsBoosterStats = updatedStats) }
     }
 
     /** The booster could not keep up / overheated / hit a GPU error: play normally for the rest of this video. */

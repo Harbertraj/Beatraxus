@@ -27,7 +27,7 @@ class ShaderAssetsTest {
         "flow_consistency.frag" to listOf("uSelf", "uOther", "uGrid"),
         "cut_detect.frag" to listOf("uFlow", "uGrid", "uMeanThresh", "uPoorThresh", "uCons", "uConsGrid"),
         "risk_map.frag" to listOf("uA", "uB", "uFw", "uBw", "uGlobal", "uWork", "uFlowUv"),
-        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uRisk", "uGlobal", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi", "uSharp", "uFuse0", "uFuse1")
+        "flow_interp.frag" to listOf("uA", "uB", "uFw", "uBw", "uCut", "uRisk", "uGlobal", "uT", "uWarp", "uWork", "uFlowUv", "uGrade", "uColorDelta", "uConsLo", "uConsHi", "uSharp", "uFuse0", "uFuse1", "uRife", "uRifeValid")
     )
 
     @Test fun everyShaderExistsAndIsEs3() {

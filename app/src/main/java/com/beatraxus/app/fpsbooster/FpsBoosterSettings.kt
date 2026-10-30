@@ -15,7 +15,8 @@ enum class BoosterMode(val label: String) {
  * Interpolation engine. Supports RIFE AI neural synthesis, optical flow, and classic engines.
  */
 enum class BoosterEngine(val label: String, val description: String) {
-    AUTO("Auto", "Optical flow or RIFE AI when supported, otherwise Classic"),
+    AUTO("Auto", "Optical flow, Hybrid or RIFE AI when supported, otherwise Classic"),
+    HYBRID("Hybrid", "Optical flow speed + RIFE AI quality blending"),
     AI_RIFE("RIFE AI", "Real-time neural network motion synthesis (RIFE 4.26)"),
     OPTICAL_FLOW("Optical flow", "Hierarchical bidirectional flow with occlusion handling"),
     CLASSIC("Classic", "Original block-matching engine");
@@ -23,6 +24,7 @@ enum class BoosterEngine(val label: String, val description: String) {
     companion object {
         fun fromName(name: String?): BoosterEngine {
             if (name == "RIFE" || name == "AI") return AI_RIFE
+            if (name == "HYBRID" || name == "Hybrid") return HYBRID
             return entries.firstOrNull { it.name == name } ?: AUTO
         }
     }
