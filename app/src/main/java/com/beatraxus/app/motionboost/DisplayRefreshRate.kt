@@ -10,6 +10,9 @@ import kotlin.math.abs
 object DisplayRefreshRate {
 
     fun supportedRates(context: Context): List<Float> {
+        // The app keeps the refresh rate chosen in Settings (the booster never changes it); the video is paced to its
+        // target inside that rate, so only that rate decides which targets are usable.
+        RefreshRateManager.appRate(context)?.let { return listOf(it) }
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
         val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
         val rates = display?.supportedModes?.map { it.refreshRate }?.distinct().orEmpty()

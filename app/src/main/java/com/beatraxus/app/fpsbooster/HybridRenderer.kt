@@ -21,7 +21,8 @@ import java.util.concurrent.Executors
 class HybridRenderer(
     outputSurface: Surface,
     private val callbacks: Callbacks,
-    private val context: Context
+    private val context: Context,
+    private val quality: BoosterQuality = BoosterQuality.PERFORMANCE
 ) {
 
     interface Callbacks {
@@ -63,7 +64,11 @@ class HybridRenderer(
     }
     fun setAiFusion(enabled: Boolean) = flowRenderer.setAiFusion(enabled)
 
-    fun start() = flowRenderer.start()
+    fun start() {
+        // Load the model now so the first real pair does not pay for the session start (it would look like a slow network).
+        inferenceExecutor.submit { runCatching { rifeEngine.initialize(quality) } }
+        flowRenderer.start()
+    }
 
     fun release() {
         flowRenderer.release()
@@ -106,11 +111,32 @@ class HybridRenderer(
         @Volatile private var inferenceInFlight = false
         @Volatile private var avgInferenceNs = 0L
 
+        // RIFE-first cascade bookkeeping
+        private var announcedTs = 0L
+        private var lastIntervalNs = 0L
+        private var samples = 0
+
+        private fun midBudgetOk(): Boolean =
+            MID_FRAME_CASCADE && HybridScheduling.canInjectMid(avgInferenceNs, lastIntervalNs)
+
+        override fun supportsMidFrames(): Boolean = MID_FRAME_CASCADE
+
+        override fun wantsMidFrame(): Boolean {
+            val ok = midBudgetOk() && !inferenceInFlight && curTsNs > 0L && pendingTsNs > 0L
+            announcedTs = if (ok) pendingTsNs else 0L
+            return ok
+        }
+
         fun setSourceSize(w: Int, h: Int) {
             if (w <= 0 || h <= 0 || (w == srcW && h == srcH)) return
             srcW = w
             srcH = h
-            val pair = RifePacking.modelSize(w, h, 640)
+            val longEdge = when (quality) {
+                BoosterQuality.PERFORMANCE -> 640
+                BoosterQuality.BALANCED -> 960
+                BoosterQuality.QUALITY -> 1280
+            }
+            val pair = RifePacking.modelSize(w, h, longEdge)
             modelW = pair.first
             modelH = pair.second
             generation++
@@ -176,12 +202,21 @@ class HybridRenderer(
         private fun submitInferenceIfReady() {
             val ps = prevTsNs
             val cs = curTsNs
-            if (ps <= 0L || cs <= 0L || !MotionBoostTiming.isContinuous(ps, cs) || inferenceInFlight) return
+            val announced = cs != 0L && announcedTs == cs
+            if (announced) announcedTs = 0L
+            if (ps <= 0L || cs <= 0L || !MotionBoostTiming.isContinuous(ps, cs) || inferenceInFlight) {
+                if (announced) flowRenderer.midUnavailable(cs)
+                return
+            }
 
-            rifePairCount++
             val intervalNs = cs - ps
-            val stride = HybridScheduling.computeRifeStride(avgInferenceNs, intervalNs)
-            if (rifePairCount % stride != 0L) return
+            lastIntervalNs = intervalNs
+            if (!announced) {
+                // old overlay path (cascade off or too slow): RIFE on every stride-th pair, used as a guarded candidate
+                rifePairCount++
+                val stride = HybridScheduling.computeRifeStride(avgInferenceNs, intervalNs)
+                if (rifePairCount % stride != 0L) return
+            }
 
             val mw = modelW
             val mh = modelH
@@ -192,6 +227,12 @@ class HybridRenderer(
             val pIn = packedIn ?: return
             val pOut = outPlanar ?: return
             val sBytes = synthBytes ?: return
+
+            if (announced && HybridScheduling.meanLumaDiff(prevB, curB, mw, mh) > HybridScheduling.CUT_MEAN_DIFF) {
+                // scene cut: RIFE would invent a picture between two unrelated shots
+                flowRenderer.midUnavailable(cs)
+                return
+            }
 
             prevB.rewind(); inputA.rewind()
             inputA.put(prevB)
@@ -204,26 +245,32 @@ class HybridRenderer(
             val gen = ++generation
             inferenceInFlight = true
             val targetTs = cs
+            val aTs = ps
 
             inferenceExecutor.submit {
                 PboPacker.packAndInfer(
                     inputA, inputB, mw, mh, pIn, pOut, sBytes, rifeEngine
                 )?.let { durNs ->
                     flowRenderer.postToGlThread {
-                        onInferenceDone(gen, targetTs, durNs)
+                        onInferenceDone(gen, aTs, targetTs, durNs, announced)
                     }
                 } ?: run {
                     flowRenderer.postToGlThread {
                         if (gen == generation) inferenceInFlight = false
+                        if (announced) flowRenderer.midUnavailable(targetTs)
                     }
                 }
             }
         }
 
-        private fun onInferenceDone(gen: Int, targetTs: Long, durNs: Long) {
+        private fun onInferenceDone(gen: Int, aTs: Long, targetTs: Long, durNs: Long, announced: Boolean) {
             inferenceInFlight = false
             if (gen != generation) return
-            avgInferenceNs = if (avgInferenceNs == 0L) durNs else (avgInferenceNs * 7 + durNs) / 8
+            samples++
+            // the first runs include driver / delegate warm-up: they would make the engine look too slow for ever
+            if (samples > WARMUP_SAMPLES) {
+                avgInferenceNs = if (avgInferenceNs == 0L) durNs else (avgInferenceNs * 7 + durNs) / 8
+            }
             synthBytes?.let { sb ->
                 sb.rewind()
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, synthTexture)
@@ -233,10 +280,13 @@ class HybridRenderer(
                 )
                 GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, 0)
                 synthForTs = targetTs
+                if (announced) flowRenderer.injectMidFrame(synthTexture, aTs, targetTs)
             }
         }
 
         override fun getRifeTexture(aTsNs: Long, bTsNs: Long): Int {
+            // with the cascade the AI picture is a frame of the queue, not an overlay candidate
+            if (midBudgetOk()) return 0
             if (HybridScheduling.isRifeValid(synthForTs, bTsNs, generation, generation)) {
                 return synthTexture
             }
@@ -346,6 +396,10 @@ class HybridRenderer(
     }
 
     private companion object {
+        /** RIFE first (AI middle frame), optical flow second. Set to false to get the old overlay-only Hybrid back. */
+        private const val MID_FRAME_CASCADE = true
+        private const val WARMUP_SAMPLES = 2
+
         private const val VERTEX = """#version 300 es
 out vec2 vUv;
 void main() {

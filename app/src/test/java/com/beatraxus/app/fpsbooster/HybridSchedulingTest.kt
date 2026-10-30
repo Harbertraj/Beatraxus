@@ -69,4 +69,25 @@ class HybridSchedulingTest {
         val confPartial = HybridScheduling.hallucinationGuardConfidence(rifeMild, a, b)
         assertEquals(0.5f, confPartial, 1e-2f)
     }
+
+    @Test
+    fun midFrameBudgetAndTimestamp() {
+        val src = 41_666_667L
+        assertTrue(HybridScheduling.canInjectMid(0L, src))              // not measured yet: try
+        assertTrue(HybridScheduling.canInjectMid(30_000_000L, src))
+        assertFalse(HybridScheduling.canInjectMid(45_000_000L, src))    // slower than 90 % of an interval
+        assertEquals(150L, HybridScheduling.midTimestampNs(100L, 200L))
+    }
+
+    @Test
+    fun meanLumaDiffDetectsCuts() {
+        val w = 64
+        val h = 36
+        val black = java.nio.ByteBuffer.allocate(w * h * 4)
+        val white = java.nio.ByteBuffer.allocate(w * h * 4)
+        for (i in 0 until w * h * 4) white.put(i, 0xFF.toByte())
+        assertEquals(0f, HybridScheduling.meanLumaDiff(black, black, w, h), 1e-4f)
+        assertEquals(1f, HybridScheduling.meanLumaDiff(black, white, w, h), 1e-3f)
+        assertTrue(HybridScheduling.meanLumaDiff(black, white, w, h) > HybridScheduling.CUT_MEAN_DIFF)
+    }
 }

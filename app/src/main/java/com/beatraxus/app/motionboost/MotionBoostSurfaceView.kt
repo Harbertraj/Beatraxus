@@ -166,24 +166,16 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
     }
 
     /**
-     * Makes the panel actually run at the chosen rate. setFrameRate() alone is only a hint, and on a lot of
-     * phones the display stays in a 60 Hz mode, so 90 / 120 FPS ended up showing 60. Requesting the display
-     * mode directly (same resolution, matching refresh rate) fixes that.
+     * The window keeps the refresh rate chosen in Settings > Refresh Rate; only the video is paced to the target FPS.
+     * No display mode is requested.
      */
     private fun applyDisplayMode() {
         val window = findWindow() ?: return
-        if (targetFps <= 0) return
         try {
-            val choice = DisplayRefreshRate.preferredMode(context, targetFps) ?: return
-            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
-            val lp = window.attributes
-            if (lp.preferredDisplayModeId != choice.modeId || lp.preferredRefreshRate != choice.refreshRate) {
-                lp.preferredDisplayModeId = choice.modeId
-                lp.preferredRefreshRate = choice.refreshRate
-                window.attributes = lp
-            }
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
+            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
         } catch (t: Throwable) {
-            Log.w(TAG, "preferred display mode failed", t)
+            Log.w(TAG, "keeping the app refresh rate failed", t)
         }
     }
 
@@ -197,25 +189,8 @@ class MotionBoostSurfaceView(context: Context) : SurfaceView(context), SurfaceHo
         }
     }
 
-    /** Asks the system to run the panel at (a multiple of) the target rate so frames are paced evenly. */
-    private fun applyFrameRateHint() {
-        val surface = holder.surface
-        if (targetFps <= 0 || surface == null || !surface.isValid) return
-        try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
-                    surface.setFrameRate(
-                        targetFps.toFloat(),
-                        Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
-                        Surface.CHANGE_FRAME_RATE_ALWAYS
-                    )
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-                    surface.setFrameRate(targetFps.toFloat(), Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-            }
-        } catch (t: Throwable) {
-            Log.w(TAG, "setFrameRate failed", t)
-        }
-    }
+    /** Intentionally empty: a frame-rate vote on the video surface could pull the whole display away from the app's rate. */
+    private fun applyFrameRateHint() {}
 
     private companion object {
         const val TAG = "MotionBoostView"

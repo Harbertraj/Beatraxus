@@ -166,7 +166,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                         Log.e(TAG, "Hybrid FPS Booster failed: $message")
                         main.post { if (hybridRenderer === createdHybrid) listener?.onFallback(reason, message) }
                     }
-                }, context.applicationContext)
+                }, context.applicationContext, p.quality)
                 hybridRenderer = createdHybrid
                 createdHybrid.setTargetFps(p.targetFps)
                 manager?.let { createdHybrid.setLevel(it.initialLevel) }
@@ -275,19 +275,16 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         return null
     }
 
+    /**
+     * The window keeps the refresh rate chosen in Settings > Refresh Rate: the player controls, sheets and the rest of the
+     * app run at that rate. Only the video is paced to the target FPS (on the app's vsyncs); no display mode is requested.
+     */
     private fun applyDisplayMode() {
         val window = findWindow() ?: return
-        val fps = plan?.targetFps ?: return
         try {
-            val choice = DisplayRefreshRate.preferredMode(context, fps) ?: return
-            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = true
-            val lp = window.attributes
-            if (lp.preferredDisplayModeId != choice.modeId || lp.preferredRefreshRate != choice.refreshRate) {
-                lp.preferredDisplayModeId = choice.modeId
-                lp.preferredRefreshRate = choice.refreshRate
-                window.attributes = lp
-            }
-        } catch (t: Throwable) { Log.w(TAG, "preferred display mode failed", t) }
+            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
+            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
+        } catch (t: Throwable) { Log.w(TAG, "keeping the app refresh rate failed", t) }
     }
 
     private fun clearDisplayMode() {
@@ -298,19 +295,8 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         } catch (_: Throwable) {}
     }
 
-    private fun applyFrameRateHint() {
-        val fps = plan?.targetFps ?: return
-        val surface = holder.surface
-        if (surface == null || !surface.isValid) return
-        try {
-            when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> surface.setFrameRate(
-                    fps.toFloat(), Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS)
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-                    surface.setFrameRate(fps.toFloat(), Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
-            }
-        } catch (t: Throwable) { Log.w(TAG, "setFrameRate failed", t) }
-    }
+    /** Intentionally empty: a frame-rate vote on the video surface could pull the whole display away from the app's rate. */
+    private fun applyFrameRateHint() {}
 
     private companion object { const val TAG = "FpsBoosterView" }
 }

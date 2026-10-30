@@ -81,6 +81,16 @@ class OpticalFlowRenderer(
         fun onTick()
         fun getRifeTexture(aTsNs: Long, bTsNs: Long): Int
         fun onGlRelease()
+
+        /**
+         * Called right after [onFrameCopied] for a frame that has a real predecessor. True = the hook will deliver an AI
+         * middle frame for (previous, this) through [OpticalFlowRenderer.injectMidFrame], so the flow estimate of this pair is
+         * deferred and runs on (A, M) and (M, B) instead (RIFE first, optical flow second). False = normal path.
+         */
+        fun wantsMidFrame(): Boolean = false
+
+        /** True when mid frames can be injected: the renderer then reserves two extra frame slots. */
+        fun supportsMidFrames(): Boolean = false
     }
 
     @Volatile var rifeOverlayHook: RifeOverlayHook? = null
@@ -91,6 +101,15 @@ class OpticalFlowRenderer(
         var hasFlow: Boolean = false
         /** The estimate for this frame was not started because the GPU was busy: show real frames, do not retry. */
         var flowSkipped: Boolean = false
+        /** When this real frame arrived (ns, System.nanoTime); a mid frame inherits it from the frame it precedes. */
+        var arrivalNs: Long = 0L
+        /** RIFE-first: waiting for the AI middle frame before (previous, this) is estimated. */
+        var midPending: Boolean = false
+        var midDeadlineNs: Long = 0L
+        /** The flow of this slot is deferred (waiting for the mid frame, or queued behind another estimate). */
+        var flowPending: Boolean = false
+        /** Synthesised by the AI engine (lives between two real frames in the queue). */
+        var isMid: Boolean = false
     }
 
     private val thread = HandlerThread("FpsBooster-GL", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
@@ -128,6 +147,7 @@ class OpticalFlowRenderer(
     private var riskProg: Prog? = null
     private var globalProg: Prog? = null
     private var interpProg: Prog? = null            // the hand-tuned blend; always present, also the fallback
+    private var blitProg: Prog? = null              // plain texture copy (AI middle frame -> frame slot)
     private var aiInterpProg: Prog? = null          // composite that reads the fusion map (only with fuseProg + fuseTex)
 
     // ---- AI fusion (optional, off by default; see [setAiFusion]) ----
@@ -141,6 +161,8 @@ class OpticalFlowRenderer(
     private var slots: Array<Slot> = emptyArray()
     private val queue = ArrayList<Slot>(SLOT_COUNT)        // decoded frames, ascending timestamp
     private val freeSlots = ArrayList<Slot>(SLOT_COUNT)
+    /** Estimates waiting for the GPU, in order: (A, M) then (M, B) for every injected mid frame M. */
+    private val midChain = ArrayList<Pair<Slot, Slot>>()
     private var flowTex: Array<Array<IntArray>> = emptyArray()   // [direction 0=fw 1=bw][level] -> ping/pong
     private var globalCoarse = IntArray(0)                       // [direction] 1x1: dominant motion of the coarsest field
 
@@ -376,6 +398,7 @@ class OpticalFlowRenderer(
         riskProg = Prog(VERTEX, asset("risk_map.frag"))
         globalProg = Prog(VERTEX, asset("global_motion.frag"))
         interpProg = Prog(PRESENT_VERTEX, asset("flow_interp.frag"))
+        blitProg = Prog(VERTEX, BLIT_FRAGMENT)
         if (aiFusionWanted) applyAiFusion()
 
         val ids = IntArray(1)
@@ -431,7 +454,7 @@ class OpticalFlowRenderer(
 
         val riskW = (levelW[0] + RISK_CELL - 1) / RISK_CELL
         val riskH = (levelH[0] + RISK_CELL - 1) / RISK_CELL
-        slots = Array(SLOT_COUNT) {
+        slots = Array(SLOT_COUNT + if (rifeOverlayHook?.supportsMidFrames() == true) MID_EXTRA_SLOTS else 0) {
             Slot(
                 full = newTexture(frameW, frameH, GLES30.GL_RGBA8),
                 luma = IntArray(n) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) },
@@ -451,6 +474,7 @@ class OpticalFlowRenderer(
         }
         globalCoarse = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F) }
         queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
+        midChain.clear()
         holdCtl.reset()
         estimateLatency.reset()
         tsRegularizer.reset()
@@ -509,6 +533,7 @@ class OpticalFlowRenderer(
             // seek / pause / new clip: never interpolate across it
             cancelEstimate()
             while (queue.isNotEmpty()) freeSlots.add(queue.removeAt(0))
+            midChain.clear()
             holdCtl.reset()
             tsRegularizer.reset()
         }
@@ -518,10 +543,20 @@ class OpticalFlowRenderer(
         slot.tsNs = ts
         rifeOverlayHook?.onFrameCopied(slot.full, ts, frameW, frameH)
         if (continuous) holdCtl.onFrame(ts - now)
+        slot.arrivalNs = now
+        slot.midPending = false
+        slot.flowPending = false
+        slot.isMid = false
         queue.add(slot)
 
         if (continuous && wantsInterpolation()) {
-            if (gpuBusy()) {
+            if (rifeOverlayHook?.wantsMidFrame() == true) {
+                // RIFE first: wait for the AI middle frame, then estimate (A, M) and (M, B). The deadline in serviceMid
+                // falls back to the plain (A, B) estimate, so a slow network never stalls the picture.
+                slot.midPending = true
+                slot.flowPending = true
+                slot.midDeadlineNs = now + midWaitNs()
+            } else if (gpuBusy()) {
                 // The previous estimate is still running: queueing another one only grows the backlog that delays
                 // every later estimate and every presented frame. This pair is shown as real frames.
                 slot.flowSkipped = true
@@ -562,7 +597,11 @@ class OpticalFlowRenderer(
         GLES30.glUniform1f(copy.loc("uTexelH"), if (srcH > 0) 1f / srcH else 0f)
         GLES30.glUniform1i(copy.loc("uMode"), deinterlaceMode)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        buildLuma(slot)
+    }
 
+    /** Luma level 0 at work size from [Slot.full], then the pyramid. */
+    private fun buildLuma(slot: Slot) {
         val luma = lumaProg!!
         bindTarget(slot.luma[0], levelW[0], levelH[0])
         luma.use()
@@ -578,6 +617,94 @@ class OpticalFlowRenderer(
             GLES30.glUniform2i(down.loc("uSrcSize"), levelW[l - 1], levelH[l - 1])
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         }
+    }
+
+    // =====================================================================
+    // RIFE first, optical flow second (mid frames)
+    // =====================================================================
+
+    private fun midWaitNs(): Long = (frameIntervalNs * 5 / 4).coerceIn(30_000_000L, 90_000_000L)
+
+    /**
+     * GL thread only. The AI engine finished the middle picture of real frames A ([aTsNs]) and B ([bTsNs]) in [synthTex].
+     * It becomes a queue frame M halfway between them; flow is then estimated on (A, M) and (M, B), so every generated
+     * output frame is a warp of one nearby sharp frame and no pair spans more than half a source interval.
+     * Anything unexpected (frames gone, no free slot, wrong neighbour) just takes the plain path for this pair.
+     */
+    fun injectMidFrame(synthTex: Int, aTsNs: Long, bTsNs: Long) {
+        if (released) return
+        val b = queue.firstOrNull { it.tsNs == bTsNs && it.midPending } ?: return
+        val bi = queue.indexOf(b)
+        val a = queue.getOrNull(bi - 1)
+        val bp = blitProg
+        if (a == null || a.isMid || a.tsNs != aTsNs || freeSlots.isEmpty() || bp == null || synthTex == 0) {
+            giveUpMid(b)
+            return
+        }
+        val m = freeSlots.removeAt(freeSlots.size - 1)
+        bindTarget(m.full, frameW, frameH)
+        bp.use()
+        tex(0, bp, "uSrc", synthTex)
+        GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        buildLuma(m)
+        m.tsNs = HybridScheduling.midTimestampNs(a.tsNs, b.tsNs)
+        m.arrivalNs = b.arrivalNs
+        m.hasFlow = false
+        m.flowSkipped = false
+        m.midPending = false
+        m.flowPending = true
+        m.isMid = true
+        queue.add(bi, m)
+        b.midPending = false
+        b.flowPending = true
+        midChain.add(a to m)
+        midChain.add(m to b)
+        if (!gpuBusy()) startNextChained()
+        dirty = true
+    }
+
+    /** GL thread only. The AI engine will not deliver a mid frame for the pair ending at [bTsNs] (cut, busy, failed). */
+    fun midUnavailable(bTsNs: Long) {
+        if (released) return
+        queue.firstOrNull { it.tsNs == bTsNs && it.midPending }?.let { giveUpMid(it) }
+    }
+
+    /** Plain (previous, [b]) estimate for a pair that was waiting for a mid frame. */
+    private fun giveUpMid(b: Slot) {
+        b.midPending = false
+        b.flowPending = false
+        val i = queue.indexOf(b)
+        if (i < 1) { b.flowSkipped = true; return }
+        if (gpuBusy()) {
+            b.flowSkipped = true
+            acc.onEstimateSkipped()
+        } else {
+            beginEstimate(queue[i - 1], b, b.arrivalNs)
+        }
+    }
+
+    /** Starts the next queued (A, M) / (M, B) estimate; entries whose frames have left the queue are marked skipped. */
+    private fun startNextChained() {
+        while (midChain.isNotEmpty()) {
+            val (x, y) = midChain.removeAt(0)
+            y.flowPending = false
+            val ix = queue.indexOf(x)
+            val iy = queue.indexOf(y)
+            if (ix < 0 || iy != ix + 1) { y.flowSkipped = true; continue }
+            beginEstimate(x, y, y.arrivalNs)
+            return
+        }
+    }
+
+    /** Every vsync: give up on mid frames that are late, and feed the GPU the next queued estimate. */
+    private fun serviceMid(nowNs: Long) {
+        var i = 1
+        while (i < queue.size) {
+            val s = queue[i]
+            if (s.midPending && nowNs > s.midDeadlineNs) giveUpMid(s)
+            i++
+        }
+        if (midChain.isNotEmpty() && !gpuBusy()) startNextChained()
     }
 
     // =====================================================================
@@ -780,6 +907,7 @@ class OpticalFlowRenderer(
         lastVsyncNs = vsyncNs
         rifeOverlayHook?.onTick()
         emitWindow(vsyncNs)
+        serviceMid(vsyncNs)
 
         if (queue.isEmpty()) return
         val fps = targetFps
@@ -809,7 +937,7 @@ class OpticalFlowRenderer(
             if (a !== b) {
                 // Rare: interpolation was switched on after b arrived. Only when the GPU is idle - a late estimate
                 // queued behind a running one would delay this very frame - and never for a pair that was skipped.
-                if (!b.hasFlow && !b.flowSkipped && !gpuBusy()) beginEstimate(a, b, System.nanoTime())
+                if (!b.hasFlow && !b.flowSkipped && !b.flowPending && !gpuBusy()) beginEstimate(a, b, System.nanoTime())
                 warp = b.hasFlow
                 if (!warp) {
                     // No flow for this pair (estimate skipped or still running): the nearest REAL frame by phase,
@@ -1023,7 +1151,7 @@ class OpticalFlowRenderer(
         fuseTex = IntArray(0)
         if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         slots = emptyArray(); flowTex = emptyArray(); globalCoarse = IntArray(0)
-        queue.clear(); freeSlots.clear()
+        queue.clear(); freeSlots.clear(); midChain.clear()
     }
 
     private fun releaseGl() {
@@ -1035,7 +1163,7 @@ class OpticalFlowRenderer(
             freeResources()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
-            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, riskProg, globalProg, interpProg, aiInterpProg, fuseProg).forEach { it?.delete() }
+            listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, riskProg, globalProg, interpProg, blitProg, aiInterpProg, fuseProg).forEach { it?.delete() }
         }
         surfaceTexture = null
         inputSurface = null
@@ -1101,6 +1229,7 @@ class OpticalFlowRenderer(
         // EGL_IMG_context_priority (not in android.opengl.EGL14)
         private const val EGL_CONTEXT_PRIORITY_LEVEL_IMG = 0x3100
         private const val EGL_CONTEXT_PRIORITY_LOW_IMG = 0x3103
+        private const val MID_EXTRA_SLOTS = 2   // AI middle frames live in the same queue as the decoded ones
         private const val SLOT_COUNT = 4         // bounded frame queue: the shown pair plus up to two frames that arrived early
         private const val PITCH = FlowPyramid.PITCH   // flow block pitch (matches flow_search.frag)
         private const val LAMBDA = 0.003f         // flow smoothness penalty per px
@@ -1137,6 +1266,17 @@ void main() {
   vec2 p = vec2(float(gl_VertexID & 1), float(gl_VertexID >> 1));
   vUv = uOrient * (p - 0.5) + 0.5;
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
+}
+"""
+
+        /** Plain bilinear copy of a texture (the AI middle frame, model size) into a full-size frame slot. */
+        private const val BLIT_FRAGMENT = """#version 300 es
+precision highp float;
+uniform sampler2D uSrc;
+in vec2 vUv;
+out vec4 o;
+void main() {
+  o = vec4(texture(uSrc, vUv).rgb, 1.0);
 }
 """
 

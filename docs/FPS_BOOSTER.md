@@ -520,3 +520,20 @@ The safeguards and timing improvements developed for the Optical Flow engine wer
 - **Speed Gate & Fallback**: Benchmarking measures `rifeInferenceMs`. If inference exceeds the source frame interval or if 3 consecutive statistics windows exceed 2x the source frame interval during runtime, the planner/renderer falls back to Optical flow with user toast notification.
 - **Status**: Kotlin compile and phone timing not verified.
 
+
+## 15. Hybrid: RIFE first, optical flow second (experimental, not built or run on a device)
+
+For every pair of real frames (A, B) the AI engine makes one middle picture M (t = 0.5). M becomes a frame in the optical-flow
+queue at the time halfway between A and B, so the flow engine estimates (A, M) and (M, B) and generates every output frame
+from a sharp warp of a frame at most a quarter source interval away. Cost: RIFE runs once per source frame (as before),
+flow runs twice per source frame.
+
+- `OpticalFlowRenderer.injectMidFrame` / `midUnavailable` (GL thread) and the `RifeOverlayHook.wantsMidFrame` /
+  `supportsMidFrames` hooks; two extra frame slots; estimates are chained (A, M) then (M, B), one at a time.
+- Safe fallbacks: a deadline (1.25 source intervals, 30..90 ms) after which the pair takes the plain (A, B) estimate;
+  scene cuts (`HybridScheduling.meanLumaDiff` > 0.12) and a RIFE that needs more than 90 % of a source interval skip the
+  mid frame; the old overlay path is used while the cascade is not possible. `MID_FRAME_CASCADE` in `HybridRenderer`
+  switches the whole feature off.
+- M is made at model size (640 / 960 / 1280 px long edge by quality) and upscaled, so frames near M are softer than the
+  real ones. Higher quality = sharper M but slower RIFE.
+- The hold-back grows by RIFE latency + two estimates (measured by `EstimateLatency`, capped at 100 ms).
