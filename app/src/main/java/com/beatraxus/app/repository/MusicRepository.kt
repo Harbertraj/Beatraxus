@@ -759,6 +759,8 @@ class MusicRepository(private val context: Context) {
     )
 
     fun deleteSongs(uris: List<Uri>): android.app.PendingIntent? {
+        // MediaStore.createDeleteRequest throws IllegalArgumentException on an empty collection.
+        if (uris.isEmpty()) return null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             return MediaStore.createDeleteRequest(context.contentResolver, uris)
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

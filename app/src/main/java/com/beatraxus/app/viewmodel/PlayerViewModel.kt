@@ -3196,10 +3196,81 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun isVideoLibraryView(view: LibraryView): Boolean = view in listOf(
+        LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_RECENTLY_ADDED,
+        LibraryView.VIDEO_RECENTLY_PLAYED, LibraryView.VIDEO_FOLDER_DETAIL
+    )
+
+    /** Videos picked in multi-select. The folder grid selects by folder path, every other video view by video id. */
+    private fun selectedVideos(): List<com.beatraxus.app.model.Video> {
+        val state = _uiState.value
+        val selected = state.selectedIds
+        return _videos.value.filter { v ->
+            v.id in selected || (state.currentView == LibraryView.VIDEO_FOLDERS && v.folderPath in selected)
+        }
+    }
+
+    /** Deletes the selected on-device videos. Cloud videos are not files on this device, so they are skipped. */
+    private fun deleteSelectedVideos() {
+        val local = selectedVideos().filter { !it.isCloud }
+        if (local.isEmpty()) {
+            // Nothing deletable (empty or cloud-only selection): never hand MediaStore an empty list, that crashes.
+            setMultiSelectMode(false)
+            return
+        }
+        viewModelScope.launch {
+            pendingDeleteIds = local.map { it.id }
+            val intent = try {
+                musicRepository.deleteSongs(local.map { it.uri })
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to delete selected videos", e)
+                pendingDeleteIds = emptyList()
+                null
+            }
+            if (intent != null) {
+                _deleteRequest.value = intent
+            } else if (pendingDeleteIds.isNotEmpty()) {
+                onDeleteSuccess()
+            }
+        }
+    }
+
+    /** Shares the selected on-device videos (the audio share path only looks at songs, so it did nothing here). */
+    private fun shareSelectedVideos() {
+        val local = selectedVideos().filter { !it.isCloud }
+        if (local.isEmpty()) return
+        val uris = ArrayList<Uri>(local.map { it.uri })
+        val intent = if (uris.size == 1) {
+            android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = local.first().mimeType.ifBlank { "video/*" }
+                putExtra(android.content.Intent.EXTRA_STREAM, uris.first())
+            }
+        } else {
+            android.content.Intent(android.content.Intent.ACTION_SEND_MULTIPLE).apply {
+                type = "video/*"
+                putParcelableArrayListExtra(android.content.Intent.EXTRA_STREAM, uris)
+            }
+        }.apply { addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        val chooser = android.content.Intent.createChooser(intent, "Share Video").apply {
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            getApplication<Application>().startActivity(chooser)
+            setMultiSelectMode(false)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to share selected videos", e)
+        }
+    }
+
     fun deleteSelected() {
         val state = _uiState.value
         val selected = state.selectedIds
         if (selected.isEmpty()) return
+
+        if (isVideoLibraryView(state.currentView)) {
+            deleteSelectedVideos()
+            return
+        }
 
         when (state.currentView) {
             LibraryView.PLAYLISTS -> {
@@ -3279,6 +3350,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         val selected = state.selectedIds
         if (selected.isEmpty()) return
+
+        if (isVideoLibraryView(state.currentView)) {
+            shareSelectedVideos()
+            return
+        }
 
         val songsToShare = when (state.currentView) {
             LibraryView.PLAYLISTS -> {
