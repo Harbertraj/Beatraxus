@@ -333,3 +333,14 @@
 # Play Together WebRTC
 -keep class org.webrtc.** { *; }
 -dontwarn org.webrtc.**
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ONNX RUNTIME (RIFE AI / HYBRID FPS Booster)
+# ══════════════════════════════════════════════════════════════════════════════
+# libonnxruntime4j_jni.so looks up Java classes, constructors, fields and methods BY NAME
+# (e.g. ai.onnxruntime.NodeInfo.<init>(String, ValueInfo)). If R8 renames or strips any of
+# them the native code hits NoSuchMethodError and ART aborts the whole process
+# ("No pending exception expected ... Runtime aborting"). Never obfuscate/shrink this package.
+-keep class ai.onnxruntime.** { *; }
+-keepclassmembers class ai.onnxruntime.** { *; }
+-dontwarn ai.onnxruntime.**

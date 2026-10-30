@@ -40,6 +40,7 @@ import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.PlaylistEntity
+import com.beatraxus.app.model.VideoPlaylistEntity
 import com.beatraxus.app.model.FavoriteEntity
 import com.beatraxus.app.model.AutoEqProfileSummary
 import com.beatraxus.app.model.DspConfig
@@ -159,6 +160,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private val database = (application as BeatraxusApplication).database
     private val playlistDao = database.playlistDao()
+    private val videoPlaylistDao = database.videoPlaylistDao()
     private val favoriteDao = database.favoriteDao()
     private val songDao = database.songDao()
     private val folderDao = database.folderDao()
@@ -303,6 +305,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                     id = entity.id,
                     name = entity.name,
                     songIds = entity.songIds.split(",").filter { it.isNotBlank() }
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** Playlists made from videos. [Playlist.songIds] holds video ids here. Separate from the audio [playlists]. */
+    val videoPlaylists: StateFlow<List<Playlist>> = videoPlaylistDao.getAllPlaylists()
+        .map { entities ->
+            entities.map { entity ->
+                Playlist(
+                    id = entity.id,
+                    name = entity.name,
+                    songIds = entity.videoIds.split(",").filter { it.isNotBlank() }
                 )
             }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -3003,12 +3017,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         playVideo(video)
     }
 
-    fun playVideo(video: com.beatraxus.app.model.Video) {
+    fun playVideo(video: com.beatraxus.app.model.Video, queue: List<com.beatraxus.app.model.Video>? = null) {
         if (_uiState.value.isPlaying) {
             service?.togglePlayPause()
         }
 
-        val list = _uiState.value.videos
+        val list = queue ?: _uiState.value.videos
         var index = list.indexOfFirst { it.id == video.id }
         
         val finalQueue = if (index == -1) {
@@ -3170,7 +3184,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectAll() {
         val currentView = _uiState.value.currentView
-        val itemsToSelect = when (currentView) {
+        // Video mode: the Playlists grid selects video playlists, an open playlist selects its videos.
+        val videoModeItems: List<String>? = if (isVideoMode()) {
+            when (currentView) {
+                LibraryView.PLAYLISTS -> videoPlaylists.value.map { it.id }
+                LibraryView.PLAYLIST_DETAIL -> currentVideoPlaylistVideos().map { it.id }
+                else -> null
+            }
+        } else null
+        val itemsToSelect = videoModeItems ?: when (currentView) {
             LibraryView.HOME, LibraryView.ALL_SONGS, LibraryView.ALBUM_DETAIL, LibraryView.ARTIST_DETAIL,
             LibraryView.FOLDER_DETAIL, LibraryView.YEAR_DETAIL, LibraryView.GENRE_DETAIL,
             LibraryView.PLAYLIST_DETAIL, LibraryView.FAVORITES, LibraryView.RECENTLY_ADDED,
@@ -3196,17 +3218,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun isVideoMode(): Boolean = _uiState.value.playbackMode == PlaybackMode.VIDEO
+
     private fun isVideoLibraryView(view: LibraryView): Boolean = view in listOf(
         LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_RECENTLY_ADDED,
         LibraryView.VIDEO_RECENTLY_PLAYED, LibraryView.VIDEO_FOLDER_DETAIL
-    )
+    ) || (isVideoMode() && (view == LibraryView.PLAYLISTS || view == LibraryView.PLAYLIST_DETAIL))
+
+    /** Videos of the video playlist that is open (or null when it is gone). In playlist order. */
+    fun currentVideoPlaylistVideos(): List<com.beatraxus.app.model.Video> {
+        val state = _uiState.value
+        val playlist = videoPlaylists.value.find { it.name == state.selectedItemName } ?: return emptyList()
+        return playlist.songIds.mapNotNull { id -> state.videos.find { it.id == id } }
+    }
 
     /** Videos picked in multi-select. The folder grid selects by folder path, every other video view by video id. */
     private fun selectedVideos(): List<com.beatraxus.app.model.Video> {
         val state = _uiState.value
         val selected = state.selectedIds
+        // In the video Playlists grid the selection holds playlist ids: use every video inside them.
+        val fromPlaylists: Set<String> =
+            if (isVideoMode() && state.currentView == LibraryView.PLAYLISTS) {
+                videoPlaylists.value.filter { it.id in selected }.flatMap { it.songIds }.toSet()
+            } else emptySet()
         return _videos.value.filter { v ->
-            v.id in selected || (state.currentView == LibraryView.VIDEO_FOLDERS && v.folderPath in selected)
+            v.id in selected || v.id in fromPlaylists ||
+                (state.currentView == LibraryView.VIDEO_FOLDERS && v.folderPath in selected)
         }
     }
 
@@ -3266,6 +3303,15 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val state = _uiState.value
         val selected = state.selectedIds
         if (selected.isEmpty()) return
+
+        if (isVideoMode() && state.currentView == LibraryView.PLAYLISTS) {
+            // Selected items are playlists: remove the playlists, never the video files inside them.
+            viewModelScope.launch {
+                selected.forEach { id -> videoPlaylistDao.deletePlaylist(id) }
+                setMultiSelectMode(false)
+            }
+            return
+        }
 
         if (isVideoLibraryView(state.currentView)) {
             deleteSelectedVideos()
@@ -3418,9 +3464,32 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /** Adds the selected videos to a video playlist (created when the name is new). Video mode only. */
+    private fun addSelectedVideosToPlaylist(playlistName: String) {
+        val videoIds = selectedVideos().map { it.id }.distinct()
+        if (videoIds.isEmpty()) return
+        viewModelScope.launch {
+            val existing = videoPlaylists.value.find { it.name == playlistName }
+            val playlist = if (existing != null) {
+                existing.copy(songIds = (existing.songIds + videoIds).distinct())
+            } else {
+                Playlist(id = System.currentTimeMillis().toString(), name = playlistName, songIds = videoIds)
+            }
+            videoPlaylistDao.insertPlaylist(
+                VideoPlaylistEntity(playlist.id, playlist.name, playlist.songIds.joinToString(","))
+            )
+            setMultiSelectMode(false)
+        }
+    }
+
     fun addSelectedToPlaylist(playlistName: String) {
         val selectedIds = _uiState.value.selectedIds
         if (selectedIds.isEmpty()) return
+
+        if (isVideoMode()) {
+            addSelectedVideosToPlaylist(playlistName)
+            return
+        }
 
         viewModelScope.launch {
             val currentPlaylists = playlists.value
@@ -3483,7 +3552,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deletePlaylist(playlistId: String) {
         viewModelScope.launch {
-            playlistDao.deletePlaylist(playlistId)
+            if (isVideoMode()) videoPlaylistDao.deletePlaylist(playlistId) else playlistDao.deletePlaylist(playlistId)
             if (_uiState.value.currentView == LibraryView.PLAYLIST_DETAIL) {
                 setLibraryView(LibraryView.PLAYLISTS)
             }
@@ -3491,6 +3560,13 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun createPlaylist(name: String) {
+        if (isVideoMode()) {
+            viewModelScope.launch {
+                if (videoPlaylists.value.any { it.name == name }) return@launch
+                videoPlaylistDao.insertPlaylist(VideoPlaylistEntity(System.currentTimeMillis().toString(), name, ""))
+            }
+            return
+        }
         viewModelScope.launch {
             if (playlists.value.any { it.name == name }) return@launch
             val playlist = Playlist(id = System.currentTimeMillis().toString(), name = name)

@@ -10,6 +10,17 @@ data class PlaylistEntity(
     val songIds: String // Comma-separated IDs
 )
 
+/**
+ * Playlists of videos. Kept in their own table so the audio and the video libraries never mix:
+ * a playlist made from selected videos only shows up in video mode.
+ */
+@Entity(tableName = "video_playlists")
+data class VideoPlaylistEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val videoIds: String // Comma-separated video IDs
+)
+
 @Entity(tableName = "favorites")
 data class FavoriteEntity(
     @PrimaryKey val songId: String,

@@ -27,6 +27,18 @@ interface PlaylistDao {
 }
 
 @Dao
+interface VideoPlaylistDao {
+    @Query("SELECT * FROM video_playlists")
+    fun getAllPlaylists(): Flow<List<VideoPlaylistEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPlaylist(playlist: VideoPlaylistEntity)
+
+    @Query("DELETE FROM video_playlists WHERE id = :id")
+    suspend fun deletePlaylist(id: String)
+}
+
+@Dao
 interface FavoriteDao {
     @Query("SELECT * FROM favorites")
     fun getAllFavorites(): Flow<List<FavoriteEntity>>
@@ -103,14 +115,16 @@ interface VideoRecentlyPlayedDao {
         PlaylistEntity::class, FavoriteEntity::class, SongEntity::class, RecentlyPlayedEntity::class,
         LyricsEntity::class, FolderEntity::class, VideoFolderEntity::class, AiAnalysisEntity::class, ArtistArtEntity::class,
         SongQualityEntity::class, BookmarkEntity::class, ChapterEntity::class, HighlightEntity::class,
-        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class
+        LoudnessEntity::class, VideoRecentlyPlayedEntity::class, IntroOutroRange::class, VideoChapterEntity::class,
+        VideoPlaylistEntity::class
     ],
-    version = 32,
+    version = 33,
     exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
+    abstract fun videoPlaylistDao(): VideoPlaylistDao
     abstract fun favoriteDao(): FavoriteDao
     abstract fun songDao(): SongDao
     abstract fun lyricsDao(): LyricsDao
@@ -130,6 +144,15 @@ abstract class AppDatabase : RoomDatabase() {
 
     companion object {
         /** The old AI EQ "learning" table is gone: AI EQ now keeps its profiles in a JSON cache (engine/aieq). */
+        /** Video playlists get their own table (they used to be mixed into the audio playlists). */
+        val MIGRATION_32_33 = object : Migration(32, 33) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `video_playlists` " +
+                        "(`id` TEXT NOT NULL, `name` TEXT NOT NULL, `videoIds` TEXT NOT NULL, PRIMARY KEY(`id`))"
+                )
+            }
+        }
         val MIGRATION_31_32 = object : Migration(31, 32) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("DROP TABLE IF EXISTS ai_eq_corrections")

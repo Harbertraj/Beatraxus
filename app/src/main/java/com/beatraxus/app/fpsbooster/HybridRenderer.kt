@@ -83,6 +83,9 @@ class HybridRenderer(
         private var srcH = 0
         private var modelW = 640
         private var modelH = 360
+        /** Model size the GL objects and buffers below were built for (0 = nothing allocated). */
+        private var allocW = 0
+        private var allocH = 0
 
         // GL objects
         private var smallTex = 0
@@ -127,7 +130,17 @@ class HybridRenderer(
             return ok
         }
 
+        /**
+         * Any thread. The model size follows the video size and the GL objects of this hook are sized by it, so the change
+         * is applied on the GL thread (the one that uses them), not on the player's thread.
+         */
         fun setSourceSize(w: Int, h: Int) {
+            if (w <= 0 || h <= 0) return
+            flowRenderer.postToGlThread { applySourceSize(w, h) }
+        }
+
+        /** GL thread only. The GL objects and buffers are rebuilt for the new model size by [ensureGlResources]. */
+        private fun applySourceSize(w: Int, h: Int) {
             if (w <= 0 || h <= 0 || (w == srcW && h == srcH)) return
             srcW = w
             srcH = h
@@ -140,11 +153,22 @@ class HybridRenderer(
             modelW = pair.first
             modelH = pair.second
             generation++
+            // Free the old-size objects now, not at the next frame: the vsync poll must not read a PBO of the old size.
+            if (allocW != modelW || allocH != modelH) releaseSizedResources()
+            resetHistory()
+        }
+
+        /** Frames of the previous picture size must never be paired with frames of the new one. */
+        private fun resetHistory() {
+            curTsNs = 0L
+            prevTsNs = 0L
+            pendingTsNs = 0L
             synthForTs = 0L
+            announcedTs = 0L
         }
 
         override fun onFrameCopied(slotFullTex: Int, tsNs: Long, frameW: Int, frameH: Int) {
-            if (srcW <= 0 || srcH <= 0) setSourceSize(frameW, frameH)
+            if (srcW <= 0 || srcH <= 0) applySourceSize(frameW, frameH)
             ensureGlResources()
 
             val prog = scaleProg ?: return
@@ -256,7 +280,8 @@ class HybridRenderer(
                     }
                 } ?: run {
                     flowRenderer.postToGlThread {
-                        if (gen == generation) inferenceInFlight = false
+                        // always: a size change bumps the generation while a run is in flight, and the flag must not stay set
+                        inferenceInFlight = false
                         if (announced) flowRenderer.midUnavailable(targetTs)
                     }
                 }
@@ -294,18 +319,31 @@ class HybridRenderer(
         }
 
         override fun onGlRelease() {
-            if (readFence != 0L) { GLES30.glDeleteSync(readFence); readFence = 0L }
-            val ids = mutableListOf<Int>()
-            if (smallTex != 0) ids.add(smallTex)
-            if (synthTexture != 0) ids.add(synthTexture)
-            if (readPbo != 0) ids.add(readPbo)
-            if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
-            smallTex = 0; synthTexture = 0; readPbo = 0
+            releaseSizedResources()
             if (fbo != 0) { GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0); fbo = 0 }
             scaleProg?.delete(); scaleProg = null
         }
 
+        /** GL thread only: frees everything whose size depends on the model size. */
+        private fun releaseSizedResources() {
+            if (allocW != 0) {
+                if (readFence != 0L) { GLES30.glDeleteSync(readFence); readFence = 0L }
+                val tex = listOf(smallTex, synthTexture).filter { it != 0 }
+                if (tex.isNotEmpty()) GLES30.glDeleteTextures(tex.size, tex.toIntArray(), 0)
+                if (readPbo != 0) GLES30.glDeleteBuffers(1, intArrayOf(readPbo), 0)
+            }
+            readFence = 0L
+            smallTex = 0; synthTexture = 0; readPbo = 0
+            curBytes = null; prevBytes = null; inA = null; inB = null
+            packedIn = null; outPlanar = null; synthBytes = null
+            allocW = 0; allocH = 0
+            resetHistory()
+        }
+
         private fun ensureGlResources() {
+            // The model size changed (next video, other aspect ratio): textures built for the old size would show the
+            // AI pictures cropped or stretched next to the real frames, so everything sized by it is rebuilt.
+            if (allocW != modelW || allocH != modelH) releaseSizedResources()
             if (scaleProg == null) {
                 scaleProg = Prog(VERTEX, SCALE_FRAG)
             }
@@ -314,31 +352,27 @@ class HybridRenderer(
                 GLES30.glGenFramebuffers(1, id, 0)
                 fbo = id[0]
             }
-            if (smallTex == 0) {
-                smallTex = newTexture(modelW, modelH, GLES30.GL_RGBA8)
-            }
-            if (synthTexture == 0) {
-                synthTexture = newTexture(modelW, modelH, GLES30.GL_RGBA8)
-            }
-            if (readPbo == 0) {
+            if (allocW == 0) {
+                val mw = modelW
+                val mh = modelH
+                smallTex = newTexture(mw, mh, GLES30.GL_RGBA8)
+                synthTexture = newTexture(mw, mh, GLES30.GL_RGBA8)
                 val id = IntArray(1)
                 GLES30.glGenBuffers(1, id, 0)
                 readPbo = id[0]
                 GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, readPbo)
-                GLES30.glBufferData(
-                    GLES30.GL_PIXEL_PACK_BUFFER, modelW * modelH * 4, null, GLES30.GL_DYNAMIC_READ
-                )
+                GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, mw * mh * 4, null, GLES30.GL_DYNAMIC_READ)
                 GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
-            }
-            val bytesNeeded = modelW * modelH * 4
-            if (curBytes == null || curBytes!!.capacity() < bytesNeeded) {
+                val bytesNeeded = mw * mh * 4
                 curBytes = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder())
                 prevBytes = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder())
                 inA = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder())
                 inB = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder())
                 synthBytes = ByteBuffer.allocateDirect(bytesNeeded).order(ByteOrder.nativeOrder())
-                packedIn = FloatBuffer.allocate(7 * modelW * modelH)
-                outPlanar = FloatBuffer.allocate(3 * modelW * modelH)
+                packedIn = FloatBuffer.allocate(7 * mw * mh)
+                outPlanar = FloatBuffer.allocate(3 * mw * mh)
+                allocW = mw
+                allocH = mh
             }
         }
 

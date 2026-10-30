@@ -394,6 +394,9 @@ fun MainScreen(
     val years   by viewModel.years.collectAsStateWithLifecycle()
     val genres  by viewModel.genres.collectAsStateWithLifecycle()
     val playlists by viewModel.playlists.collectAsStateWithLifecycle()
+    // Video mode has its own playlists; they never show in the audio Playlists library (and vice versa).
+    val videoPlaylists by viewModel.videoPlaylists.collectAsStateWithLifecycle()
+    val isVideoPlaylistMode = uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO
     val searchResults by viewModel.searchResults.collectAsStateWithLifecycle()
     val favorites by viewModel.favorites.collectAsStateWithLifecycle()
     val detailRecent by viewModel.homeRecentlyPlayed.collectAsStateWithLifecycle()
@@ -2677,7 +2680,8 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.PLAYLISTS -> {
-                                                    if (playlists.isEmpty()) {
+                                                    val shownPlaylists = if (isVideoPlaylistMode) videoPlaylists else playlists
+                                                    if (shownPlaylists.isEmpty()) {
                                                         // ...
                                                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2705,11 +2709,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                             horizontalArrangement = Arrangement.spacedBy(if (categoryGridColumns >= 3) 8.dp else 16.dp),
                                                             verticalArrangement = Arrangement.spacedBy(if (categoryGridColumns >= 3) 8.dp else 16.dp)
                                                         ) {
-                                                            items(playlists, key = { it.id }) { playlist ->
+                                                            items(shownPlaylists, key = { it.id }) { playlist ->
                                                                 Box(Modifier.animateItem()) {
                                                                     LibraryGridItem(
                                                                         title = playlist.name,
-                                                                        subtitle = "${playlist.songIds.size} songs",
+                                                                        subtitle = "${playlist.songIds.size} ${if (isVideoPlaylistMode) "videos" else "songs"}",
                                                                         artUri = null,
                                                                         isSelected = uiState.selectedIds.contains(playlist.id),
                                                                         isMultiSelectMode = uiState.isMultiSelectMode,
@@ -2733,6 +2737,42 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.PLAYLIST_DETAIL -> {
+                                                    if (isVideoPlaylistMode) {
+                                                        val playlistVideos = videoPlaylists
+                                                            .find { it.name == uiState.selectedItemName }
+                                                            ?.songIds
+                                                            ?.mapNotNull { id -> uiState.videos.find { it.id == id } }
+                                                            ?: emptyList()
+                                                        if (playlistVideos.isEmpty()) {
+                                                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                                                Text("No videos in this playlist", color = TextMuted, fontSize = 16.sp)
+                                                            }
+                                                        } else {
+                                                            com.beatraxus.app.ui.screens.library.VideoLibraryScreen(
+                                                                videos = playlistVideos,
+                                                                continueWatching = emptyList(),
+                                                                isRefreshing = false,
+                                                                columns = videoLayoutDensity.coerceIn(1, 4),
+                                                                onRefresh = {},
+                                                                selectedIds = uiState.selectedIds,
+                                                                isMultiSelectMode = uiState.isMultiSelectMode,
+                                                                onVideoClick = { video ->
+                                                                    if (uiState.isMultiSelectMode) {
+                                                                        viewModel.toggleItemSelection(video.id)
+                                                                    } else {
+                                                                        viewModel.playVideo(video, playlistVideos)
+                                                                    }
+                                                                },
+                                                                onVideoLongClick = { video ->
+                                                                    if (uiState.isMultiSelectMode) {
+                                                                        viewModel.toggleItemSelection(video.id)
+                                                                    } else {
+                                                                        selectedVideoForOptions = video
+                                                                    }
+                                                                }
+                                                            )
+                                                        }
+                                                    } else {
                                                     val playlistName = uiState.selectedItemName
                                                     val playlist = playlists.find { it.name == playlistName }
                                                     val playlistSongs = songs.filter { playlist?.songIds?.contains(it.id) == true }
@@ -2839,6 +2879,7 @@ items(artistSongs, key = { it.id }) { song ->
                                                             }
                                                         }
                                                     }
+                                                    } // end audio playlist detail
                                                 }
                                                 LibraryView.SMART_PLAYLISTS -> {
                                                     com.beatraxus.app.features.SmartPlaylistsScreen(
@@ -4162,7 +4203,7 @@ items(artistSongs, key = { it.id }) { song ->
 
         if (showPlaylistDialog) {
             PlaylistSelectionDialog(
-                playlists = playlists,
+                playlists = if (isVideoPlaylistMode && playlistDialogSong == null) videoPlaylists else playlists,
                 onDismiss = {
                     showPlaylistDialog = false
                     playlistDialogSong = null
@@ -4179,6 +4220,9 @@ items(artistSongs, key = { it.id }) { song ->
                 onCreateNew = { name ->
                     if (playlistDialogSong != null) {
                         viewModel.addSongToPlaylist(name, playlistDialogSong!!.id)
+                    } else if (uiState.selectedIds.isEmpty()) {
+                        // Opened from the Playlists screen (+ button): just create an empty playlist.
+                        viewModel.createPlaylist(name)
                     } else {
                         viewModel.addSelectedToPlaylist(name)
                     }
@@ -6424,6 +6468,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Folders", LibraryView.VIDEO_FOLDERS, Icons.Rounded.FolderOpen, Color(0xFFFFAB40)),
                 DrawerMenuItem("Recently Added", LibraryView.VIDEO_RECENTLY_ADDED, Icons.Rounded.VideoLibrary, Color(0xFF00E676)),
                 DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
+                DrawerMenuItem("Video Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
                 DrawerMenuItem("Playlists", LibraryView.LIVE_TV, Icons.Rounded.LiveTv, Color(0xFFFF3B5C)),
                 DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
             )

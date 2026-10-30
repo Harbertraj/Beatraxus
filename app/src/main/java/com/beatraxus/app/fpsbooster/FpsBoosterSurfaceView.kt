@@ -63,6 +63,19 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     fun configure(plan: BoosterPlan, settings: FpsBoosterSettings) {
         val key = plan to settings
         if (key == applied) return
+        // Engine switched while a renderer is live (OPTICAL_FLOW <-> AI_RIFE <-> HYBRID): the old renderer
+        // must be fully torn down and a new one built for the new engine, otherwise the stale renderer
+        // keeps the surface/ONNX session and the new one fights it.
+        val engineChanged = applied != null && applied!!.first.engine != plan.engine
+        if (engineChanged && holder.surface?.isValid == true &&
+            (renderer != null || rifeRenderer != null || hybridRenderer != null)) {
+            applied = key
+            this.plan = plan
+            this.settings = settings
+            surfaceDestroyed(holder)
+            surfaceCreated(holder)
+            return
+        }
         val needsNewSession = applied == null ||
             applied!!.first.quality != plan.quality ||
             applied!!.second.adaptiveResolution != settings.adaptiveResolution ||
