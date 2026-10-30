@@ -159,7 +159,8 @@ private const val ORBIT_RADIUS_MID = 0.25f
 private const val ORBIT_RADIUS_SMALL = 0.10f
 private const val ORBIT_RATE_MID = 0.045f
 private const val ORBIT_RATE_SMALL = 0.09f
-private const val FLOW_SPEED = 2.5f
+// Lowered from 2.5f so the animated background drifts slower.
+private const val FLOW_SPEED = 1.4f
 
 private const val SATURATION = 1.9f
 private const val BRIGHTNESS = 0.52f
@@ -177,7 +178,8 @@ private const val TEXTURE_PX = 256
 private const val TEXTURE_CACHE = 3
 private const val CROSSFADE_MS = 1400
 private const val APPEAR_MS = 800
-private const val FRAME_SECONDS = 1f / 30f
+// 0f = advance on every display frame (was 1f/30f, which made motion step at 30fps and look choppy).
+private const val FRAME_SECONDS = 0f
 
 private val textureCache = LinkedHashMap<String, Bitmap>()
 
