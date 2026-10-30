@@ -8,6 +8,21 @@ import kotlin.math.max
  * Original algorithm by Mario Klingemann.
  */
 object FastBlur {
+    /**
+     * Downscales [source] so its longest side is at most [maxDimension], then
+     * applies a stack blur with [radius]. Always returns a non-null bitmap
+     * (falls back to the downscaled copy if blurring is not possible).
+     */
+    fun blurArtwork(source: Bitmap, radius: Int, maxDimension: Int): Bitmap {
+        val longest = max(source.width, source.height).coerceAtLeast(1)
+        val scale = if (longest > maxDimension) maxDimension.toFloat() / longest else 1f
+        val w = (source.width * scale).toInt().coerceAtLeast(1)
+        val h = (source.height * scale).toInt().coerceAtLeast(1)
+        val scaled = if (scale < 1f) Bitmap.createScaledBitmap(source, w, h, true) else source
+        val safeRadius = radius.coerceAtMost((minOf(w, h) - 1).coerceAtLeast(1))
+        return blur(scaled, safeRadius) ?: scaled
+    }
+
     fun blur(sentBitmap: Bitmap, radius: Int): Bitmap? {
         if (radius < 1) return null
         
