@@ -1477,6 +1477,27 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             )
         }
 
+        // Only offered while the animated background is on: apply the same slow, smooth movement to the Now Playing bar.
+        if (appearance.nowPlayingAnimatedBackground) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Animate Now Playing Bar", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text(
+                        "Uses the same smooth, slow moving background behind the Now Playing bar (mini player). Needs Android 12+",
+                        color = Color.White.copy(0.6f), fontSize = 12.sp
+                    )
+                }
+                PremiumSwitch(
+                    checked = appearance.miniPlayerAnimatedBackground,
+                    onCheckedChange = { playerViewModel.setMiniPlayerAnimatedBackground(it) }
+                )
+            }
+        }
+
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

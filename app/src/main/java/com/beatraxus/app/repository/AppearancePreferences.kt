@@ -43,6 +43,7 @@ class AppearancePreferences(context: Context) {
             nowPlayingHdCover = preferences[NOW_PLAYING_HD_COVER] ?: true,
             nowPlayingHideTopBar = preferences[NOW_PLAYING_HIDE_TOP_BAR] ?: false,
             nowPlayingAnimatedBackground = preferences[NOW_PLAYING_ANIMATED_BG] ?: false,
+            miniPlayerAnimatedBackground = preferences[MINI_PLAYER_ANIMATED_BG] ?: false,
             // Animations removed in older versions fall back to the soft fade.
             albumArtTransform = runCatching {
                 AlbumArtTransform.valueOf(preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.SOFT_FADE.name)
@@ -394,6 +395,10 @@ class AppearancePreferences(context: Context) {
         dataStore.edit { it[NOW_PLAYING_ANIMATED_BG] = enabled }
     }
 
+    suspend fun setMiniPlayerAnimatedBackground(enabled: Boolean) {
+        dataStore.edit { it[MINI_PLAYER_ANIMATED_BG] = enabled }
+    }
+
     suspend fun setNowPlayingBlurIntensity(value: Float) {
         dataStore.edit { it[BLUR_INTENSITY] = value }
     }
@@ -699,6 +704,7 @@ class AppearancePreferences(context: Context) {
         private val NOW_PLAYING_HD_COVER = booleanPreferencesKey("now_playing_hd_cover")
         private val NOW_PLAYING_HIDE_TOP_BAR = booleanPreferencesKey("now_playing_hide_top_bar")
         private val NOW_PLAYING_ANIMATED_BG = booleanPreferencesKey("now_playing_animated_bg")
+        private val MINI_PLAYER_ANIMATED_BG = booleanPreferencesKey("mini_player_animated_bg")
         private val QUALITY_BADGE_STYLE = stringPreferencesKey("quality_badge_style")
         private val SEEKBAR_STYLE = stringPreferencesKey("seekbar_style")
 

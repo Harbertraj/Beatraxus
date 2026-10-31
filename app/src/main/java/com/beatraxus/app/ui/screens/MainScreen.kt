@@ -3436,7 +3436,11 @@ items(artistSongs, key = { it.id }) { song ->
                                             val miniMode = miniAppearance.miniPlayerBackgroundMode
                                             val miniBlurIntensity = miniAppearance.miniPlayerBlurIntensity
 
-                                            Box(Modifier.fillMaxSize()) {
+                                            // Settings > Appearance > Animated Background > Animate Now Playing Bar: the same slow,
+                                            // smooth moving background as the Now Playing screen. Devices that cannot render it
+                                            // (below Android 12 / low RAM) keep the normal background below.
+                                            val miniAnimated = miniAppearance.nowPlayingAnimatedBackground && miniAppearance.miniPlayerAnimatedBackground
+                                            val miniStaticBackground: @Composable () -> Unit = {
                                                 if (miniMode == NowPlayingBackgroundMode.BLACK) {
                                                     Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
                                                 } else {
@@ -3496,6 +3500,34 @@ items(artistSongs, key = { it.id }) { song ->
                                                                 shape = miniShape
                                                             )
                                                     )
+                                                }
+                                            }
+
+                                            Box(Modifier.fillMaxSize()) {
+                                                if (miniAnimated) {
+                                                    FluidArtworkBackground(
+                                                        artworkUrl = currentSong?.albumArtUri?.toString(),
+                                                        seedKey = currentSong?.id ?: "",
+                                                        modifier = Modifier.fillMaxSize(),
+                                                        fallback = miniStaticBackground
+                                                    )
+                                                    // Keeps the title, artist and controls readable on bright artwork (the fallback has its own).
+                                                    if (isFluidSupported()) {
+                                                        Box(
+                                                            Modifier
+                                                                .fillMaxSize()
+                                                                .background(Color.Black.copy(alpha = 0.22f))
+                                                                .border(
+                                                                    width = 0.5.dp,
+                                                                    brush = Brush.verticalGradient(
+                                                                        listOf(Color.White.copy(0.4f), Color.White.copy(0.05f))
+                                                                    ),
+                                                                    shape = miniShape
+                                                                )
+                                                        )
+                                                    }
+                                                } else {
+                                                    miniStaticBackground()
                                                 }
                                             }
 

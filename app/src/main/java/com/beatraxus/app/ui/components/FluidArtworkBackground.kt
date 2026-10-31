@@ -12,8 +12,10 @@ import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,20 +32,26 @@ import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import coil.ImageLoader
+import coil.imageLoader
 import com.beatraxus.app.ui.utils.FastBlur
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.lang.annotations.Language
+import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -128,7 +136,14 @@ internal data class FluidCopy(
     val angle: Float,
 )
 
-internal fun fluidCopies(width: Float, height: Float, seconds: Float, seed: Int): List<FluidCopy> {
+internal fun fluidCopies(width: Float, height: Float, seconds: Float, seed: Int): List<FluidCopy> =
+    fluidCopies(width, height, seconds) { startPhase(seed, it) }
+
+/**
+ * Same layout, but each copy's start phase comes from [phase] (index 0..[PHASE_COUNT]-1). The composable animates those
+ * phases toward the new track's values, so the motion glides into the new pattern instead of jumping when the song changes.
+ */
+internal fun fluidCopies(width: Float, height: Float, seconds: Float, phase: (Int) -> Float): List<FluidCopy> {
     val longest = maxOf(width, height)
     val t = seconds * FLOW_SPEED
     val cx = width / 2f
@@ -137,13 +152,13 @@ internal fun fluidCopies(width: Float, height: Float, seconds: Float, seed: Int)
         val a = rate * t + phase
         cx + width * radius * cos(a) to cy + width * radius * sin(a)
     }
-    val (x3, y3) = orbit(ORBIT_RATE_MID, ORBIT_RADIUS_MID, startPhase(seed, 4))
-    val (x4, y4) = orbit(ORBIT_RATE_SMALL, ORBIT_RADIUS_SMALL, startPhase(seed, 5))
+    val (x3, y3) = orbit(ORBIT_RATE_MID, ORBIT_RADIUS_MID, phase(4))
+    val (x4, y4) = orbit(ORBIT_RATE_SMALL, ORBIT_RADIUS_SMALL, phase(5))
     return listOf(
-        FluidCopy(cx, cy, longest * SQRT_2, startPhase(seed, 0) + ROTATION[0] * t),
-        FluidCopy(width / 2.5f, height / 2.5f, longest * 0.8f, startPhase(seed, 1) + ROTATION[1] * t),
-        FluidCopy(x3, y3, longest * 0.5f, startPhase(seed, 2) + ROTATION[2] * t),
-        FluidCopy(x4, y4, longest * 0.25f, startPhase(seed, 3) + ROTATION[3] * t),
+        FluidCopy(cx, cy, longest * SQRT_2, phase(0) + ROTATION[0] * t),
+        FluidCopy(width / 2.5f, height / 2.5f, longest * 0.8f, phase(1) + ROTATION[1] * t),
+        FluidCopy(x3, y3, longest * 0.5f, phase(2) + ROTATION[2] * t),
+        FluidCopy(x4, y4, longest * 0.25f, phase(3) + ROTATION[3] * t),
     )
 }
 
@@ -151,6 +166,25 @@ private fun startPhase(seed: Int, index: Int): Float =
     (((seed ushr (index * 5)) and 0x1F) / 32f) * TWO_PI
 
 private const val TWO_PI = 6.2831855f
+private const val PI_F = 3.1415927f
+internal const val PHASE_COUNT = 6
+
+/** [d] wrapped into -PI..PI, so a phase change always takes the shorter way round. */
+internal fun shortestAngle(d: Float): Float {
+    var a = d % TWO_PI
+    if (a > PI_F) a -= TWO_PI
+    if (a < -PI_F) a += TWO_PI
+    return a
+}
+
+/**
+ * The fluid is drawn on a smaller surface and scaled up: it is blurred anyway, and a full-screen shader plus a huge
+ * blur every frame is what made it stutter on mid-range GPUs. Small areas (the Now Playing bar) are drawn 1:1.
+ */
+internal fun fluidRenderScale(width: Int, height: Int): Int = (maxOf(width, height) / RENDER_SCALE_STEP_PX).coerceIn(1, MAX_RENDER_SCALE)
+
+private const val RENDER_SCALE_STEP_PX = 600
+private const val MAX_RENDER_SCALE = 4
 private val SQRT_2 = sqrt(2f)
 
 private val ROTATION = floatArrayOf(0.06f, -0.12f, 0.06f, -0.08f)
@@ -176,7 +210,9 @@ private const val BLUR_SIGMA_MAX = 360f
 
 private const val TEXTURE_PX = 256
 private const val TEXTURE_CACHE = 3
-private const val CROSSFADE_MS = 1400
+private const val CROSSFADE_MS = 1800
+// How long the motion pattern takes to glide to the next song's pattern.
+private const val PHASE_BLEND_MS = 3200
 private const val APPEAR_MS = 800
 // 0f = advance on every display frame (was 1f/30f, which made motion step at 30fps and look choppy).
 private const val FRAME_SECONDS = 0f
@@ -194,8 +230,7 @@ private suspend fun loadTexture(context: Context, url: String, preBlur: Boolean 
         .size(TEXTURE_PX)
         .allowHardware(false)
         .build()
-    val loader = ImageLoader(context)
-    val result = runCatching { loader.execute(request) }.getOrNull()
+    val result = runCatching { context.imageLoader.execute(request) }.getOrNull()
     var bitmap = ((result as? SuccessResult)?.drawable as? BitmapDrawable)?.bitmap ?: return@withContext null
 
     if (preBlur) {
@@ -222,20 +257,37 @@ private class AgslFluidRenderer {
     private val shader = RuntimeShader(FLUID_AGSL)
     private val paint = Paint()
 
+    /** One bitmap shader per texture (not one per frame), sampled bilinearly so the up-scaled art never looks blocky. */
+    private class TextureShader {
+        private var bitmap: Bitmap? = null
+        private var shader: BitmapShader? = null
+        fun of(b: Bitmap): BitmapShader {
+            val existing = shader
+            if (existing != null && bitmap === b) return existing
+            val created = BitmapShader(b, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            runCatching { created.setFilterMode(BitmapShader.FILTER_MODE_LINEAR) }
+            bitmap = b
+            shader = created
+            return created
+        }
+    }
+    private val curTexture = TextureShader()
+    private val prevTexture = TextureShader()
+
     fun render(
         canvas: android.graphics.Canvas,
         width: Float,
         height: Float,
         seconds: Float,
-        seed: Int,
+        phase: (Int) -> Float,
         current: Bitmap,
         previous: Bitmap,
         fade: Float,
         extraBlur: Boolean = false,
     ) {
-        val copies = fluidCopies(width, height, seconds, seed)
-        val curShader = BitmapShader(current, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
-        val prevShader = BitmapShader(previous, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        val copies = fluidCopies(width, height, seconds, phase)
+        val curShader = curTexture.of(current)
+        val prevShader = prevTexture.of(previous)
         shader.setInputShader("curArt", curShader)
         shader.setInputShader("prevArt", prevShader)
         shader.setFloatUniform("curArtSize", current.width.toFloat(), current.height.toFloat())
@@ -321,6 +373,24 @@ fun FluidArtworkBackground(
     val appear = remember { Animatable(0f) }
     val seed = remember(seedKey) { seedKey.hashCode() }
 
+    // Start phases of the moving copies. On a song change they glide (shortest way round) to the new song's values, so
+    // the motion never jumps while the colours crossfade. No audio input is used: the flow is calm and independent of
+    // the beat, like the Apple Music player background.
+    val phases = remember { List(PHASE_COUNT) { Animatable(startPhase(seed, it)) } }
+    LaunchedEffect(seed) {
+        coroutineScope {
+            phases.forEachIndexed { index, anim ->
+                launch {
+                    val delta = shortestAngle(startPhase(seed, index) - anim.value)
+                    if (abs(delta) > 0.001f) {
+                        anim.animateTo(anim.value + delta, tween(PHASE_BLEND_MS, easing = FastOutSlowInEasing))
+                    }
+                }
+            }
+        }
+    }
+    val phaseOf: (Int) -> Float = { phases[it].value }
+
     val agslRenderer = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             runCatching { AgslFluidRenderer() }.getOrNull()
@@ -372,63 +442,80 @@ fun FluidArtworkBackground(
         }
 
         if (current != null) {
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = appear.value
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            val sigma = fluidBlurSigma(size.width, size.height, extraBlur)
-                            if (sigma != cachedSigma || cachedRenderEffect == null) {
-                                cachedSigma = sigma
-                                cachedRenderEffect = runCatching {
-                                    RenderEffect
-                                        .createBlurEffect(sigma, sigma, Shader.TileMode.CLAMP)
-                                        .asComposeRenderEffect()
-                                }.getOrNull()
-                            }
-                            renderEffect = cachedRenderEffect
-                        }
-                    }
-                    .drawBehind {
-                        val cur = current ?: return@drawBehind
-                        val prv = previous ?: cur
-
-                        if (agslRenderer != null) {
-                            drawIntoCanvas { canvas ->
-                                agslRenderer.render(
-                                    canvas = canvas.nativeCanvas,
-                                    width = size.width,
-                                    height = size.height,
-                                    seconds = seconds,
-                                    seed = seed,
-                                    current = cur,
-                                    previous = prv,
-                                    fade = crossfade.value,
-                                    extraBlur = extraBlur,
-                                )
-                            }
-                        } else {
-                            val copies = fluidCopies(size.width, size.height, seconds, seed)
-                            val curImg = cur.asImageBitmap()
-                            for (copy in copies) {
-                                rotate(
-                                    degrees = Math.toDegrees(copy.angle.toDouble()).toFloat(),
-                                    pivot = Offset(copy.centreX, copy.copy(angle = copy.angle).centreY)
-                                ) {
-                                    drawImage(
-                                        image = curImg,
-                                        dstOffset = IntOffset(
-                                            (copy.centreX - copy.side / 2f).toInt(),
-                                            (copy.centreY - copy.side / 2f).toInt()
-                                        ),
-                                        dstSize = IntSize(copy.side.toInt(), copy.side.toInt())
-                                    )
+            BoxWithConstraints(Modifier.fillMaxSize()) {
+                val scale = fluidRenderScale(constraints.maxWidth, constraints.maxHeight)
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        // Measure and draw the content at 1/scale size, then stretch it back over the full area.
+                        .layout { measurable, c ->
+                            val w = maxOf(1, c.maxWidth / scale)
+                            val h = maxOf(1, c.maxHeight / scale)
+                            val placeable = measurable.measure(Constraints.fixed(w, h))
+                            layout(c.maxWidth, c.maxHeight) {
+                                placeable.placeWithLayer(0, 0) {
+                                    scaleX = c.maxWidth.toFloat() / w
+                                    scaleY = c.maxHeight.toFloat() / h
+                                    transformOrigin = TransformOrigin(0f, 0f)
                                 }
                             }
                         }
-                    }
-            )
+                        .graphicsLayer {
+                            alpha = appear.value
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                // Sigma is chosen for the full-size area, then reduced to the smaller surface.
+                                val sigma = fluidBlurSigma(size.width * scale, size.height * scale, extraBlur) / scale
+                                if (sigma != cachedSigma || cachedRenderEffect == null) {
+                                    cachedSigma = sigma
+                                    cachedRenderEffect = runCatching {
+                                        RenderEffect
+                                            .createBlurEffect(sigma, sigma, Shader.TileMode.CLAMP)
+                                            .asComposeRenderEffect()
+                                    }.getOrNull()
+                                }
+                                renderEffect = cachedRenderEffect
+                            }
+                        }
+                        .drawBehind {
+                            val cur = current ?: return@drawBehind
+                            val prv = previous ?: cur
+
+                            if (agslRenderer != null) {
+                                drawIntoCanvas { canvas ->
+                                    agslRenderer.render(
+                                        canvas = canvas.nativeCanvas,
+                                        width = size.width,
+                                        height = size.height,
+                                        seconds = seconds,
+                                        phase = phaseOf,
+                                        current = cur,
+                                        previous = prv,
+                                        fade = crossfade.value,
+                                        extraBlur = extraBlur,
+                                    )
+                                }
+                            } else {
+                                val copies = fluidCopies(size.width, size.height, seconds, phaseOf)
+                                val curImg = cur.asImageBitmap()
+                                for (copy in copies) {
+                                    rotate(
+                                        degrees = Math.toDegrees(copy.angle.toDouble()).toFloat(),
+                                        pivot = Offset(copy.centreX, copy.copy(angle = copy.angle).centreY)
+                                    ) {
+                                        drawImage(
+                                            image = curImg,
+                                            dstOffset = IntOffset(
+                                                (copy.centreX - copy.side / 2f).toInt(),
+                                                (copy.centreY - copy.side / 2f).toInt()
+                                            ),
+                                            dstSize = IntSize(copy.side.toInt(), copy.side.toInt())
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                )
+            }
         }
     }
 }

@@ -207,6 +207,8 @@ data class AppearanceConfig(
     val nowPlayingHideTopBar: Boolean = false,
     /** Animated (moving, blurred cover-art) Now Playing background. With Full Cover Art on it replaces the bottom backdrop; off, it fills the whole screen. */
     val nowPlayingAnimatedBackground: Boolean = false,
+    /** Also apply the animated background to the Now Playing bar (mini player). Only used while [nowPlayingAnimatedBackground] is on. */
+    val miniPlayerAnimatedBackground: Boolean = false,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
     val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVY_GLASS,
