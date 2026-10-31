@@ -32,7 +32,7 @@ class BoosterBenchmarkTest {
         val r = BoosterRecommender.recommend(result(q = 25f, b = 12f, p = 7f, warp = 3f), panel60and120)
         assertEquals(BoosterEngine.OPTICAL_FLOW, r.engine)
         assertEquals(BoosterQuality.BALANCED, r.quality)
-        assertEquals(60, r.targetFps)
+        assertEquals(90, r.targetFps)
         assertEquals(DeviceTier.MID, r.tier)
     }
 
@@ -58,10 +58,10 @@ class BoosterBenchmarkTest {
     }
 
     @Test fun targetsOnlyUseRatesThePanelCanPace() {
-        // A 60 Hz panel cannot show 90 or 120 evenly, however fast the GPU is.
+        // A 60 Hz panel cannot show 90 or 120, however fast the GPU is.
         val r = BoosterRecommender.recommend(result(q = 8f, b = 5f, p = 3f, warp = 1f), listOf(60f))
         assertEquals(60, r.targetFps)
-        // A 90 Hz panel paces 45 and 90.
+        // A 90 Hz panel can show up to 90.
         val r90 = BoosterRecommender.recommend(result(q = 8f, b = 5f, p = 3f, warp = 1f), listOf(60f, 90f))
         assertEquals(90, r90.targetFps)
     }

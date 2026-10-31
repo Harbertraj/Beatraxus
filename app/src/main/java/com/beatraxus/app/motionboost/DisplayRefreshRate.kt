@@ -10,13 +10,26 @@ import kotlin.math.abs
 object DisplayRefreshRate {
 
     fun supportedRates(context: Context): List<Float> {
-        // The app keeps the refresh rate chosen in Settings (the booster never changes it); the video is paced to its
-        // target inside that rate, so only that rate decides which targets are usable.
-        RefreshRateManager.appRate(context)?.let { return listOf(it) }
+        // Every refresh rate the panel really offers at its current resolution. Which FPS targets are selectable is
+        // decided by the panel's highest rate, not by the rate the app window is currently pinned to.
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager
         val display = dm?.getDisplay(Display.DEFAULT_DISPLAY)
-        val rates = display?.supportedModes?.map { it.refreshRate }?.distinct().orEmpty()
+        val current = display?.mode
+        val rates = display?.supportedModes
+            ?.filter { current == null || (it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight) }
+            ?.map { it.refreshRate }?.distinct()?.sorted().orEmpty()
         return rates.ifEmpty { listOf(60f) }
+    }
+
+    /**
+     * The display mode to request while the booster plays at [targetFps], or null to keep the app's own rate. A mode
+     * is requested only when it differs from the app's rate (e.g. 90 Hz for 45 / 90 FPS on a 120 Hz window, 120 Hz
+     * for 120 FPS when the app is set to 60 Hz).
+     */
+    fun modeSwitchFor(context: Context, targetFps: Int): ModeChoice? {
+        val choice = preferredMode(context, targetFps) ?: return null
+        val appHz = RefreshRateManager.appRate(context) ?: return choice
+        return if (abs(choice.refreshRate - appHz) > 0.5f) choice else null
     }
 
     fun peakRate(context: Context): Float = supportedRates(context).max()

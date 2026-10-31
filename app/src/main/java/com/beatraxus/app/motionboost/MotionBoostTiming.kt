@@ -108,15 +108,13 @@ object MotionBoostTiming {
     }
 
     /**
-     * Whether a panel with the given refresh [modes] (Hz) can show [targetFps] evenly, i.e. some mode is
-     * an integer multiple of it (45 -> 45 or 90 Hz, 60 -> 60 or 120 Hz, ...).
+     * Whether [targetFps] can be offered on a panel with the given refresh [modes] (Hz): any target up to the panel's
+     * highest rate. A 120 Hz panel offers every target, a 90 Hz panel greys out only 120, a 60 Hz panel greys out 90
+     * and 120. Low targets (30 / 45 / 60) are therefore never unavailable. Targets above the panel rate cannot be shown.
      */
     fun isRateSupported(modes: List<Float>, targetFps: Int): Boolean {
         if (targetFps <= 0) return true
-        return modes.any { hz ->
-            val ratio = hz / targetFps
-            val multiple = ratio.roundToInt()
-            multiple >= 1 && abs(ratio - multiple) < 0.02f
-        }
+        val peak = modes.maxOrNull() ?: 60f
+        return targetFps <= peak + 0.5f
     }
 }

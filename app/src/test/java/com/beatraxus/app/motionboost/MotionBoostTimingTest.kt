@@ -49,13 +49,15 @@ class MotionBoostTimingTest {
         val panel60 = listOf(60f)
         val panel90 = listOf(60f, 90f)
         val panel120 = listOf(60f, 90f, 120f)
-        assertTrue(MotionBoostTiming.isRateSupported(panel60, 60))
-        assertFalse(MotionBoostTiming.isRateSupported(panel60, 45))
+        // 60 Hz panel: 30 / 45 / 60 usable, 90 and 120 greyed out
+        for (fps in listOf(30, 45, 60)) assertTrue(MotionBoostTiming.isRateSupported(panel60, fps))
+        assertFalse(MotionBoostTiming.isRateSupported(panel60, 90))
         assertFalse(MotionBoostTiming.isRateSupported(panel60, 120))
-        assertTrue(MotionBoostTiming.isRateSupported(panel90, 45))
-        assertTrue(MotionBoostTiming.isRateSupported(panel90, 90))
+        // 90 Hz panel: only 120 greyed out
+        for (fps in listOf(30, 45, 60, 90)) assertTrue(MotionBoostTiming.isRateSupported(panel90, fps))
         assertFalse(MotionBoostTiming.isRateSupported(panel90, 120))
-        assertTrue(MotionBoostTiming.isRateSupported(panel120, 120))
+        // 120 Hz panel: everything usable
+        for (fps in listOf(30, 45, 60, 90, 120)) assertTrue(MotionBoostTiming.isRateSupported(panel120, fps))
         assertTrue(MotionBoostTiming.isRateSupported(listOf(119.99f), 120))
     }
 

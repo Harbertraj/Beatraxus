@@ -129,11 +129,11 @@ object FpsBoosterPlanner {
             }
             wanted = if (usable(caps, requested)) requested else {
                 val lower = BoosterTargets.ALL.filter { it < requested && usable(caps, it) }.maxOrNull()
-                    ?: return BoosterPlan.inactive("Display cannot show ${requested} FPS evenly")
+                    ?: return BoosterPlan.inactive("Display cannot show ${requested} FPS")
                 if (source.fps > 0f && MotionBoostTiming.shouldBypass(source.fps, lower)) {
                     return BoosterPlan.inactive("Display cannot show $requested FPS and the video is already near $lower")
                 }
-                note = "Display cannot show $requested FPS evenly: using $lower FPS"
+                note = "Display cannot show $requested FPS: using $lower FPS"
                 lower
             }
         }

@@ -32,11 +32,12 @@ class FpsBoosterPlannerTest {
         assertNull(p.note)
     }
 
-    @Test fun targetTheDisplayCannotPaceEvenlyFallsToNextUsable() {
+    @Test fun targetAboveThePanelRateFallsToNextUsable() {
         val p = FpsBoosterPlanner.plan(on(90), panel60, sdr24)
         assertTrue(p.active); assertEquals(60, p.targetFps); assertNotNull(p.note)
+        // 45 FPS is never unavailable: it is below every panel's rate.
         val p45 = FpsBoosterPlanner.plan(on(45), panel60, sdr24)
-        assertEquals(30, p45.targetFps)
+        assertEquals(45, p45.targetFps)
     }
 
     @Test fun sourceAlreadyAtTargetIsBypassed() {

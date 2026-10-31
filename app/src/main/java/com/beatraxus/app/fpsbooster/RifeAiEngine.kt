@@ -74,6 +74,16 @@ class RifeAiEngine(private val context: Context) {
     private var ortSession: OrtSession? = null
     private val executor = Executors.newSingleThreadExecutor()
 
+    /**
+     * Guards the native ONNX session. [infer], [initialize] and the close in [release] never overlap: closing a session
+     * while `OrtSession.run` is still executing on another thread dereferences freed native memory (SIGSEGV in
+     * libonnxruntime.so when the booster target was changed or the booster switched off).
+     */
+    private val sessionLock = Any()
+
+    /** Set by [release]; once true the engine never creates or uses a session again. */
+    @Volatile private var closed = false
+
     private var inputName: String = "input"
 
     @Volatile private var isInitialized = false
@@ -87,7 +97,11 @@ class RifeAiEngine(private val context: Context) {
     /**
      * Initializes the ONNX Runtime session and loads the RIFE 4.26 model asset.
      */
-    fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE, useNnapi: Boolean = true): Boolean {
+    fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE, useNnapi: Boolean = true): Boolean =
+        synchronized(sessionLock) { initializeLocked(quality, useNnapi) }
+
+    private fun initializeLocked(quality: BoosterQuality, useNnapi: Boolean): Boolean {
+        if (closed) return false
         if (isInitialized) return ortSession != null
 
         return try {
@@ -197,22 +211,23 @@ class RifeAiEngine(private val context: Context) {
      * [packed]: direct FloatBuffer of 7*w*h floats (img0 RGB, img1 RGB, timestep plane 0..1), NCHW.
      * [out]: direct FloatBuffer receiving 3*w*h floats (interpolated RGB).
      */
-    fun infer(packed: FloatBuffer, w: Int, h: Int, out: FloatBuffer): Boolean {
-        if (!isInitialized && !initialize()) return false
-        val session = ortSession ?: return false
-        val env = ortEnv ?: return false
+    fun infer(packed: FloatBuffer, w: Int, h: Int, out: FloatBuffer): Boolean = synchronized(sessionLock) {
+        if (closed) return@synchronized false
+        if (!isInitialized && !initializeLocked(BoosterQuality.PERFORMANCE, true)) return@synchronized false
+        val session = ortSession ?: return@synchronized false
+        val env = ortEnv ?: return@synchronized false
 
-        return try {
+        try {
             val tensorShape = longArrayOf(1, 7, h.toLong(), w.toLong())
             val tensor = OnnxTensor.createTensor(env, packed, tensorShape)
             var result: OrtSession.Result? = null
             try {
                 result = session.run(mapOf(inputName to tensor))
-                val outputTensor = result.get(0) as? OnnxTensor ?: return false
+                val outputTensor = result.get(0) as? OnnxTensor ?: return@synchronized false
                 val shape = outputTensor.info.shape
                 if (shape.size == 4 && (shape[1] != 3L || shape[2] != h.toLong() || shape[3] != w.toLong())) {
                     Log.e(TAG, "Unexpected RIFE output shape: ${shape.contentToString()}, expected [1, 3, $h, $w]")
-                    return false
+                    return@synchronized false
                 }
 
                 val outBuf = outputTensor.floatBuffer
@@ -258,16 +273,30 @@ class RifeAiEngine(private val context: Context) {
         return medianMs
     }
 
+    /**
+     * Closes the session once any inference in flight has finished (it waits on [sessionLock] on the engine's own
+     * thread, so the caller is never blocked), and makes every later [infer] / [initialize] a no-op.
+     */
     fun release() {
-        executor.execute {
-            try {
-                ortSession?.close()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error closing RIFE AI session: ${e.message}")
-            } finally {
-                ortSession = null
-                isInitialized = false
+        if (closed) return
+        closed = true
+        try {
+            executor.execute {
+                synchronized(sessionLock) {
+                    try {
+                        ortSession?.close()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error closing RIFE AI session: ${e.message}")
+                    } finally {
+                        ortSession = null
+                        isInitialized = false
+                    }
+                }
             }
+        } catch (_: Exception) {
+            // executor already shut down
+        } finally {
+            executor.shutdown()
         }
     }
 }

@@ -72,6 +72,9 @@ class HybridRenderer(
 
     fun release() {
         flowRenderer.release()
+        // Close the ONNX session too (it was never closed, so every on/off or target change leaked one). The engine waits
+        // for an inference still running on inferenceExecutor before closing.
+        runCatching { rifeEngine.release() }
         runCatching { inferenceExecutor.shutdown() }
     }
 

@@ -143,7 +143,7 @@ fun FpsBoosterSheetContent(
         }
         Hint(
             if (s.mode == BoosterMode.AUTO) "Auto picks the target for each video."
-            else "Your display supports up to $peakHz Hz; unavailable targets cannot be paced evenly on it."
+            else "Your display supports up to $peakHz Hz; targets above that cannot be shown."
         )
 
         SectionLabel("Engine")

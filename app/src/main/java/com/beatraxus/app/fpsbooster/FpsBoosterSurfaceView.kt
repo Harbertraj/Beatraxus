@@ -294,9 +294,22 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
      */
     private fun applyDisplayMode() {
         val window = findWindow() ?: return
+        val target = plan?.targetFps
         try {
-            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
-            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
+            val mgr = com.beatraxus.app.perf.RefreshRateManager
+            // Request a better-fitting panel mode only when the app's rate does not suit the target (45 / 90 FPS on a
+            // 120 Hz window, 120 FPS while the app is set to 60 Hz); it is released again in clearDisplayMode.
+            val choice = target?.let { DisplayRefreshRate.modeSwitchFor(context, it) }
+            if (choice != null) {
+                mgr.videoModeOverride = true
+                val lp = window.attributes
+                lp.preferredDisplayModeId = choice.modeId
+                lp.preferredRefreshRate = choice.refreshRate
+                window.attributes = lp
+                return
+            }
+            mgr.videoModeOverride = false
+            mgr.applyTo(window, context)
         } catch (t: Throwable) { Log.w(TAG, "keeping the app refresh rate failed", t) }
     }
 
