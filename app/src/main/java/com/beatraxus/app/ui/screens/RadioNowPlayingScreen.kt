@@ -103,6 +103,8 @@ import coil.request.ImageRequest
 import coil.request.SuccessResult
 import coil.size.Precision
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.anyDspStageOn
+import androidx.compose.material.icons.outlined.Equalizer
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.RadioStation
 import com.beatraxus.app.model.Song
@@ -747,10 +749,11 @@ fun RadioNowPlayingScreen(
                                     onClick = { showStations = true },
                                     iconSize = 34.dp
                                 )
+                                val dspOn = remember(uiState.dsp.config) { uiState.dsp.config.anyDspStageOn() }
                                 UtilityItem(
-                                    icon = Icons.Rounded.Equalizer,
+                                    icon = if (dspOn) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
                                     label = "Equalizer",
-                                    isActive = uiState.dsp.config.eqEnabled,
+                                    isActive = dspOn,
                                     onClick = onOpenEqualizer
                                 )
                                 UtilityItem(

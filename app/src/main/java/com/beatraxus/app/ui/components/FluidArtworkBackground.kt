@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.RuntimeShader
 import android.graphics.Shader
@@ -12,7 +13,7 @@ import android.graphics.drawable.BitmapDrawable
 import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,11 +24,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
@@ -47,11 +50,8 @@ import com.beatraxus.app.ui.utils.FastBlur
 import coil.request.ImageRequest
 import coil.request.SuccessResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.intellij.lang.annotations.Language
-import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -169,6 +169,35 @@ private const val TWO_PI = 6.2831855f
 private const val PI_F = 3.1415927f
 internal const val PHASE_COUNT = 6
 
+/**
+ * Critically damped follower with a speed limit (the SmoothDamp curve). Speed ramps up and down smoothly and never
+ * overshoots, so a changed target is approached gently instead of being chased at a visible speed.
+ */
+internal class SmoothDamper(var value: Float) {
+    var velocity = 0f
+        private set
+
+    fun step(target: Float, dt: Float, smoothSeconds: Float, maxSpeed: Float): Float {
+        if (dt <= 0f) return value
+        val smooth = maxOf(0.0001f, smoothSeconds)
+        val omega = 2f / smooth
+        val x = omega * dt
+        val decay = 1f / (1f + x + 0.48f * x * x + 0.235f * x * x * x)
+        val maxChange = maxSpeed * smooth
+        val change = (value - target).coerceIn(-maxChange, maxChange)
+        val limitedTarget = value - change
+        val temp = (velocity + omega * change) * dt
+        velocity = (velocity - omega * temp) * decay
+        var out = limitedTarget + (change + temp) * decay
+        if ((target - value > 0f) == (out > target)) {
+            out = target
+            velocity = 0f
+        }
+        value = out
+        return out
+    }
+}
+
 /** [d] wrapped into -PI..PI, so a phase change always takes the shorter way round. */
 internal fun shortestAngle(d: Float): Float {
     var a = d % TWO_PI
@@ -210,12 +239,14 @@ private const val BLUR_SIGMA_MAX = 360f
 
 private const val TEXTURE_PX = 256
 private const val TEXTURE_CACHE = 3
-private const val CROSSFADE_MS = 1800
-// How long the motion pattern takes to glide to the next song's pattern.
-private const val PHASE_BLEND_MS = 3200
+private const val CROSSFADE_MS = 2600
+// Symmetric ease-in/ease-out so the colour change starts and ends softly.
+private val CrossfadeEasing = CubicBezierEasing(0.45f, 0f, 0.55f, 1f)
+// The motion pattern drifts to the next song's pattern as slowly as the background itself moves (no visible change of
+// speed): a critically damped follow with a speed limit, in radians and seconds.
+internal const val PHASE_SMOOTH_SECONDS = 6f
+internal const val PHASE_MAX_SPEED = 0.05f
 private const val APPEAR_MS = 800
-// 0f = advance on every display frame (was 1f/30f, which made motion step at 30fps and look choppy).
-private const val FRAME_SECONDS = 0f
 
 private val textureCache = LinkedHashMap<String, Bitmap>()
 
@@ -246,11 +277,44 @@ private suspend fun loadTexture(context: Context, url: String, preBlur: Boolean 
     bitmap
 }
 
+// Settings > Appearance > Background / Mini Player Background reset values. At these the animated background looks exactly
+// as it does without the settings; the sliders then make it more or less blurred and darker or brighter than that.
+const val NOW_PLAYING_DEFAULT_BLUR = 210f
+const val NOW_PLAYING_DEFAULT_DARKNESS = 0.3f
+const val MINI_PLAYER_DEFAULT_BLUR = 70f
+const val MINI_PLAYER_DEFAULT_DARKNESS = 0.5f
+
+/** "Blur Intensity" slider -> how much the animated background's blur is scaled (1 at the reset value). */
+fun fluidBlurScale(intensity: Float, defaultIntensity: Float): Float =
+    (intensity / defaultIntensity.coerceAtLeast(1f)).coerceIn(0.08f, 3.5f)
+
+/** "Darkness" slider -> brightness multiplier of the animated background (1 at the reset value, 0 at full darkness). */
+fun fluidBrightnessScale(darkness: Float, defaultDarkness: Float): Float =
+    ((1f - darkness.coerceIn(0f, 1f)) / (1f - defaultDarkness.coerceIn(0f, 0.95f))).coerceIn(0f, 1.6f)
+
+private const val BLUR_SIGMA_CEILING = 720f
+private const val BLUR_SIGMA_FLOOR = 0.5f
+
 internal fun fluidBlurSigma(width: Float, height: Float, extraBlur: Boolean = false): Float =
     (minOf(width, height) * (if (extraBlur) 0.50f else BLUR_FRACTION)).coerceIn(
         if (extraBlur) 280f else BLUR_SIGMA_MIN,
         if (extraBlur) 720f else BLUR_SIGMA_MAX
     )
+
+/**
+ * [previous] and [current] mixed by [fade] into one texture. Used when the song changes again while a crossfade is
+ * still running, so the picture carries on from exactly what is on screen instead of jumping.
+ */
+private fun blendTextures(previous: Bitmap, current: Bitmap, fade: Float): Bitmap {
+    val out = Bitmap.createBitmap(TEXTURE_PX, TEXTURE_PX, Bitmap.Config.ARGB_8888)
+    val canvas = android.graphics.Canvas(out)
+    val dst = Rect(0, 0, TEXTURE_PX, TEXTURE_PX)
+    val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    canvas.drawBitmap(previous, null, dst, paint)
+    paint.alpha = (fade.coerceIn(0f, 1f) * 255f).toInt()
+    canvas.drawBitmap(current, null, dst, paint)
+    return out
+}
 
 @RequiresApi(Build.VERSION_CODES.TIRAMISU)
 private class AgslFluidRenderer {
@@ -284,6 +348,7 @@ private class AgslFluidRenderer {
         previous: Bitmap,
         fade: Float,
         extraBlur: Boolean = false,
+        brightnessScale: Float = 1f,
     ) {
         val copies = fluidCopies(width, height, seconds, phase)
         val curShader = curTexture.of(current)
@@ -304,7 +369,7 @@ private class AgslFluidRenderer {
         shader.setFloatUniform("twistRadius", (maxOf(width, height) + minOf(width, height)) / 2f * TWIST_REACH)
         shader.setFloatUniform("twistAngle", TWIST_ANGLE)
         shader.setFloatUniform("saturation", SATURATION)
-        shader.setFloatUniform("brightness", if (extraBlur) LYRICS_BRIGHTNESS else BRIGHTNESS)
+        shader.setFloatUniform("brightness", (if (extraBlur) LYRICS_BRIGHTNESS else BRIGHTNESS) * brightnessScale)
         shader.setFloatUniform("contrast", CONTRAST)
         paint.shader = shader
         canvas.drawRect(0f, 0f, width, height, paint)
@@ -354,6 +419,10 @@ fun FluidArtworkBackground(
     extraBlur: Boolean = false,
     rotatingBackgroundEnabled: Boolean = true,
     lyricsRotatingBackgroundEnabled: Boolean = false,
+    /** See [fluidBlurScale]. 1 = the standard blur. */
+    blurScale: Float = 1f,
+    /** See [fluidBrightnessScale]. 1 = the standard brightness. */
+    brightnessScale: Float = 1f,
     fallback: @Composable () -> Unit,
 ) {
     val fluidSupported = isFluidSupported()
@@ -373,23 +442,11 @@ fun FluidArtworkBackground(
     val appear = remember { Animatable(0f) }
     val seed = remember(seedKey) { seedKey.hashCode() }
 
-    // Start phases of the moving copies. On a song change they glide (shortest way round) to the new song's values, so
-    // the motion never jumps while the colours crossfade. No audio input is used: the flow is calm and independent of
-    // the beat, like the Apple Music player background.
-    val phases = remember { List(PHASE_COUNT) { Animatable(startPhase(seed, it)) } }
-    LaunchedEffect(seed) {
-        coroutineScope {
-            phases.forEachIndexed { index, anim ->
-                launch {
-                    val delta = shortestAngle(startPhase(seed, index) - anim.value)
-                    if (abs(delta) > 0.001f) {
-                        anim.animateTo(anim.value + delta, tween(PHASE_BLEND_MS, easing = FastOutSlowInEasing))
-                    }
-                }
-            }
-        }
-    }
-    val phaseOf: (Int) -> Float = { phases[it].value }
+    // Start phases of the moving copies. On a song change they drift (shortest way round, speed limited) to the new
+    // song's values while the colours crossfade, so the motion never speeds up or jumps. No audio input is used.
+    val dampers = remember { List(PHASE_COUNT) { SmoothDamper(startPhase(seed, it)) } }
+    val currentSeed by rememberUpdatedState(seed)
+    val phaseOf: (Int) -> Float = { dampers[it].value }
 
     val agslRenderer = remember {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -403,11 +460,20 @@ fun FluidArtworkBackground(
         val url = artworkUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
         val bitmap = loadTexture(context, url, preBlur = (agslRenderer == null)) ?: return@LaunchedEffect
         val showing = current
+        val inFlight = previous
+        val fadeNow = crossfade.value
+        val carry = when {
+            showing == null || showing === bitmap -> null
+            // Skipped again mid-crossfade: start from the mix that is on screen.
+            inFlight != null && fadeNow < 0.999f ->
+                withContext(Dispatchers.Default) { blendTextures(inFlight, showing, fadeNow) }
+            else -> showing
+        }
         current = bitmap
-        if (showing != null && showing !== bitmap) {
-            previous = showing
+        if (carry != null) {
+            previous = carry
             crossfade.snapTo(0f)
-            crossfade.animateTo(1f, tween(CROSSFADE_MS))
+            crossfade.animateTo(1f, tween(CROSSFADE_MS, easing = CrossfadeEasing))
             previous = null
         }
     }
@@ -423,16 +489,18 @@ fun FluidArtworkBackground(
     LaunchedEffect(!shouldPauseLoop) {
         if (shouldPauseLoop) return@LaunchedEffect
         var last = 0L
-        var pending = 0f
         while (true) {
-            withFrameNanos { now ->
-                if (last != 0L) pending += ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f)
+            val dt = withFrameNanos { now ->
+                val step = if (last != 0L) ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f) else 0f
                 last = now
+                step
             }
-            if (pending >= FRAME_SECONDS) {
-                seconds += pending
-                pending = 0f
+            val seedNow = currentSeed
+            dampers.forEachIndexed { index, damper ->
+                val target = damper.value + shortestAngle(startPhase(seedNow, index) - damper.value)
+                damper.step(target, dt, PHASE_SMOOTH_SECONDS, PHASE_MAX_SPEED)
             }
+            seconds += dt
         }
     }
 
@@ -464,7 +532,8 @@ fun FluidArtworkBackground(
                             alpha = appear.value
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                                 // Sigma is chosen for the full-size area, then reduced to the smaller surface.
-                                val sigma = fluidBlurSigma(size.width * scale, size.height * scale, extraBlur) / scale
+                                val sigma = (fluidBlurSigma(size.width * scale, size.height * scale, extraBlur) * blurScale)
+                                    .coerceIn(BLUR_SIGMA_FLOOR, BLUR_SIGMA_CEILING) / scale
                                 if (sigma != cachedSigma || cachedRenderEffect == null) {
                                     cachedSigma = sigma
                                     cachedRenderEffect = runCatching {
@@ -492,6 +561,7 @@ fun FluidArtworkBackground(
                                         previous = prv,
                                         fade = crossfade.value,
                                         extraBlur = extraBlur,
+                                        brightnessScale = brightnessScale,
                                     )
                                 }
                             } else {
@@ -512,6 +582,7 @@ fun FluidArtworkBackground(
                                         )
                                     }
                                 }
+                                if (brightnessScale < 1f) drawRect(Color.Black.copy(alpha = 1f - brightnessScale))
                             }
                         }
                 )

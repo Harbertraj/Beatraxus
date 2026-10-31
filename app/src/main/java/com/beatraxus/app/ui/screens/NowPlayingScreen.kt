@@ -91,6 +91,7 @@ import androidx.palette.graphics.Palette
 import com.beatraxus.app.R
 import com.beatraxus.app.model.AlbumArtTransform
 import com.beatraxus.app.model.NowPlayingBackgroundMode
+import com.beatraxus.app.model.anyDspStageOn
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import com.beatraxus.app.ui.components.seekbars.AppSeekBar
@@ -99,6 +100,11 @@ import com.beatraxus.app.ui.components.CoverNavTracker
 import com.beatraxus.app.ui.components.CoverPalette
 import com.beatraxus.app.ui.components.FullCoverBackdrop
 import com.beatraxus.app.ui.components.FluidArtworkBackground
+import com.beatraxus.app.ui.components.NOW_PLAYING_DEFAULT_BLUR
+import com.beatraxus.app.ui.components.NOW_PLAYING_DEFAULT_DARKNESS
+import com.beatraxus.app.ui.components.fluidBlurScale
+import com.beatraxus.app.ui.components.fluidBrightnessScale
+import com.beatraxus.app.ui.components.isFluidSupported
 import com.beatraxus.app.ui.components.FullCoverLayer
 import com.beatraxus.app.ui.components.cachedHdCover
 import com.beatraxus.app.ui.components.resolveHdCover
@@ -483,15 +489,37 @@ fun NowPlayingScreen(
         }
         // Animated background: Full Cover Art ON -> replaces the backdrop behind the cover (the cover melts into it);
         // Full Cover Art OFF -> fills the whole screen. Below Android 12 / low-RAM it falls back to the static one.
-        if (appearance.nowPlayingAnimatedBackground) {
+        // The Settings > Appearance > Background options apply to it, with or without Full Cover Art:
+        //  Blur  -> Blur Intensity and Darkness scale its blur and brightness.
+        //  Solid -> the album colour (Color Intensity) and Darkness are laid over the moving art.
+        //  Black -> plain black, as chosen.
+        val fluidSupported = isFluidSupported()
+        if (!appearance.nowPlayingAnimatedBackground) {
+            staticBackground()
+        } else if (appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLACK && fluidSupported) {
+            // Background is already black from the parent Box
+        } else {
+            val blurMode = appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.BLUR
             FluidArtworkBackground(
                 artworkUrl = song.albumArtUri?.toString(),
                 seedKey = song.id,
                 modifier = Modifier.fillMaxSize(),
+                blurScale = if (blurMode) fluidBlurScale(appearance.nowPlayingBlurIntensity, NOW_PLAYING_DEFAULT_BLUR) else 1f,
+                brightnessScale = if (blurMode) fluidBrightnessScale(appearance.nowPlayingBlurDarkness, NOW_PLAYING_DEFAULT_DARKNESS) else 1f,
                 fallback = staticBackground
             )
-        } else {
-            staticBackground()
+            if (fluidSupported && appearance.nowPlayingBackgroundMode == NowPlayingBackgroundMode.SOLID) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(currentDominantColor.copy(alpha = appearance.nowPlayingSolidColorIntensity.coerceIn(0f, 1f)))
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = appearance.nowPlayingSolidColorDarkness.coerceIn(0f, 1f)))
+                )
+            }
         }
 
         if (fullCoverArt) {
@@ -1256,11 +1284,13 @@ fun NowPlayingScreen(
                                 iconSize = 34.dp // Slightly larger to match visual weight
                             )
 
-                            // Equalizer
+                            // Equalizer: filled while anything on any Studio DSP page (EQ, Surround, Master, Reverb,
+                            // Spatial) is switched on, outlined otherwise.
+                            val dspOn = remember(uiState.dsp.config) { uiState.dsp.config.anyDspStageOn() }
                             UtilityItem(
-                                icon = Icons.Rounded.Equalizer,
+                                icon = if (dspOn) Icons.Rounded.Equalizer else Icons.Outlined.Equalizer,
                                 label = "Equalizer",
-                                isActive = uiState.dsp.config.eqEnabled,
+                                isActive = dspOn,
                                 onClick = onOpenEqualizer
                             )
                         }

@@ -404,6 +404,32 @@ data class DspConfig(
     }
 }
 
+/** State of one Studio DSP stage (page): ON, OFF, or BYPASS when the whole chain or Bit-Perfect bypasses it. */
+enum class DspStageState { ON, OFF, BYPASS }
+
+/**
+ * One state per Studio DSP page, in page order: EQ, Surround, Master, Reverb, Spatial. A page is ON when something on
+ * it is switched on, BYPASS when the whole chain (A/B bypass) or Bit-Perfect bypasses it, otherwise OFF.
+ */
+fun DspConfig.stageStates(): List<DspStageState> {
+    val c = this
+    fun stage(enabled: Boolean, bypassed: Boolean) = when {
+        c.bypassAll || bypassed -> DspStageState.BYPASS
+        enabled -> DspStageState.ON
+        else -> DspStageState.OFF
+    }
+    return listOf(
+        stage(c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassEq),
+        stage(c.surroundEnabled, c.bitPerfectEnabled),
+        stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled, c.bitPerfectEnabled),
+        stage(c.reverbEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassReverb),
+        stage(c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypass3DStage)
+    )
+}
+
+/** True when at least one Studio DSP page is really processing audio. The Now Playing Equalizer icon is filled then. */
+fun DspConfig.anyDspStageOn(): Boolean = stageStates().any { it == DspStageState.ON }
+
 data class DspUiState(
     val config: DspConfig = DspConfig(),
     val customEqPresets: List<SavedEqPreset> = emptyList(),

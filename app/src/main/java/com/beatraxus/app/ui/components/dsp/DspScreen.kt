@@ -10,7 +10,9 @@ import kotlin.math.atan2
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.math.min
+import com.beatraxus.app.model.DspStageState
 import com.beatraxus.app.model.SpatialUiMode
+import com.beatraxus.app.model.stageStates
 import com.beatraxus.app.ui.components.BitPerfectUnbypassRow
 import com.beatraxus.app.ui.components.PremiumSwitch
 import androidx.compose.ui.input.pointer.pointerInput
@@ -130,8 +132,6 @@ private val EqLineEnd get() = Pal.secondary
  * so it never matches the rest of the DSP screen and follows the chosen palette. Used ONLY by the pipeline header
  * (page tabs and the lines between them) - no other control on the Studio DSP pages uses it.
  */
-/** State of one Studio DSP stage as shown by the pipeline in the page tabs. */
-private enum class DspStageState { ON, OFF, BYPASS }
 
 /**
  * Shared glass panel used by every DSP card. Same recipe as the Settings cards (SettingsSection):
@@ -509,21 +509,7 @@ fun DspScreen(
         val pageScope = rememberCoroutineScope()
         // Per stage: ON when something on its page is switched on, BYPASS when the whole chain (A/B bypass) or
         // Bit-Perfect bypasses it, otherwise OFF.
-        val stageStates = remember(uiState.dsp.config) {
-            val c = uiState.dsp.config
-            fun stage(enabled: Boolean, bypassed: Boolean) = when {
-                c.bypassAll || bypassed -> DspStageState.BYPASS
-                enabled -> DspStageState.ON
-                else -> DspStageState.OFF
-            }
-            listOf(
-                stage(c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassEq),
-                stage(c.surroundEnabled, c.bitPerfectEnabled),
-                stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled, c.bitPerfectEnabled),
-                stage(c.reverbEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassReverb),
-                stage(c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypass3DStage)
-            )
-        }
+        val stageStates = remember(uiState.dsp.config) { uiState.dsp.config.stageStates() }
 
         Scaffold(
             containerColor = Color.Transparent,

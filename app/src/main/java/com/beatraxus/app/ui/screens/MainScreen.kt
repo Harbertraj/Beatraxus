@@ -3505,18 +3505,33 @@ items(artistSongs, key = { it.id }) { song ->
 
                                             Box(Modifier.fillMaxSize()) {
                                                 if (miniAnimated) {
-                                                    FluidArtworkBackground(
-                                                        artworkUrl = currentSong?.albumArtUri?.toString(),
-                                                        seedKey = currentSong?.id ?: "",
-                                                        modifier = Modifier.fillMaxSize(),
-                                                        fallback = miniStaticBackground
-                                                    )
+                                                    // Mini Player Background options apply to it: Blur -> Blur Intensity and Darkness,
+                                                    // Solid -> album colour + Darkness over the moving art, Black -> plain dark.
+                                                    val miniFluidSupported = isFluidSupported()
+                                                    val miniBlurMode = miniMode == NowPlayingBackgroundMode.BLUR
+                                                    if (miniMode == NowPlayingBackgroundMode.BLACK && miniFluidSupported) {
+                                                        Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
+                                                    } else {
+                                                        // Level of the music is not used: the bar flows on its own.
+                                                        FluidArtworkBackground(
+                                                            artworkUrl = currentSong?.albumArtUri?.toString(),
+                                                            seedKey = currentSong?.id ?: "",
+                                                            modifier = Modifier.fillMaxSize(),
+                                                            blurScale = if (miniBlurMode) fluidBlurScale(miniBlurIntensity, MINI_PLAYER_DEFAULT_BLUR) else 1f,
+                                                            brightnessScale = if (miniBlurMode) fluidBrightnessScale(miniAppearance.miniPlayerBlurDarkness, MINI_PLAYER_DEFAULT_DARKNESS) else 1f,
+                                                            fallback = miniStaticBackground
+                                                        )
+                                                    }
+                                                    if (miniFluidSupported && miniMode == NowPlayingBackgroundMode.SOLID) {
+                                                        Box(Modifier.fillMaxSize().background(currentDominantColor.copy(alpha = miniAppearance.miniPlayerSolidColorIntensity.coerceIn(0f, 1f))))
+                                                        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = miniAppearance.miniPlayerSolidColorDarkness.coerceIn(0f, 1f))))
+                                                    }
                                                     // Keeps the title, artist and controls readable on bright artwork (the fallback has its own).
-                                                    if (isFluidSupported()) {
+                                                    if (miniFluidSupported) {
                                                         Box(
                                                             Modifier
                                                                 .fillMaxSize()
-                                                                .background(Color.Black.copy(alpha = 0.22f))
+                                                                .background(Color.Black.copy(alpha = if (miniBlurMode) 0.22f else 0f))
                                                                 .border(
                                                                     width = 0.5.dp,
                                                                     brush = Brush.verticalGradient(

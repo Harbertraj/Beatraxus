@@ -1467,7 +1467,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
             Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text("Animated Background", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(
-                    "Moving, blurred cover-art colours. With Full Cover Art on it animates the bottom background; with it off it animates the whole Now Playing screen. Needs Android 12+",
+                    "Moving, blurred cover-art colours. With Full Cover Art on it animates the bottom background; with it off it animates the whole Now Playing screen. Follows the Background settings below: Blur sets blur and darkness, Solid adds the album colour, Black turns it off. Needs Android 12+",
                     color = Color.White.copy(0.6f), fontSize = 12.sp
                 )
             }
