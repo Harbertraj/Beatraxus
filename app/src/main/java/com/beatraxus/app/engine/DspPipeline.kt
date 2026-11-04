@@ -13,6 +13,8 @@ import com.beatraxus.app.model.surroundEffectiveTuning
 import com.beatraxus.app.model.surroundPositionOffsetsDb
 import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
+import com.beatraxus.app.model.activeStemMix
+import com.beatraxus.app.model.stemEffectiveGainsDb
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.log10
@@ -243,6 +245,7 @@ internal class AudioDspPipeline(
 
     companion object {
         fun create(
+            context: android.content.Context? = null,
             inputSampleRate: Int,
             outputSampleRate: Int,
             channels: Int,
@@ -254,10 +257,82 @@ internal class AudioDspPipeline(
             val processors = mutableListOf<DspProcessor>()
             val effectiveInputRate = inputSampleRate.coerceAtLeast(8_000)
 
+            if (context != null) {
+                processors += StemMixerProcessor(context, config, song)
+            }
             processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song, aiEq)
 
             return AudioDspPipeline(processors, config, effectiveInputRate, outputSampleRate, channels, song)
         }
+    }
+}
+
+private class StemMixerProcessor(
+    private val context: android.content.Context,
+    config: DspConfig,
+    private val song: Song?
+) : DspProcessor {
+    private var currentConfig = config
+    private var currentFrame = 0L
+
+    override fun updateConfig(config: DspConfig) {
+        currentConfig = config
+    }
+
+    override fun flush() {
+        currentFrame = 0L
+    }
+
+    override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
+        val s = song ?: return input
+        val cfg = currentConfig
+
+        if (!cfg.stemMixerEnabled || cfg.activeStemMix() == "Original") {
+            currentFrame += input.sampleCount / channels
+            return input
+        }
+
+        val songId = s.id
+
+        if (StemSeparator.isModelInstalled(context) && !StemCache.isStemsCached(context, songId)) {
+            StemSeparatorManager.requestSeparation(context, s)
+            currentFrame += input.sampleCount / channels
+            return input
+        }
+
+        if (!StemCache.isStemsCached(context, songId)) {
+            currentFrame += input.sampleCount / channels
+            return input
+        }
+
+        val gainsDb = cfg.stemEffectiveGainsDb()
+        val numFrames = input.sampleCount / channels
+        val data = input.data
+
+        val gVocals = gainsDb.getOrNull(0)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
+        val gDrums = gainsDb.getOrNull(1)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
+        val gBass = gainsDb.getOrNull(2)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
+        val gOther = gainsDb.getOrNull(5)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
+
+        val stemBuf = FloatArray(numFrames * 2)
+
+        for (i in 0 until input.sampleCount) data[i] = 0f
+
+        if (gVocals > 0f && StemCache.readStemFrames(context, songId, 0, currentFrame, numFrames, stemBuf)) {
+            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gVocals
+        }
+        if (gDrums > 0f && StemCache.readStemFrames(context, songId, 1, currentFrame, numFrames, stemBuf)) {
+            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gDrums
+        }
+        if (gBass > 0f && StemCache.readStemFrames(context, songId, 2, currentFrame, numFrames, stemBuf)) {
+            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gBass
+        }
+        if (gOther > 0f && StemCache.readStemFrames(context, songId, 3, currentFrame, numFrames, stemBuf)) {
+            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gOther
+        }
+
+        currentFrame += numFrames
+        return input
     }
 }
 

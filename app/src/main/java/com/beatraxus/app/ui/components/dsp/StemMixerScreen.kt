@@ -19,15 +19,19 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Piano
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Speaker
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +51,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -55,12 +60,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatraxus.app.engine.StemSeparationState
+import com.beatraxus.app.engine.StemSeparator
+import com.beatraxus.app.engine.StemSeparatorManager
 import com.beatraxus.app.model.BUILT_IN_STEM_MIXES
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.STEM_COUNT
 import com.beatraxus.app.model.STEM_GAIN_MAX_DB
 import com.beatraxus.app.model.STEM_GAIN_MIN_DB
-import com.beatraxus.app.model.STEM_SEPARATOR_AVAILABLE
 import com.beatraxus.app.model.StemChannel
 import com.beatraxus.app.model.activeStemMix
 import com.beatraxus.app.model.sanitizeStemGains
@@ -73,29 +80,37 @@ import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/**
- * Studio DSP > Stems page. Everything here only edits [com.beatraxus.app.model.DspConfig]; the splitter engine that
- * would turn those levels into sound is not connected yet (see [STEM_SEPARATOR_AVAILABLE]).
- * Look and feel follow the Surround page: glass panel, icon tile header with a switch, rounded chips, metal-cap faders.
- */
 @Composable
 fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
+    val context = LocalContext.current
     val config = uiState.dsp.config
     val pal = DspPaletteState.current
     val accent = pal.accent
+
+    val isModelInstalled = remember(context) { StemSeparator.isModelInstalled(context) }
+    val sepState by StemSeparatorManager.state.collectAsState()
+
+    val song = uiState.currentSong
+    val songId = song?.id
+    val currentSepStatus = remember(sepState, songId, context) {
+        StemSeparatorManager.getStatusForSong(context, songId)
+    }
 
     val bypassed = config.bypassAll || config.bitPerfectEnabled
     val gains = sanitizeStemGains(config.stemGainsDb)
     val muteMask = sanitizeStemMask(config.stemMuteMask)
     val soloMask = sanitizeStemMask(config.stemSoloMask)
     val activeMix = config.activeStemMix()
-    val song = uiState.currentSong
     val amber = Color(0xFFFFB74D)
+    val red = Color(0xFFFF5252)
 
     val (statusText, statusColor) = when {
         bypassed && config.stemMixerEnabled -> "BYPASSED" to amber
-        !STEM_SEPARATOR_AVAILABLE -> "PREVIEW" to amber
+        !isModelInstalled -> "PREVIEW" to amber
         !config.stemMixerEnabled -> "OFF" to Color.White.copy(0.45f)
+        currentSepStatus is StemSeparationState.Separating -> "SEPARATING ${(currentSepStatus.progress * 100).toInt()}%" to accent
+        currentSepStatus is StemSeparationState.Ready -> "READY" to accent
+        currentSepStatus is StemSeparationState.Failed -> "ERROR" to red
         else -> "$STEM_COUNT STEMS" to accent
     }
 
@@ -155,11 +170,62 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 }
             }
 
-            if (!STEM_SEPARATOR_AVAILABLE) {
+            if (!isModelInstalled) {
                 Text(
                     "Preview: the splitter model is not bundled yet. Your mix is saved and will apply once it is.",
                     color = amber.copy(0.85f), fontSize = 10.sp, lineHeight = 14.sp
                 )
+            } else if (config.stemMixerEnabled) {
+                when (currentSepStatus) {
+                    is StemSeparationState.Separating -> {
+                        val pct = (currentSepStatus.progress * 100).toInt()
+                        Column(
+                            modifier = Modifier.fillMaxWidth().stemSubPanel(accent),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Separating $pct%",
+                                    color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                StemActionButton("Cancel", Icons.Rounded.Close, red) {
+                                    StemSeparatorManager.cancelSeparation()
+                                }
+                            }
+                            LinearProgressIndicator(
+                                progress = { currentSepStatus.progress },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                color = accent,
+                                trackColor = Color.White.copy(0.1f)
+                            )
+                        }
+                    }
+                    is StemSeparationState.Failed -> {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().stemSubPanel(red),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Separation error: ${currentSepStatus.errorText}",
+                                    color = red, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                StemActionButton("Retry", Icons.Rounded.Refresh, accent) {
+                                    if (song != null) StemSeparatorManager.requestSeparation(context, song)
+                                }
+                            }
+                        }
+                    }
+                    is StemSeparationState.Ready -> {
+                        Text(
+                            "Ready: 4 stems separated & cached.",
+                            color = accent.copy(0.9f), fontSize = 10.sp, fontWeight = FontWeight.Bold
+                        )
+                    }
+                    else -> {}
+                }
             }
 
             // ── Quick mixes ───────────────────────────────────────────────────────────────────────────────
@@ -191,17 +257,19 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 StemChannel.entries.forEachIndexed { i, stem ->
                     val muted = ((muteMask shr i) and 1) == 1
                     val solo = ((soloMask shr i) and 1) == 1
+                    val supported = (stem != StemChannel.GUITAR && stem != StemChannel.PIANO)
                     StemRow(
                         stem = stem,
                         color = STEM_COLORS[i],
                         icon = STEM_ICONS[i],
-                        gainDb = gains[i],
-                        muted = muted,
-                        solo = solo,
-                        silent = muted || (soloMask != 0 && !solo),
-                        onGain = { viewModel.setStemGain(i, it) },
-                        onMute = { viewModel.toggleStemMute(i) },
-                        onSolo = { viewModel.toggleStemSolo(i) }
+                        gainDb = if (supported) gains[i] else 0f,
+                        muted = muted && supported,
+                        solo = solo && supported,
+                        silent = !supported || muted || (soloMask != 0 && !solo),
+                        enabled = supported,
+                        onGain = { if (supported) viewModel.setStemGain(i, it) },
+                        onMute = { if (supported) viewModel.toggleStemMute(i) },
+                        onSolo = { if (supported) viewModel.toggleStemSolo(i) }
                     )
                 }
             }
@@ -238,11 +306,13 @@ private fun StemRow(
     muted: Boolean,
     solo: Boolean,
     silent: Boolean,
+    enabled: Boolean = true,
     onGain: (Float) -> Unit,
     onMute: () -> Unit,
     onSolo: () -> Unit
 ) {
     val valueText = when {
+        !enabled -> "N/A"
         muted -> "Muted"
         silent -> "Off"
         abs(gainDb) < 0.05f -> "0.0 dB"
@@ -255,12 +325,13 @@ private fun StemRow(
             .clip(RoundedCornerShape(14.dp))
             .background(Color.White.copy(0.03f))
             .border(1.dp, Color.White.copy(0.06f), RoundedCornerShape(14.dp))
-            .padding(horizontal = 8.dp),
+            .padding(horizontal = 8.dp)
+            .alpha(if (!enabled) 0.35f else 1f),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Row(
-            modifier = Modifier.weight(1f).alpha(if (silent) 0.45f else 1f),
+            modifier = Modifier.weight(1f).alpha(if (silent && enabled) 0.45f else 1f),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -278,14 +349,14 @@ private fun StemRow(
                 Text(stem.label.uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp, maxLines = 1)
                 Text(
                     valueText,
-                    color = if (silent || abs(gainDb) < 0.05f) Color.White.copy(0.6f) else color,
+                    color = if (!enabled || silent || abs(gainDb) < 0.05f) Color.White.copy(0.6f) else color,
                     fontSize = 10.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false
                 )
             }
-            StemFader(gainDb, !silent, color, Modifier.weight(1f).height(40.dp), onGain)
+            StemFader(gainDb, active = enabled && !silent, color, Modifier.weight(1f).height(40.dp), onChange = if (enabled) onGain else { _ -> })
         }
-        StemToggle("M", "Mute ${stem.label}", muted, Color(0xFFFF7043), onMute)
-        StemToggle("S", "Solo ${stem.label}", solo, Color(0xFFFFD54F), onSolo)
+        StemToggle("M", "Mute ${stem.label}", muted, Color(0xFFFF7043), onClick = if (enabled) onMute else { -> })
+        StemToggle("S", "Solo ${stem.label}", solo, Color(0xFFFFD54F), onClick = if (enabled) onSolo else { -> })
     }
 }
 

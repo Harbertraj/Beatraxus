@@ -78,7 +78,7 @@ data class VideoRouteState(
 }
 
 class AudioEngine(
-    context: Context,
+    private val context: Context,
     private val output: AudioOutput,
     private val cloudCacheManager: com.beatraxus.app.drive.CloudCacheManager,
     private val database: com.beatraxus.app.model.AppDatabase,
@@ -1344,7 +1344,7 @@ class AudioEngine(
         val dspLock = ReentrantReadWriteLock()
 
         @Volatile
-        var dspPipeline = AudioDspPipeline.create(44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
+        var dspPipeline = AudioDspPipeline.create(this@AudioEngine.context, 44_100, 44_100, 2, output.outputBitDepth(), this@AudioEngine.dspConfig, song)
 
         @Volatile private var fadeInFramesRemaining = 0
         @Volatile private var totalFadeInFrames = 0
@@ -1716,6 +1716,7 @@ class AudioEngine(
                     null
                 } else {
                     val newPipeline = AudioDspPipeline.create(
+                        context = context,
                         inputSampleRate = format.sampleRate,
                         outputSampleRate = actualOutputRate,
                         channels = format.channels,
