@@ -357,7 +357,25 @@ data class DspConfig(
     val surroundActivePreset: String = "Default",
     /** Trims saved into the user slot ("Custom 1"); null = slot empty. */
     val surroundCustomTrimsDb: List<Float>? = null,
-    val surroundCustomMode: SurroundMode = SurroundMode.CUSTOM
+    val surroundCustomMode: SurroundMode = SurroundMode.CUSTOM,
+    /** 360° move: on = the sound position below rebalances the speakers on top of the channel levels. */
+    val surroundMoveEnabled: Boolean = false,
+    /** Where the sound sits around the listener, degrees clockwise from straight ahead (0..360). */
+    val surroundPositionAngleDeg: Float = SURROUND_POSITION_DEFAULT_ANGLE_DEG,
+    /** 0.15 = close to the listener (even spread), 1 = out on the speaker ring (focused, wide). */
+    val surroundPositionDistance: Float = SURROUND_POSITION_DEFAULT_DISTANCE,
+    /** Upmix Lab: on = [surroundTune] replaces the matrix of the chosen surround mode. Off = the mode's own tuning. */
+    val surroundTuneEnabled: Boolean = false,
+    /** The user's Upmix Lab values; only used while [surroundTuneEnabled] is on. */
+    val surroundTune: SurroundTuning? = null,
+    /** Stem Mixer page switch. Off = the song is played as it is. */
+    val stemMixerEnabled: Boolean = false,
+    /** Level per stem in dB, [StemChannel] order (Vocals, Drums, Bass, Guitar, Piano, Other). */
+    val stemGainsDb: List<Float> = DEFAULT_STEM_GAINS_DB,
+    /** Bit i set = stem i is muted. */
+    val stemMuteMask: Int = 0,
+    /** Bit i set = stem i is soloed; while any bit is set, every other stem is silent. */
+    val stemSoloMask: Int = 0
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
@@ -408,7 +426,7 @@ data class DspConfig(
 enum class DspStageState { ON, OFF, BYPASS }
 
 /**
- * One state per Studio DSP page, in page order: EQ, Surround, Master, Reverb, Spatial. A page is ON when something on
+ * One state per Studio DSP page, in page order: EQ, Surround, Master, Reverb, Stems. A page is ON when something on
  * it is switched on, BYPASS when the whole chain (A/B bypass) or Bit-Perfect bypasses it, otherwise OFF.
  */
 fun DspConfig.stageStates(): List<DspStageState> {
@@ -423,7 +441,7 @@ fun DspConfig.stageStates(): List<DspStageState> {
         stage(c.surroundEnabled, c.bitPerfectEnabled),
         stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled, c.bitPerfectEnabled),
         stage(c.reverbEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassReverb),
-        stage(c.spatialAudioEnabled || c.soundStageEnabled || c.audio3DStageEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypass3DStage)
+        stage(c.stemMixerEnabled, c.bitPerfectEnabled)
     )
 }
 

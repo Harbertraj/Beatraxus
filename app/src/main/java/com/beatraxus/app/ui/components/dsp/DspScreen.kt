@@ -201,8 +201,8 @@ private fun DspTabBar(
     modifier: Modifier = Modifier,
     onSelect: (Int) -> Unit
 ) {
-    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.ViewInAr)
-    val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "SPATIAL")
+    val icons = listOf(Icons.Rounded.GraphicEq, Icons.Rounded.SurroundSound, Icons.Rounded.AutoAwesome, Icons.Rounded.Waves, Icons.Rounded.Tune)
+    val labels = listOf("EQ", "SURROUND", "MASTER", "REVERB", "STEMS")
     val current = pagerState.currentPage
     Column(modifier = modifier) {
         Row(modifier = Modifier.fillMaxWidth()) {
@@ -504,7 +504,7 @@ fun DspScreen(
                 )
         )
 
-        // Pages: 0 EQ, 1 Surround, 2 Master, 3 Reverb, 4 Spatial
+        // Pages: 0 EQ, 1 Surround, 2 Master, 3 Reverb, 4 Stems (Stem Mixer replaced the Spatial page)
         val pagerState = rememberPagerState(pageCount = { 5 })
         val pageScope = rememberCoroutineScope()
         // Per stage: ON when something on its page is switched on, BYPASS when the whole chain (A/B bypass) or
@@ -680,7 +680,7 @@ fun DspScreen(
                     } else if (page == 3) {
                         PremiumReverbCard(uiState, viewModel, onEditValue = { editingValue = it })
                     } else {
-                        PremiumSoundStageCard(uiState, viewModel, onEditValue = { editingValue = it })
+                        PremiumStemMixerCard(uiState, viewModel)
                     }
                 }
                 if (page == 0 || page == 2 || page == 3) {

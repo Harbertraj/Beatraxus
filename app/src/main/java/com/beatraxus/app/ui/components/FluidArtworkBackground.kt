@@ -239,9 +239,10 @@ private const val BLUR_SIGMA_MAX = 360f
 
 private const val TEXTURE_PX = 256
 private const val TEXTURE_CACHE = 3
-private const val CROSSFADE_MS = 2600
-// Symmetric ease-in/ease-out so the colour change starts and ends softly.
-private val CrossfadeEasing = CubicBezierEasing(0.45f, 0f, 0.55f, 1f)
+private const val CROSSFADE_MS = 1200
+// Starts moving on the very first frame (no dead time at the start, which felt like a ~1s delay after a song change)
+// and settles softly at the end.
+private val CrossfadeEasing = CubicBezierEasing(0f, 0f, 0.2f, 1f)
 // The motion pattern drifts to the next song's pattern as slowly as the background itself moves (no visible change of
 // speed): a critically damped follow with a speed limit, in radians and seconds.
 internal const val PHASE_SMOOTH_SECONDS = 6f
@@ -469,12 +470,16 @@ fun FluidArtworkBackground(
                 withContext(Dispatchers.Default) { blendTextures(inFlight, showing, fadeNow) }
             else -> showing
         }
-        current = bitmap
         if (carry != null) {
+            // Reset the fade and the old picture BEFORE swapping in the new one, so the new art never flashes at full
+            // strength for a frame, and the fade starts right away.
             previous = carry
             crossfade.snapTo(0f)
+            current = bitmap
             crossfade.animateTo(1f, tween(CROSSFADE_MS, easing = CrossfadeEasing))
             previous = null
+        } else {
+            current = bitmap
         }
     }
 

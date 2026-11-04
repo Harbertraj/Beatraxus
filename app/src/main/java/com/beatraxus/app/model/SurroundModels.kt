@@ -1,5 +1,9 @@
 package com.beatraxus.app.model
 
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.roundToInt
+
 /**
  * Output layout requested on the Studio DSP > 5.1/7.1 screen.
  *
@@ -73,21 +77,33 @@ val DEFAULT_SURROUND_TRIMS_DB: List<Float> = listOf(0f, 0f, 1f, -1f, -1f, -1.5f,
 data class SurroundPreset(
     val name: String,
     val mode: SurroundMode,
-    val trimsDb: List<Float>
+    val trimsDb: List<Float>,
+    /** One plain-language line shown under the preset chips. */
+    val description: String = ""
 )
 
 /** Built-in presets. A user slot ("Custom 1") is stored separately in [DspConfig.surroundCustomTrimsDb]. */
 val BUILT_IN_SURROUND_PRESETS: List<SurroundPreset> = listOf(
-    SurroundPreset("Default", SurroundMode.MOVIE, DEFAULT_SURROUND_TRIMS_DB),
-    SurroundPreset("Cinema", SurroundMode.MOVIE, listOf(0f, 0f, 2.5f, -0.5f, -0.5f, -1f, -1f, 4f)),
-    SurroundPreset("Concert", SurroundMode.MUSIC, listOf(0f, 0f, -1f, 1.5f, 1.5f, 1f, 1f, 0f)),
-    SurroundPreset("Gaming", SurroundMode.GAME, listOf(0f, 0f, 1f, 2f, 2f, 1.5f, 1.5f, 1f)),
-    SurroundPreset("Voice", SurroundMode.MOVIE, listOf(-1.5f, -1.5f, 4f, -4f, -4f, -5f, -5f, -3f)),
-    SurroundPreset("Night", SurroundMode.MOVIE, listOf(0f, 0f, 1.5f, -3f, -3f, -4f, -4f, -6f)),
-    SurroundPreset("Wide", SurroundMode.MUSIC, listOf(0f, 0f, -2f, 3f, 3f, 2f, 2f, 1f))
+    SurroundPreset("Default", SurroundMode.MOVIE, DEFAULT_SURROUND_TRIMS_DB, "Balanced for movies and music."),
+    SurroundPreset("Cinema", SurroundMode.MOVIE, listOf(0f, 0f, 2.5f, -0.5f, -0.5f, -1f, -1f, 4f), "Clear dialogue and deep bass."),
+    SurroundPreset("Concert", SurroundMode.MUSIC, listOf(0f, 0f, -1f, 1.5f, 1.5f, 1f, 1f, 0f), "Airy surrounds, like a live hall."),
+    SurroundPreset("Gaming", SurroundMode.GAME, listOf(0f, 0f, 1f, 2f, 2f, 1.5f, 1.5f, 1f), "Strong surrounds for footsteps and direction."),
+    SurroundPreset("Voice", SurroundMode.MOVIE, listOf(-1.5f, -1.5f, 4f, -4f, -4f, -5f, -5f, -3f), "Dialogue up front, surrounds kept quiet."),
+    SurroundPreset("Night", SurroundMode.MOVIE, listOf(0f, 0f, 1.5f, -3f, -3f, -4f, -4f, -6f), "Softer surrounds and bass for late hours."),
+    SurroundPreset("Wide", SurroundMode.MUSIC, listOf(0f, 0f, -2f, 3f, 3f, 2f, 2f, 1f), "Extra wide stage, centre pulled back.")
 )
 
 const val SURROUND_CUSTOM_PRESET_NAME = "Custom 1"
+
+/**
+ * The line shown under the preset chips: what the active preset does, or why nothing is highlighted.
+ * [activePreset] is [DspConfig.surroundActivePreset]; an empty name means the levels were moved by hand.
+ */
+fun surroundPresetDescription(activePreset: String): String = when {
+    activePreset.isEmpty() -> "Your own mix. Tap Save as Custom 1 to keep it."
+    activePreset == SURROUND_CUSTOM_PRESET_NAME -> "Your saved mix."
+    else -> BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == activePreset }?.description.orEmpty()
+}
 
 /** Always exactly eight finite values inside the allowed range, whatever was stored. */
 fun sanitizeSurroundTrims(trims: List<Float>?): List<Float> {
@@ -222,8 +238,106 @@ fun DspConfig.toSurroundEngineConfig(): DspConfig = DspConfig(
     surroundChannelTrimsDb = surroundChannelTrimsDb,
     surroundActivePreset = surroundActivePreset,
     surroundCustomTrimsDb = surroundCustomTrimsDb,
-    surroundCustomMode = surroundCustomMode
+    surroundCustomMode = surroundCustomMode,
+    surroundMoveEnabled = surroundMoveEnabled,
+    surroundPositionAngleDeg = surroundPositionAngleDeg,
+    surroundPositionDistance = surroundPositionDistance,
+    surroundTuneEnabled = surroundTuneEnabled,
+    surroundTune = surroundTune
 )
+
+// ── 360° move: place the sound anywhere around the listener ────────────────────────────────────────────────
+
+const val SURROUND_POSITION_DEFAULT_ANGLE_DEG = 0f
+const val SURROUND_POSITION_DEFAULT_DISTANCE = 0.8f
+const val SURROUND_POSITION_MIN_DISTANCE = 0.15f
+const val SURROUND_POSITION_MAX_DISTANCE = 1f
+
+/** Highest boost / deepest cut the position adds on top of the channel levels (dB). */
+const val SURROUND_POSITION_MAX_BOOST_DB = 6f
+const val SURROUND_POSITION_MAX_CUT_DB = -12f
+
+/**
+ * Speaker angles in degrees clockwise from straight ahead, in UI order L R C SL SR BL BR SW.
+ * Same angles the room view draws. The subwoofer has no direction and is never moved by the position.
+ */
+val SURROUND_SPEAKER_ANGLES_DEG: List<Float> = listOf(-32f, 32f, 0f, -90f, 90f, -148f, 148f, 0f)
+
+/** Wraps any angle into 0..360. NaN becomes straight ahead. */
+fun normalizeSurroundAngle(angleDeg: Float): Float {
+    if (angleDeg.isNaN() || angleDeg.isInfinite()) return SURROUND_POSITION_DEFAULT_ANGLE_DEG
+    val a = angleDeg % 360f
+    return if (a < 0f) a + 360f else a
+}
+
+fun sanitizeSurroundDistance(distance: Float): Float =
+    if (distance.isNaN()) SURROUND_POSITION_DEFAULT_DISTANCE
+    else distance.coerceIn(SURROUND_POSITION_MIN_DISTANCE, SURROUND_POSITION_MAX_DISTANCE)
+
+/** Smallest angle between two directions, 0..180. */
+internal fun surroundAngleGap(a: Float, b: Float): Float {
+    val d = abs(a - b) % 360f
+    return if (d > 180f) 360f - d else d
+}
+
+/**
+ * Per-speaker level change (dB, UI order L R C SL SR BL BR SW) that places the sound at [angleDeg] / [distance].
+ *
+ * A speaker is lifted the closer it stands to the chosen direction and lowered the further away it is. A far
+ * position (distance 1) is focused: speakers in that direction are boosted and the opposite side is cut. A close
+ * position (towards 0.15) spreads the sound evenly around the listener with only a gentle lean. Boost is capped at
+ * [SURROUND_POSITION_MAX_BOOST_DB] so the sum cannot run into the limiter, the cut at [SURROUND_POSITION_MAX_CUT_DB].
+ * The subwoofer stays at 0 dB.
+ */
+fun surroundPositionGainsDb(angleDeg: Float, distance: Float): List<Float> {
+    val angle = normalizeSurroundAngle(angleDeg)
+    val d = sanitizeSurroundDistance(distance)
+    val focus = 0.3f + 0.7f * d
+    val spread = 55f + (1f - d) * 40f
+    return List(SURROUND_SPEAKER_ANGLES_DEG.size) { i ->
+        if (i == SW_INDEX) {
+            0f
+        } else {
+            val gap = surroundAngleGap(angle, SURROUND_SPEAKER_ANGLES_DEG[i]) / spread
+            val w = exp(-gap * gap)
+            val level = 0.5f * (1f - focus) + w * focus
+            val db = ((level - 0.5f) * 24f * 2f).roundToInt() / 2f
+            db.coerceIn(SURROUND_POSITION_MAX_CUT_DB, SURROUND_POSITION_MAX_BOOST_DB)
+        }
+    }
+}
+
+private const val SW_INDEX = 7
+
+/** A named spot for the sound, one tap in 360° move. */
+data class SurroundPositionPreset(val name: String, val angleDeg: Float, val distance: Float)
+
+val BUILT_IN_SURROUND_POSITIONS: List<SurroundPositionPreset> = listOf(
+    SurroundPositionPreset("Front stage", 0f, 0.8f),
+    SurroundPositionPreset("Front right", 45f, 0.9f),
+    SurroundPositionPreset("Right side", 90f, 1f),
+    SurroundPositionPreset("Behind you", 180f, 1f),
+    SurroundPositionPreset("Left side", 270f, 1f),
+    SurroundPositionPreset("Front left", 315f, 0.9f),
+    SurroundPositionPreset("All around", 0f, SURROUND_POSITION_MIN_DISTANCE)
+)
+
+/** Moves the sound to a built-in spot; an unknown name changes nothing. */
+fun DspConfig.withSurroundPositionPreset(name: String): DspConfig {
+    val spot = BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name } ?: return this
+    return withSurroundPosition(spot.angleDeg, spot.distance)
+}
+
+/** Name of the built-in spot the sound is on right now (within 3° and 5%), or null when it sits somewhere else. */
+fun DspConfig.activeSurroundPositionPreset(): String? =
+    BUILT_IN_SURROUND_POSITIONS.firstOrNull {
+        surroundAngleGap(surroundPositionAngleDeg, it.angleDeg) <= 3f &&
+            abs(surroundPositionDistance - it.distance) <= 0.05f
+    }?.name
+
+/** Position offsets for the audio engine: null while 360° move is off, so the sound stays exactly as before. */
+fun DspConfig.surroundPositionOffsetsDb(): List<Float>? =
+    if (surroundMoveEnabled) surroundPositionGainsDb(surroundPositionAngleDeg, surroundPositionDistance) else null
 
 // ── Pure settings edits (shared by every screen that edits the surround settings) ───────────────────────────
 
@@ -235,6 +349,20 @@ fun DspConfig.withSurroundTrim(index: Int, db: Float): DspConfig {
     return copy(surroundChannelTrimsDb = trims, surroundActivePreset = "")
 }
 
+/** Turns 360° move on or off. The remembered position is kept either way. */
+fun DspConfig.withSurroundMove(enabled: Boolean): DspConfig = copy(surroundMoveEnabled = enabled)
+
+/** Moves the sound. Angle is wrapped into 0..360 and distance clamped to the allowed range. */
+fun DspConfig.withSurroundPosition(angleDeg: Float, distance: Float): DspConfig = copy(
+    surroundPositionAngleDeg = normalizeSurroundAngle(angleDeg),
+    surroundPositionDistance = sanitizeSurroundDistance(distance)
+)
+
+fun DspConfig.withSurroundPositionReset(): DspConfig = copy(
+    surroundPositionAngleDeg = SURROUND_POSITION_DEFAULT_ANGLE_DEG,
+    surroundPositionDistance = SURROUND_POSITION_MIN_DISTANCE
+)
+
 fun DspConfig.withSurroundTrimsReset(): DspConfig =
     copy(surroundChannelTrimsDb = DEFAULT_SURROUND_TRIMS_DB, surroundActivePreset = "Default")
 
@@ -242,8 +370,14 @@ fun DspConfig.withSurroundTrimsReset(): DspConfig =
 fun DspConfig.withSurroundPreset(name: String): DspConfig {
     if (name == SURROUND_CUSTOM_PRESET_NAME) {
         val saved = surroundCustomTrimsDb ?: return this
-        return copy(surroundChannelTrimsDb = saved, surroundMode = surroundCustomMode, surroundActivePreset = name)
+        return copy(
+            surroundChannelTrimsDb = saved, surroundMode = surroundCustomMode, surroundActivePreset = name,
+            surroundTuneEnabled = false
+        )
     }
     val preset = BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == name } ?: return this
-    return copy(surroundChannelTrimsDb = preset.trimsDb, surroundMode = preset.mode, surroundActivePreset = name)
+    return copy(
+        surroundChannelTrimsDb = preset.trimsDb, surroundMode = preset.mode, surroundActivePreset = name,
+        surroundTuneEnabled = false
+    )
 }

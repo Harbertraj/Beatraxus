@@ -1,9 +1,15 @@
 package com.beatraxus.app.ui.components.dsp
 
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -23,19 +29,28 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AutoMode
+import androidx.compose.material.icons.rounded.Autorenew
+import androidx.compose.material.icons.rounded.CenterFocusStrong
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SurroundSound
+import androidx.compose.material.icons.rounded.Sync
 import androidx.compose.material.icons.rounded.Tune
 import com.beatraxus.app.ui.theme.Icon
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,12 +71,35 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.AppearanceConfig
+import com.beatraxus.app.model.DspConfig
+import com.beatraxus.app.model.SURROUND_POSITION_MAX_DISTANCE
+import com.beatraxus.app.model.SURROUND_POSITION_MIN_DISTANCE
+import com.beatraxus.app.model.normalizeSurroundAngle
+import com.beatraxus.app.model.activeSurroundPositionPreset
+import com.beatraxus.app.model.SURROUND_ORBIT_DEFAULT_SECONDS
+import com.beatraxus.app.model.SURROUND_ORBIT_MAX_SECONDS
+import com.beatraxus.app.model.SURROUND_ORBIT_MIN_SECONDS
+import com.beatraxus.app.model.SurroundLabKnob
+import com.beatraxus.app.model.SurroundOrbitPattern
+import com.beatraxus.app.model.advanceSurroundOrbitPhase
+import com.beatraxus.app.model.knobValue
+import com.beatraxus.app.model.sanitizeSurroundDistance
+import com.beatraxus.app.model.smoothSurroundAngle
+import com.beatraxus.app.model.surroundAngleGap
+import com.beatraxus.app.model.surroundEffectiveTuning
+import com.beatraxus.app.model.surroundGyroAngle
+import com.beatraxus.app.model.surroundOrbitPoint
+import com.beatraxus.app.model.surroundPhoneHeadingDeg
+import com.beatraxus.app.model.surroundPresetDescription
+import com.beatraxus.app.model.surroundPositionGainsDb
+import com.beatraxus.app.model.BUILT_IN_SURROUND_POSITIONS
 import com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS
 import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
 import com.beatraxus.app.model.PlayerUiState
@@ -78,6 +116,7 @@ import com.beatraxus.app.viewmodel.PlayerViewModel
 import androidx.compose.runtime.collectAsState
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.pow
 import kotlin.math.roundToInt
@@ -112,6 +151,82 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         }
     }
     val trims = sanitizeSurroundTrims(config.surroundChannelTrimsDb)
+
+    // 360° move. Orbit travels along the chosen style; Gyro follow keeps the sound fixed in the room while the phone
+    // turns. Dragging the orb, tapping Center or leaving the mode stops both.
+    var orbit by remember { mutableStateOf(false) }
+    var gyro by remember { mutableStateOf(false) }
+    var orbitStyle by rememberSaveable { mutableStateOf(0) }
+    var orbitSeconds by rememberSaveable { mutableStateOf(SURROUND_ORBIT_DEFAULT_SECONDS) }
+    var orbitBase by remember { mutableStateOf(config.surroundPositionDistance) }
+    val latestConfig by rememberUpdatedState(config)
+    LaunchedEffect(orbit, config.surroundMoveEnabled) {
+        if (!orbit || !config.surroundMoveEnabled) return@LaunchedEffect
+        val styles = SurroundOrbitPattern.entries
+        val first = styles[orbitStyle.coerceIn(0, styles.size - 1)]
+        // A circle or spiral carries on from where the orb is now; the other styles start at their own beginning.
+        var phase = if (first == SurroundOrbitPattern.CIRCLE || first == SurroundOrbitPattern.SPIRAL) {
+            latestConfig.surroundPositionAngleDeg / 360f
+        } else 0f
+        var last = androidx.compose.runtime.withFrameNanos { it }
+        var acc = 0f
+        while (true) {
+            val now = androidx.compose.runtime.withFrameNanos { it }
+            acc += (now - last) / 1_000_000_000f
+            last = now
+            if (acc >= ORBIT_STEP_S) {
+                phase = advanceSurroundOrbitPhase(phase, acc, orbitSeconds)
+                val style = styles[orbitStyle.coerceIn(0, styles.size - 1)]
+                val (angle, distance) = surroundOrbitPoint(style, phase, orbitBase)
+                viewModel.setSurroundPosition(angle, distance)
+                acc = 0f
+            }
+        }
+    }
+
+    // Gyro follow: the phone's heading when the mode starts is "straight ahead of the sound". Turning right moves
+    // the sound to the left of you by the same angle, like head tracking. Uses the rotation-vector sensor.
+    val context = LocalContext.current
+    val sensorManager = remember(context) { context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    val motionSensor = remember(sensorManager) {
+        sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    }
+    DisposableEffect(gyro, config.surroundMoveEnabled, motionSensor) {
+        if (!gyro || !config.surroundMoveEnabled || sensorManager == null || motionSensor == null) {
+            return@DisposableEffect onDispose { }
+        }
+        val rotation = FloatArray(9)
+        val anchor = latestConfig.surroundPositionAngleDeg
+        var startHeading: Float? = null
+        var shown = anchor
+        var lastPushNs = 0L
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                SensorManager.getRotationMatrixFromVector(rotation, event.values)
+                val heading = surroundPhoneHeadingDeg(rotation) ?: return
+                val start = startHeading ?: heading.also { startHeading = it }
+                shown = smoothSurroundAngle(shown, surroundGyroAngle(anchor, heading, start), 0.25f)
+                val c = latestConfig
+                // At most 25 updates a second, and only when the sound really moved (saves the settings store).
+                if (event.timestamp - lastPushNs >= 40_000_000L && surroundAngleGap(shown, c.surroundPositionAngleDeg) >= 0.4f) {
+                    lastPushNs = event.timestamp
+                    viewModel.setSurroundPosition(shown, c.surroundPositionDistance)
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        sensorManager.registerListener(listener, motionSensor, SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sensorManager.unregisterListener(listener) }
+    }
+    val moveState = if (config.surroundMoveEnabled) {
+        MoveState(config.surroundPositionAngleDeg, config.surroundPositionDistance) { angle, distance ->
+            orbit = false
+            gyro = false
+            viewModel.setSurroundPosition(angle, distance)
+        }
+    } else null
 
     val (statusText, statusColor) = when {
         forcedOff && config.surroundEnabled -> "BYPASSED" to Color(0xFFFFB74D)
@@ -161,7 +276,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             // ── Stage view ────────────────────────────────────────────────────────────────────────────────
-            SurroundStageView(plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor)
+            SurroundStageView(plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor, moveState)
 
             // ── Which speakers receive sound right now ────────────────────────────────────────────────────
             ActiveChannelStrip(plannedChannels, look)
@@ -194,6 +309,40 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             }
             if (note != null) {
                 Text(note, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
+            }
+
+            // ── Channel levels only, or place the sound anywhere around you ───────────────────────────────
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                LayoutButton("Channel levels", Icons.Rounded.Tune, !config.surroundMoveEnabled, accent, Modifier.weight(1f)) {
+                    orbit = false
+                    gyro = false
+                    viewModel.setSurroundMoveEnabled(false)
+                }
+                LayoutButton("360° move", Icons.Rounded.Sync, config.surroundMoveEnabled, accent, Modifier.weight(1f)) {
+                    viewModel.setSurroundMoveEnabled(true)
+                }
+            }
+
+            if (config.surroundMoveEnabled) {
+                PositionPanel(
+                    config = config,
+                    accent = accent,
+                    orbit = orbit,
+                    onOrbit = {
+                        if (it) { gyro = false; orbitBase = config.surroundPositionDistance }
+                        orbit = it
+                    },
+                    gyro = gyro,
+                    gyroAvailable = motionSensor != null,
+                    onGyro = { if (it) orbit = false; gyro = it },
+                    orbitStyle = orbitStyle,
+                    onOrbitStyle = { orbitStyle = it },
+                    orbitSeconds = orbitSeconds,
+                    onOrbitSeconds = { orbitSeconds = it },
+                    onDistance = { orbitBase = it; viewModel.setSurroundPosition(config.surroundPositionAngleDeg, it) },
+                    onSpot = { orbit = false; gyro = false; viewModel.applySurroundPositionPreset(it) },
+                    onCenter = { orbit = false; gyro = false; viewModel.resetSurroundPosition() }
+                )
             }
 
             // ── Channel levels ────────────────────────────────────────────────────────────────────────────
@@ -237,6 +386,15 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 }
             }
 
+            // ── Upmix Lab: the matrix behind the surround mode, in your hands ─────────────────────────────
+            UpmixLabPanel(
+                config = config,
+                accent = accent,
+                onEnabled = { viewModel.setSurroundLabEnabled(it) },
+                onKnob = { knob, value -> viewModel.setSurroundLabKnob(knob, value) },
+                onReset = { viewModel.resetSurroundLab() }
+            )
+
             // ── Presets ───────────────────────────────────────────────────────────────────────────────────
             Column(
                 modifier = Modifier
@@ -279,6 +437,10 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         }
                         repeat(4 - rowNames.size) { Spacer(Modifier.weight(1f)) }
                     }
+                }
+                val presetNote = surroundPresetDescription(config.surroundActivePreset)
+                if (presetNote.isNotEmpty()) {
+                    Text(presetNote, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
                 }
             }
         }
@@ -377,10 +539,12 @@ private fun SurroundStageView(
     look: AppearanceConfig,
     isPlaying: Boolean,
     statusText: String,
-    statusColor: Color
+    statusColor: Color,
+    move: MoveState? = null
 ) {
     val pal = DspPaletteState.current
     val glow = surroundAccent(look)
+    val latestMove by rememberUpdatedState(move)
 
     val bgInner: Color
     val bgOuter: Color
@@ -408,6 +572,31 @@ private fun SurroundStageView(
             .clip(shape)
             .background(Color(0xFF07090D))
             .border(1.dp, Brush.verticalGradient(listOf(glow.copy(0.40f), Color.White.copy(0.05f))), shape)
+            .then(
+                if (move != null) {
+                    Modifier
+                        .pointerInput(Unit) {
+                            detectTapGestures { p ->
+                                latestMove?.let { m ->
+                                    val (a, d) = positionFromTouch(p.x, p.y, size.width.toFloat(), size.height.toFloat(), m.angleDeg)
+                                    m.onMove(a, d)
+                                }
+                            }
+                        }
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, _ ->
+                                change.consume()
+                                latestMove?.let { m ->
+                                    val (a, d) = positionFromTouch(
+                                        change.position.x, change.position.y,
+                                        size.width.toFloat(), size.height.toFloat(), m.angleDeg
+                                    )
+                                    m.onMove(a, d)
+                                }
+                            }
+                        }
+                } else Modifier
+            )
     ) {
         val wPx = constraints.maxWidth.toFloat()
         val hPx = constraints.maxHeight.toFloat()
@@ -530,6 +719,19 @@ private fun SurroundStageView(
                 }
                 drawSpeaker(spot.channel, at, k, spot.angleDeg, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
             }
+
+            // 360° move: the sound orb, a dashed line back to the listener
+            if (move != null) {
+                val a = move.angleDeg * PI.toFloat() / 180f
+                val orb = Offset(cx + sin(a) * rx * move.distance, cy - cos(a) * ry * move.distance)
+                drawLine(
+                    glow.copy(0.7f), me, orb, 1.5f * k + 0.5f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f * k, 4f * k))
+                )
+                drawCircle(glow.copy(0.16f + 0.10f * level), 22f * k, orb)
+                drawCircle(glow, 11f * k, orb)
+                drawCircle(Color(0xFF04202A), 4f * k, orb)
+            }
         }
 
         if (look.surroundShowLabels) {
@@ -566,6 +768,255 @@ private fun SurroundStageView(
                 statusText.lowercase().replaceFirstChar { it.uppercase() },
                 color = statusColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold
             )
+        }
+
+        if (move != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.Black.copy(0.40f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                Text("Position", color = Color.White.copy(0.55f), fontSize = 10.sp)
+                Text(
+                    "${move.angleDeg.roundToInt() % 360}°",
+                    color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+/** What the room view needs while 360° move is on: where the orb is, and what to do when the user places it. */
+private class MoveState(
+    val angleDeg: Float,
+    val distance: Float,
+    val onMove: (angleDeg: Float, distance: Float) -> Unit
+)
+
+/** Auto-orbit moves the sound 20 times a second; how long one cycle takes is the Orbit speed slider. */
+private const val ORBIT_STEP_S = 0.05f
+
+/**
+ * Touch point in the room view -> sound position. Matches the room geometry in [SurroundStageView]
+ * (centre at 54% height, ring radii 38.5% of the width / 33.5% of the height). Touching right on the listener
+ * keeps the current angle, since "straight ahead of nothing" has no direction.
+ */
+private fun positionFromTouch(x: Float, y: Float, w: Float, h: Float, currentAngle: Float): Pair<Float, Float> {
+    val dx = (x - w * 0.5f) / (w * 0.385f)
+    val dy = -(y - h * 0.54f) / (h * 0.335f)
+    val distance = sqrt(dx * dx + dy * dy)
+    val angle = if (distance < 0.05f) currentAngle
+    else normalizeSurroundAngle(Math.toDegrees(atan2(dx, dy).toDouble()).toFloat())
+    return angle to sanitizeSurroundDistance(distance)
+}
+
+/** Distance, auto-orbit / centre buttons and the per-speaker effect of the position, for the 360° move mode. */
+@Composable
+private fun PositionPanel(
+    config: DspConfig,
+    accent: Color,
+    orbit: Boolean,
+    onOrbit: (Boolean) -> Unit,
+    gyro: Boolean,
+    gyroAvailable: Boolean,
+    onGyro: (Boolean) -> Unit,
+    orbitStyle: Int,
+    onOrbitStyle: (Int) -> Unit,
+    orbitSeconds: Float,
+    onOrbitSeconds: (Float) -> Unit,
+    onDistance: (Float) -> Unit,
+    onSpot: (String) -> Unit,
+    onCenter: () -> Unit
+) {
+    val distance = sanitizeSurroundDistance(config.surroundPositionDistance)
+    val percent = (distance * 100f).roundToInt()
+    val offsets = surroundPositionGainsDb(config.surroundPositionAngleDeg, distance)
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+            .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.Sync, null, tint = accent, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "SOUND POSITION", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
+            )
+            Text(
+                (if (percent >= 60) "Wide " else if (percent >= 35) "Mid " else "Close ") + "$percent%",
+                color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black
+            )
+        }
+        Text("Drag the glowing orb in the room to place the sound anywhere around you.", color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
+        Slider(
+            value = distance,
+            onValueChange = onDistance,
+            valueRange = SURROUND_POSITION_MIN_DISTANCE..SURROUND_POSITION_MAX_DISTANCE,
+            colors = SliderDefaults.colors(
+                thumbColor = accent,
+                activeTrackColor = accent,
+                inactiveTrackColor = Color.White.copy(0.12f)
+            )
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Closer", color = Color.White.copy(0.55f), fontSize = 10.sp)
+            Text("Wider", color = Color.White.copy(0.55f), fontSize = 10.sp)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            LayoutButton(if (orbit) "Orbit: on" else "Orbit", Icons.Rounded.Autorenew, orbit, accent, Modifier.weight(1f)) {
+                onOrbit(!orbit)
+            }
+            LayoutButton(
+                if (!gyroAvailable) "No sensor" else if (gyro) "Gyro: on" else "Gyro",
+                Icons.Rounded.Headphones, gyro, accent, Modifier.weight(1f)
+            ) { if (gyroAvailable) onGyro(!gyro) }
+            LayoutButton("Center", Icons.Rounded.CenterFocusStrong, false, accent, Modifier.weight(1f)) { onCenter() }
+        }
+        if (gyro) {
+            Text(
+                "Hold the phone in front of you. When you turn, the sound stays where it is in the room.",
+                color = accent.copy(0.85f), fontSize = 10.sp, lineHeight = 14.sp
+            )
+        }
+        Text(
+            "ORBIT STYLE", color = Color.White.copy(0.55f), fontSize = 9.sp,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            SurroundOrbitPattern.entries.forEachIndexed { index, style ->
+                PresetChip(style.label, orbitStyle == index, true, accent, Modifier.weight(1f)) { onOrbitStyle(index) }
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "ORBIT SPEED", color = Color.White.copy(0.55f), fontSize = 9.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.weight(1f)
+            )
+            Text("${orbitSeconds.roundToInt()} s per turn", color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
+        }
+        Slider(
+            // Right = faster, so the slider shows the opposite of the seconds per turn.
+            value = SURROUND_ORBIT_MIN_SECONDS + SURROUND_ORBIT_MAX_SECONDS - orbitSeconds,
+            onValueChange = { onOrbitSeconds(SURROUND_ORBIT_MIN_SECONDS + SURROUND_ORBIT_MAX_SECONDS - it) },
+            valueRange = SURROUND_ORBIT_MIN_SECONDS..SURROUND_ORBIT_MAX_SECONDS,
+            colors = SliderDefaults.colors(
+                thumbColor = accent,
+                activeTrackColor = accent,
+                inactiveTrackColor = Color.White.copy(0.12f)
+            )
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("Slower", color = Color.White.copy(0.55f), fontSize = 10.sp)
+            Text("Faster", color = Color.White.copy(0.55f), fontSize = 10.sp)
+        }
+        Text(
+            "QUICK SPOTS", color = Color.White.copy(0.55f), fontSize = 9.sp,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+        )
+        val activeSpot = config.activeSurroundPositionPreset()
+        BUILT_IN_SURROUND_POSITIONS.map { it.name }.chunked(3).forEach { rowNames ->
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                rowNames.forEach { name ->
+                    PresetChip(name, activeSpot == name, true, accent, Modifier.weight(1f)) { onSpot(name) }
+                }
+                repeat(3 - rowNames.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+        Text(
+            "POSITION EFFECT (dB, on top of channel levels)", color = Color.White.copy(0.55f), fontSize = 9.sp,
+            fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+        )
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            SurroundChannel.entries.forEachIndexed { i, channel ->
+                val db = offsets[i]
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(36.dp)) {
+                    Text(channel.label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                    Text(
+                        if (abs(db) < 0.05f) "0.0" else String.format(java.util.Locale.US, "%+.1f", db),
+                        color = if (db > 0.05f) accent else Color.White.copy(0.45f),
+                        fontSize = 9.sp, fontWeight = FontWeight.Black, maxLines = 1, softWrap = false
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Upmix Lab: the five numbers behind Movie / Music / Game, as sliders. Moving any slider takes over from the mode
+ * (the sliders start where the mode is, so nothing jumps); picking a preset hands control back to the mode.
+ * Only a stereo song that is upmixed is affected; a real 5.1 / 7.1 soundtrack keeps its own channels.
+ */
+@Composable
+private fun UpmixLabPanel(
+    config: DspConfig,
+    accent: Color,
+    onEnabled: (Boolean) -> Unit,
+    onKnob: (SurroundLabKnob, Float) -> Unit,
+    onReset: () -> Unit
+) {
+    val tuning = config.surroundEffectiveTuning()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+            .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Rounded.GraphicEq, null, tint = accent, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "UPMIX LAB", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { onReset() }.padding(4.dp)
+            ) {
+                Icon(Icons.Rounded.RestartAlt, null, tint = accent, modifier = Modifier.size(13.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("RESET", color = accent, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            PremiumSwitch(checked = config.surroundTuneEnabled, onCheckedChange = onEnabled, accentColor = accent)
+        }
+        Text(
+            if (config.surroundTuneEnabled) "Your tuning replaces the ${config.surroundMode.displayName} mode. Picking a preset hands control back to the mode."
+            else "Showing the ${config.surroundMode.displayName} mode. Move a slider to make it your own.",
+            color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp
+        )
+        SurroundLabKnob.entries.forEach { knob ->
+            val value = tuning.knobValue(knob)
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    knob.label.uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                    letterSpacing = 0.8.sp, modifier = Modifier.weight(1f)
+                )
+                Text(knob.display(value), color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black)
+            }
+            Slider(
+                value = value,
+                onValueChange = { onKnob(knob, it) },
+                valueRange = knob.min..knob.max,
+                colors = SliderDefaults.colors(
+                    thumbColor = accent,
+                    activeTrackColor = accent,
+                    inactiveTrackColor = Color.White.copy(0.12f)
+                )
+            )
+            Text(knob.hint, color = Color.White.copy(0.45f), fontSize = 10.sp, lineHeight = 14.sp)
         }
     }
 }

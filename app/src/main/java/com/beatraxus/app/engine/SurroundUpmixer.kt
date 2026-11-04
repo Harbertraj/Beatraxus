@@ -82,8 +82,14 @@ internal class SurroundUpmixer(sampleRate: Int) {
      *
      * @param outChannels 6 (5.1) or 8 (7.1)
      * @param trimsDb eight values in UI order L R C SL SR BL BR SW
+     * @param positionDb optional 360° move offsets (dB, same order) added on top of [trimsDb]; null = no move
      */
-    fun configure(outChannels: Int, tuning: SurroundTuning, trimsDb: List<Float>) {
+    fun configure(
+        outChannels: Int,
+        tuning: SurroundTuning,
+        trimsDb: List<Float>,
+        positionDb: List<Float>? = null
+    ) {
         require(outChannels == 6 || outChannels == 8) { "Unsupported surround channel count: $outChannels" }
         this.outChannels = outChannels
 
@@ -101,7 +107,7 @@ internal class SurroundUpmixer(sampleRate: Int) {
 
         val trims = sanitizeSurroundTrims(trimsDb)
         for (i in 0 until CHANNELS_UI) {
-            targetGain[i] = 10.0.pow(trims[i] / 20.0).toFloat()
+            targetGain[i] = 10.0.pow((trims[i] + positionOffset(positionDb, i)) / 20.0).toFloat()
         }
         if (!configured) {
             targetGain.copyInto(currentGain)
@@ -246,6 +252,12 @@ internal class SurroundUpmixer(sampleRate: Int) {
     }
 }
 
+/** dB offset of speaker [index] from the 360° move; 0 when move is off, missing or not a finite number. */
+private fun positionOffset(positionDb: List<Float>?, index: Int): Float {
+    val v = positionDb?.getOrNull(index) ?: return 0f
+    return if (v.isNaN() || v.isInfinite()) 0f else v
+}
+
 /**
  * Per-speaker trims for a stream that already is a real 5.1 / 7.1 mix (see [com.beatraxus.app.model.SurroundStage.DISCRETE]).
  *
@@ -265,14 +277,17 @@ internal class SurroundTrimmer(sampleRate: Int) {
     var channels: Int = 6
         private set
 
-    /** @param channels 6 (5.1) or 8 (7.1), @param trimsDb eight values in UI order L R C SL SR BL BR SW */
-    fun configure(channels: Int, trimsDb: List<Float>) {
+    /**
+     * @param channels 6 (5.1) or 8 (7.1), @param trimsDb eight values in UI order L R C SL SR BL BR SW
+     * @param positionDb optional 360° move offsets (dB, same order); null = no move
+     */
+    fun configure(channels: Int, trimsDb: List<Float>, positionDb: List<Float>? = null) {
         val newMap = requireNotNull(discreteChannelTrimIndex(channels)) { "Unsupported discrete channel count: $channels" }
         this.channels = channels
         map = newMap
         val trims = sanitizeSurroundTrims(trimsDb)
         for (i in 0 until CHANNELS_UI) {
-            targetGain[i] = 10.0.pow((trims[i] - DEFAULT_SURROUND_TRIMS_DB[i]) / 20.0).toFloat()
+            targetGain[i] = 10.0.pow((trims[i] - DEFAULT_SURROUND_TRIMS_DB[i] + positionOffset(positionDb, i)) / 20.0).toFloat()
         }
         if (!configured) {
             targetGain.copyInto(currentGain)

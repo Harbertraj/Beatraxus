@@ -38,6 +38,19 @@ import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecovera
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
 import com.beatraxus.app.model.LrcLine
+import com.beatraxus.app.model.withSurroundKnob
+import com.beatraxus.app.model.withSurroundLab
+import com.beatraxus.app.model.withSurroundLabReset
+import com.beatraxus.app.model.withSurroundMove
+import com.beatraxus.app.model.withSurroundPosition
+import com.beatraxus.app.model.withSurroundPositionPreset
+import com.beatraxus.app.model.withSurroundPositionReset
+import com.beatraxus.app.model.withStemGain
+import com.beatraxus.app.model.withStemMixPreset
+import com.beatraxus.app.model.withStemMixReset
+import com.beatraxus.app.model.withStemMixer
+import com.beatraxus.app.model.withStemMuteToggled
+import com.beatraxus.app.model.withStemSoloToggled
 import com.beatraxus.app.model.OutputMode
 import com.beatraxus.app.model.PlaylistEntity
 import com.beatraxus.app.model.VideoPlaylistEntity
@@ -4542,6 +4555,50 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSurroundMode(mode: com.beatraxus.app.model.SurroundMode) =
         applyDspConfig { it.copy(surroundMode = mode) }
 
+    /** 360° move on / off. The remembered position is kept; off = the sound is exactly the channel levels. */
+    fun setSurroundMoveEnabled(enabled: Boolean) =
+        applyDspConfig { it.withSurroundMove(enabled) }
+
+    /** Places the sound: [angleDeg] clockwise from straight ahead (any value, wrapped), [distance] 0.15..1. */
+    fun setSurroundPosition(angleDeg: Float, distance: Float) =
+        applyDspConfig { it.withSurroundPosition(angleDeg, distance) }
+
+    /** One tap on a built-in spot such as "Behind you". */
+    fun applySurroundPositionPreset(name: String) =
+        applyDspConfig { it.withSurroundPositionPreset(name) }
+
+    /** Back to straight ahead, close to the listener. */
+    fun resetSurroundPosition() =
+        applyDspConfig { it.withSurroundPositionReset() }
+
+    // ── Stem Mixer (Studio DSP > Stems). Settings only until the splitter engine exists. ──────────────────
+
+    fun setStemMixerEnabled(enabled: Boolean) = applyDspConfig { it.withStemMixer(enabled) }
+
+    /** One stem's level in dB (index = [com.beatraxus.app.model.StemChannel] ordinal). */
+    fun setStemGain(index: Int, db: Float) = applyDspConfig { it.withStemGain(index, db) }
+
+    fun toggleStemMute(index: Int) = applyDspConfig { it.withStemMuteToggled(index) }
+
+    fun toggleStemSolo(index: Int) = applyDspConfig { it.withStemSoloToggled(index) }
+
+    /** One tap on a quick mix such as "Karaoke". */
+    fun applyStemMix(name: String) = applyDspConfig { it.withStemMixPreset(name) }
+
+    fun resetStemMix() = applyDspConfig { it.withStemMixReset() }
+
+    // ── Upmix Lab (Studio DSP > Surround). The five numbers behind the surround mode. ───────────────────────
+
+    /** Lab on / off. On starts from the current mode's tuning, so the sound does not jump. */
+    fun setSurroundLabEnabled(enabled: Boolean) = applyDspConfig { it.withSurroundLab(enabled) }
+
+    /** Moves one Upmix Lab slider; this also switches the lab on. */
+    fun setSurroundLabKnob(knob: com.beatraxus.app.model.SurroundLabKnob, value: Float) =
+        applyDspConfig { it.withSurroundKnob(knob, value) }
+
+    /** Back to the chosen mode's own tuning. */
+    fun resetSurroundLab() = applyDspConfig { it.withSurroundLabReset() }
+
     /** One speaker's level trim in dB (index = [com.beatraxus.app.model.SurroundChannel] ordinal). */
     fun setSurroundChannelTrim(index: Int, db: Float) = applyDspConfig { cfg ->
         if (index !in 0 until com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB.size) return@applyDspConfig cfg
@@ -4564,7 +4621,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             cfg.copy(
                 surroundChannelTrimsDb = saved,
                 surroundMode = cfg.surroundCustomMode,
-                surroundActivePreset = name
+                surroundActivePreset = name,
+                surroundTuneEnabled = false
             )
         } else {
             val preset = com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == name }
@@ -4572,7 +4630,8 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             cfg.copy(
                 surroundChannelTrimsDb = preset.trimsDb,
                 surroundMode = preset.mode,
-                surroundActivePreset = name
+                surroundActivePreset = name,
+                surroundTuneEnabled = false
             )
         }
     }

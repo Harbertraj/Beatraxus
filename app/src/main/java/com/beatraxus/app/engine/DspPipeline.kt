@@ -9,7 +9,8 @@ import com.beatraxus.app.model.ReplayGainOption
 import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SpatialUiMode
-import com.beatraxus.app.model.tuning
+import com.beatraxus.app.model.surroundEffectiveTuning
+import com.beatraxus.app.model.surroundPositionOffsetsDb
 import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
 import kotlin.math.abs
@@ -83,7 +84,7 @@ internal class AudioDspPipeline(
         }
         val upmixer = surroundUpmixer ?: SurroundUpmixer(outputSampleRate).also { surroundUpmixer = it }
         val cfg = surroundConfig
-        upmixer.configure(outChannels, cfg.surroundMode.tuning(), cfg.surroundChannelTrimsDb)
+        upmixer.configure(outChannels, cfg.surroundEffectiveTuning(), cfg.surroundChannelTrimsDb, cfg.surroundPositionOffsetsDb())
         surroundOutChannels = outChannels
     }
 
@@ -104,7 +105,7 @@ internal class AudioDspPipeline(
             return
         }
         val trimmer = surroundTrimmer ?: SurroundTrimmer(outputSampleRate).also { surroundTrimmer = it }
-        trimmer.configure(channels, surroundConfig.surroundChannelTrimsDb)
+        trimmer.configure(channels, surroundConfig.surroundChannelTrimsDb, surroundConfig.surroundPositionOffsetsDb())
         discreteActive = true
     }
 
@@ -204,10 +205,10 @@ internal class AudioDspPipeline(
         surroundConfig = config
         val outCh = surroundOutChannels
         if (outCh > 2) {
-            surroundUpmixer?.configure(outCh, config.surroundMode.tuning(), config.surroundChannelTrimsDb)
+            surroundUpmixer?.configure(outCh, config.surroundEffectiveTuning(), config.surroundChannelTrimsDb, config.surroundPositionOffsetsDb())
         }
         if (discreteActive) {
-            surroundTrimmer?.configure(channels, config.surroundChannelTrimsDb)
+            surroundTrimmer?.configure(channels, config.surroundChannelTrimsDb, config.surroundPositionOffsetsDb())
         }
     }
 

@@ -23,8 +23,7 @@ class DspStageStateTest {
             DspConfig(bassEnabled = true),
             DspConfig(stereoExpansionEnabled = true),
             DspConfig(reverbEnabled = true),
-            DspConfig(spatialAudioEnabled = true),
-            DspConfig(audio3DStageEnabled = true)
+            DspConfig(stemMixerEnabled = true)
         )
         for (config in oneOnEachPage) assertTrue(config.anyDspStageOn())
     }
@@ -36,6 +35,14 @@ class DspStageStateTest {
             listOf(DspStageState.OFF, DspStageState.ON, DspStageState.OFF, DspStageState.ON, DspStageState.OFF),
             states
         )
+    }
+
+    @Test
+    fun stemsIsTheFifthPageAndSpatialNoLongerLightsIt() {
+        assertEquals(DspStageState.ON, DspConfig(stemMixerEnabled = true).stageStates()[4])
+        assertEquals(DspStageState.OFF, DspConfig(spatialAudioEnabled = true, audio3DStageEnabled = true).stageStates()[4])
+        // Bit-Perfect passes the song through untouched, so it bypasses the stem mixer too.
+        assertEquals(DspStageState.BYPASS, DspConfig(stemMixerEnabled = true, bitPerfectEnabled = true).stageStates()[4])
     }
 
     @Test

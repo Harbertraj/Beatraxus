@@ -9,6 +9,7 @@ import com.beatraxus.app.model.resolveSurroundStage
 import com.beatraxus.app.model.toSurroundEngineConfig
 import com.beatraxus.app.model.resolveSurroundOutputChannels
 import com.beatraxus.app.model.sanitizeSurroundTrims
+import com.beatraxus.app.model.surroundPositionGainsDb
 import com.beatraxus.app.model.tuning
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -300,5 +301,82 @@ class SurroundUpmixerTest {
         assertFalse(on.copy(surroundEnabled = false).activeEffects().any { it.contains("Surround") })
         assertFalse(on.copy(bitPerfectEnabled = true).activeEffects().any { it.contains("Surround") })
         assertFalse(on.copy(surroundLayout = SurroundLayout.STEREO).activeEffects().any { it.contains("Surround") })
+    }
+
+    // ── 360° move ──────────────────────────────────────────────────────────────────────────────────────────
+
+    private fun upmixWithPosition(angle: Float, distance: Float, left: FloatArray, right: FloatArray): FloatArray {
+        val up = SurroundUpmixer(rate)
+        up.configure(8, SurroundMode.MOVIE.tuning(), flat, surroundPositionGainsDb(angle, distance))
+        val frames = left.size
+        val input = FloatArray(frames * 2) { if (it % 2 == 0) left[it / 2] else right[it / 2] }
+        val out = FloatArray(frames * 8)
+        up.process(input, 2, frames, out)
+        return out
+    }
+
+    @Test
+    fun nullPositionIsExactlyTheSameAsNoPosition() {
+        val l = sine(700.0, 4800)
+        val r = sine(1300.0, 4800)
+        val plain = upmix(8, SurroundMode.MOVIE, flat, l, r)
+        val up = SurroundUpmixer(rate)
+        up.configure(8, SurroundMode.MOVIE.tuning(), flat, null)
+        val input = FloatArray(4800 * 2) { if (it % 2 == 0) l[it / 2] else r[it / 2] }
+        val out = FloatArray(4800 * 8)
+        up.process(input, 2, 4800, out)
+        assertTrue(plain.indices.all { plain[it] == out[it] })
+    }
+
+    @Test
+    fun positionBehindMakesBackLouderThanFront() {
+        // Opposite-phase content so the surround / back channels carry signal.
+        val l = sine(1000.0, 9600)
+        val r = FloatArray(l.size) { -l[it] }
+        val ahead = upmixWithPosition(0f, 1f, l, r)
+        val behind = upmixWithPosition(180f, 1f, l, r)
+        // 8-channel order: FL FR FC LFE BL BR SL SR
+        assertTrue(rms(behind, 8, 4, 4800) > rms(ahead, 8, 4, 4800))
+        assertTrue(rms(behind, 8, 0, 4800) < rms(ahead, 8, 0, 4800))
+    }
+
+    @Test
+    fun positionToTheRightMakesRightLouderThanLeft() {
+        val x = sine(1000.0, 9600)
+        val out = upmixWithPosition(90f, 1f, x, FloatArray(x.size))
+        assertTrue(rms(out, 8, 1, 4800) > 0.0)
+        val right = upmixWithPosition(90f, 1f, x, x)
+        // mono content: front pair is identical before the position, so the position alone makes R win
+        assertTrue(rms(right, 8, 1, 4800) > rms(right, 8, 0, 4800))
+        val left = upmixWithPosition(270f, 1f, x, x)
+        assertTrue(rms(left, 8, 0, 4800) > rms(left, 8, 1, 4800))
+    }
+
+    @Test
+    fun positionNeverBreaksFullScaleOrProducesNaN() {
+        val loud = FloatArray(4800) { if (it % 2 == 0) 1f else -1f }
+        for (angle in listOf(0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f, 359.9f)) {
+            val out = upmixWithPosition(angle, 1f, loud, loud.reversedArray())
+            assertTrue(out.all { it in -1f..1f && !it.isNaN() })
+        }
+    }
+
+    @Test
+    fun positionIsAppliedOnTopOfDiscreteTrims() {
+        val trimmer = SurroundTrimmer(rate)
+        trimmer.configure(6, DEFAULT_SURROUND_TRIMS_DB, List(8) { 0f })
+        val untouched = FloatArray(6 * 64) { 0.25f }
+        val copy = untouched.copyOf()
+        trimmer.process(copy, 64)
+        assertTrue(untouched.indices.all { untouched[it] == copy[it] })
+
+        val moved = SurroundTrimmer(rate)
+        moved.configure(6, DEFAULT_SURROUND_TRIMS_DB, surroundPositionGainsDb(0f, 1f))
+        val data = FloatArray(6 * 4800) { 0.1f }
+        moved.process(data, 4800)
+        // 5.1 order FL FR FC LFE SL SR: the centre (straight ahead) is lifted, the surrounds are cut
+        val last = 4799
+        assertTrue(data[last * 6 + 2] > 0.1f)
+        assertTrue(data[last * 6 + 4] < 0.1f)
     }
 }

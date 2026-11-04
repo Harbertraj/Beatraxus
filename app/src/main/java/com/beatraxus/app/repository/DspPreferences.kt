@@ -223,7 +223,16 @@ class DspPreferences(private val context: Context) {
             surroundCustomTrimsDb = deserializeSurroundTrims(prefNullable(SURROUND_CUSTOM_TRIMS)),
             surroundCustomMode = runCatching {
                 SurroundMode.valueOf(prefNullable(SURROUND_CUSTOM_MODE) ?: SurroundMode.CUSTOM.name)
-            }.getOrDefault(SurroundMode.CUSTOM)
+            }.getOrDefault(SurroundMode.CUSTOM),
+            surroundMoveEnabled = pref(SURROUND_MOVE_ENABLED, false),
+            surroundPositionAngleDeg = normalizeSurroundAngle(pref(SURROUND_POSITION_ANGLE, SURROUND_POSITION_DEFAULT_ANGLE_DEG)),
+            surroundPositionDistance = sanitizeSurroundDistance(pref(SURROUND_POSITION_DISTANCE, SURROUND_POSITION_DEFAULT_DISTANCE)),
+            surroundTuneEnabled = pref(SURROUND_TUNE_ENABLED, false),
+            surroundTune = deserializeSurroundTuning(prefNullable(SURROUND_TUNE)),
+            stemMixerEnabled = pref(STEM_MIXER_ENABLED, false),
+            stemGainsDb = deserializeStemGains(prefNullable(STEM_GAINS)),
+            stemMuteMask = sanitizeStemMask(pref(STEM_MUTE_MASK, 0)),
+            stemSoloMask = sanitizeStemMask(pref(STEM_SOLO_MASK, 0))
         )
     }
 
@@ -362,6 +371,15 @@ class DspPreferences(private val context: Context) {
             set(SURROUND_ACTIVE_PRESET, config.surroundActivePreset)
             set(SURROUND_CUSTOM_TRIMS, serializeSurroundTrims(config.surroundCustomTrimsDb))
             set(SURROUND_CUSTOM_MODE, config.surroundCustomMode.name)
+            set(SURROUND_MOVE_ENABLED, config.surroundMoveEnabled)
+            set(SURROUND_POSITION_ANGLE, config.surroundPositionAngleDeg)
+            set(SURROUND_POSITION_DISTANCE, config.surroundPositionDistance)
+            set(SURROUND_TUNE_ENABLED, config.surroundTuneEnabled)
+            set(SURROUND_TUNE, serializeSurroundTuning(config.surroundTune))
+            set(STEM_MIXER_ENABLED, config.stemMixerEnabled)
+            set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
+            set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
+            set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
         }
     }
 
@@ -535,6 +553,15 @@ class DspPreferences(private val context: Context) {
                 set(SURROUND_ACTIVE_PRESET, config.surroundActivePreset)
                 set(SURROUND_CUSTOM_TRIMS, serializeSurroundTrims(config.surroundCustomTrimsDb))
                 set(SURROUND_CUSTOM_MODE, config.surroundCustomMode.name)
+                set(SURROUND_MOVE_ENABLED, config.surroundMoveEnabled)
+                set(SURROUND_POSITION_ANGLE, config.surroundPositionAngleDeg)
+                set(SURROUND_POSITION_DISTANCE, config.surroundPositionDistance)
+                set(SURROUND_TUNE_ENABLED, config.surroundTuneEnabled)
+                set(SURROUND_TUNE, serializeSurroundTuning(config.surroundTune))
+                set(STEM_MIXER_ENABLED, config.stemMixerEnabled)
+                set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
+                set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
+                set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
             }
         }
     }
@@ -938,6 +965,15 @@ class DspPreferences(private val context: Context) {
         private val SURROUND_ACTIVE_PRESET = stringPreferencesKey("surround_active_preset")
         private val SURROUND_CUSTOM_TRIMS = stringPreferencesKey("surround_custom_trims_db")
         private val SURROUND_CUSTOM_MODE = stringPreferencesKey("surround_custom_mode")
+        private val SURROUND_MOVE_ENABLED = booleanPreferencesKey("surround_move_enabled")
+        private val SURROUND_POSITION_ANGLE = floatPreferencesKey("surround_position_angle_deg")
+        private val SURROUND_POSITION_DISTANCE = floatPreferencesKey("surround_position_distance")
+        private val SURROUND_TUNE_ENABLED = booleanPreferencesKey("surround_tune_enabled")
+        private val SURROUND_TUNE = stringPreferencesKey("surround_tune")
+        private val STEM_MIXER_ENABLED = booleanPreferencesKey("stem_mixer_enabled")
+        private val STEM_GAINS = stringPreferencesKey("stem_gains_db")
+        private val STEM_MUTE_MASK = intPreferencesKey("stem_mute_mask")
+        private val STEM_SOLO_MASK = intPreferencesKey("stem_solo_mask")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")
