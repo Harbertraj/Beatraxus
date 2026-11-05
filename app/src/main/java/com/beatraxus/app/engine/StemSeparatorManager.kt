@@ -10,6 +10,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.math.PI
+import kotlin.math.cos
 
 sealed interface StemSeparationState {
     object Idle : StemSeparationState
@@ -42,15 +49,21 @@ object StemSeparatorManager {
         }
     }
 
-    fun requestSeparation(context: Context, song: Song) {
+    fun requestSeparation(context: Context, song: Song, force: Boolean = false) {
         val songId = song.id
-        if (StemCache.isStemsCached(context, songId)) {
+        val appContext = context.applicationContext
+
+        if (StemCache.isStemsCached(appContext, songId)) {
             _state.value = StemSeparationState.Ready(songId)
             return
         }
 
-        if (activeSongId == songId && _state.value is StemSeparationState.Separating) {
-            return // Already separating this song
+        if (activeSongId == songId && activeJob?.isActive == true) {
+            return
+        }
+
+        if (!force && _state.value is StemSeparationState.Failed && (_state.value as StemSeparationState.Failed).songId == songId) {
+            return
         }
 
         cancelSeparation()
@@ -59,53 +72,163 @@ object StemSeparatorManager {
         activeJob = scope.launch {
             _state.value = StemSeparationState.Separating(songId, 0f)
 
-            val separator = StemSeparator(context.applicationContext)
+            val separator = StemSeparator(appContext)
             activeSeparator = separator
 
+            val tempPcmFile = File(appContext.cacheDir, "temp_decode_$songId.pcm")
+
             try {
-                // Step 1: Decode song audio to 44.1 kHz stereo float
-                val pcm = StemAudioDecoder.decodeToStereoFloat44100(
-                    context.applicationContext,
+                StemCache.deleteStems(appContext, songId)
+
+                // Step 1: Decode song audio to 44.1 kHz stereo float temp file
+                val totalFrames = StemAudioDecoder.decodeToStereoFloat44100File(
+                    appContext,
                     song,
+                    tempPcmFile,
                     isCancelled = { activeJob?.isCancelled == true }
                 )
 
-                if (pcm == null || activeJob?.isCancelled == true) {
+                if (totalFrames == null || totalFrames <= 0L || activeJob?.isCancelled == true) {
                     if (activeJob?.isCancelled != true) {
                         _state.value = StemSeparationState.Failed(songId, "Failed to decode song audio")
                     } else {
                         _state.value = StemSeparationState.Idle
                     }
+                    StemCache.deleteStems(appContext, songId)
                     return@launch
                 }
 
-                // Step 2: Separate into 4 stems
-                val stems = separator.separate(
-                    inputPcm = pcm,
-                    progressCallback = { pct ->
-                        _state.value = StemSeparationState.Separating(songId, pct)
-                    },
-                    isCancelled = { activeJob?.isCancelled == true }
-                )
+                if (!separator.initialize()) {
+                    _state.value = StemSeparationState.Failed(songId, "Failed to initialize separator model")
+                    StemCache.deleteStems(appContext, songId)
+                    return@launch
+                }
 
-                if (stems == null || activeJob?.isCancelled == true) {
-                    if (activeJob?.isCancelled != true) {
-                        _state.value = StemSeparationState.Failed(songId, "Stem separation failed")
-                    } else {
-                        _state.value = StemSeparationState.Idle
+                // Step 2: Streaming separation into cache files
+                val chunkSize = 485100
+                val hopSize = 121275
+                val bufferCap = chunkSize + hopSize
+
+                val outAccum = Array(4) { Array(2) { FloatArray(bufferCap) } }
+                val weightAccum = FloatArray(bufferCap)
+                val hann = FloatArray(chunkSize) { i ->
+                    0.5f * (1.0f - cos(2.0 * PI * i / chunkSize).toFloat())
+                }
+
+                val dir = StemCache.getStemsDir(appContext, songId)
+                val stemRafs = Array(4) { i ->
+                    RandomAccessFile(File(dir, StemCache.STEM_FILENAMES[i]), "rw")
+                }
+
+                var baseFrame = 0L
+                var framePos = 0L
+
+                try {
+                    RandomAccessFile(tempPcmFile, "r").use { tempRaf ->
+                        val tempChannel = tempRaf.channel
+                        val inByteBuf = ByteBuffer.allocateDirect(chunkSize * 8).order(ByteOrder.nativeOrder())
+
+                        while (framePos < totalFrames) {
+                            if (activeJob?.isCancelled == true) throw CancellationException()
+
+                            val framesInChunk = minOf(chunkSize.toLong(), totalFrames - framePos).toInt()
+
+                            inByteBuf.clear()
+                            inByteBuf.limit(framesInChunk * 8)
+                            tempChannel.position(framePos * 8)
+                            tempChannel.read(inByteBuf)
+                            inByteBuf.rewind()
+                            val inFloats = inByteBuf.asFloatBuffer()
+
+                            val inChunk = Array(2) { FloatArray(chunkSize) }
+                            for (i in 0 until framesInChunk) {
+                                inChunk[0][i] = inFloats.get()
+                                inChunk[1][i] = inFloats.get()
+                            }
+
+                            val chunkStems = separator.inferChunk(inChunk, chunkSize)
+                                ?: throw Exception("Inference chunk failed")
+
+                            // Accumulate
+                            for (s in 0 until 4) {
+                                for (ch in 0..1) {
+                                    val stemCh = chunkStems[s][ch]
+                                    val outCh = outAccum[s][ch]
+                                    for (i in 0 until framesInChunk) {
+                                        val targetFrame = framePos + i
+                                        val relIdx = (targetFrame - baseFrame).toInt()
+                                        val w = hann[i]
+                                        outCh[relIdx] += stemCh[i] * w
+                                    }
+                                }
+                            }
+                            for (i in 0 until framesInChunk) {
+                                val targetFrame = framePos + i
+                                val relIdx = (targetFrame - baseFrame).toInt()
+                                weightAccum[relIdx] += hann[i]
+                            }
+
+                            val nextFramePos = framePos + hopSize
+                            val finishedUntil = if (nextFramePos < totalFrames && framesInChunk == chunkSize) nextFramePos else totalFrames
+                            val numFlushed = (finishedUntil - baseFrame).toInt()
+
+                            if (numFlushed > 0) {
+                                val outByteBuf = ByteBuffer.allocateDirect(numFlushed * 8).order(ByteOrder.nativeOrder())
+                                for (s in 0 until 4) {
+                                    outByteBuf.clear()
+                                    val outFloats = outByteBuf.asFloatBuffer()
+                                    for (i in 0 until numFlushed) {
+                                        val w = if (weightAccum[i] > 1e-6f) weightAccum[i] else 1.0f
+                                        val invW = 1.0f / w
+                                        outFloats.put(outAccum[s][0][i] * invW)
+                                        outFloats.put(outAccum[s][1][i] * invW)
+                                    }
+                                    outByteBuf.rewind()
+                                    outByteBuf.limit(numFlushed * 8)
+
+                                    val chnl = stemRafs[s].channel
+                                    chnl.position(baseFrame * 8)
+                                    chnl.write(outByteBuf)
+                                }
+
+                                // Shift accumulators left
+                                val remaining = bufferCap - numFlushed
+                                for (s in 0 until 4) {
+                                    for (ch in 0..1) {
+                                        System.arraycopy(outAccum[s][ch], numFlushed, outAccum[s][ch], 0, remaining)
+                                        outAccum[s][ch].fill(0f, remaining, bufferCap)
+                                    }
+                                }
+                                System.arraycopy(weightAccum, numFlushed, weightAccum, 0, remaining)
+                                weightAccum.fill(0f, remaining, bufferCap)
+
+                                baseFrame = finishedUntil
+                            }
+
+                            framePos += hopSize
+                            val pct = (framePos.toFloat() / totalFrames).coerceIn(0f, 1f)
+                            _state.value = StemSeparationState.Separating(songId, pct)
+                        }
                     }
-                    return@launch
+                } finally {
+                    for (raf in stemRafs) {
+                        try { raf.close() } catch (_: Throwable) {}
+                    }
                 }
 
-                // Step 3: Cache raw PCM stems
-                StemCache.saveStemsToCache(context.applicationContext, songId, stems)
+                StemCache.markStemsDone(appContext, songId)
                 _state.value = StemSeparationState.Ready(songId)
                 Log.i(TAG, "Successfully separated and cached 4 stems for song $songId")
 
+            } catch (e: CancellationException) {
+                StemCache.deleteStems(appContext, songId)
+                _state.value = StemSeparationState.Idle
             } catch (e: Exception) {
                 Log.e(TAG, "Separation error: ${e.message}", e)
+                StemCache.deleteStems(appContext, songId)
                 _state.value = StemSeparationState.Failed(songId, e.message ?: "Separation error")
             } finally {
+                if (tempPcmFile.exists()) tempPcmFile.delete()
                 separator.release()
                 if (activeSeparator == separator) activeSeparator = null
             }
@@ -113,6 +236,7 @@ object StemSeparatorManager {
     }
 
     fun cancelSeparation() {
+        val songId = activeSongId
         activeJob?.cancel()
         activeJob = null
         activeSeparator?.release()

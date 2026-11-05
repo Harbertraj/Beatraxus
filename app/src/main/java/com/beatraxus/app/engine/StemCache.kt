@@ -6,12 +6,11 @@ import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
-import java.nio.channels.FileChannel
 
 object StemCache {
     private const val TAG = "StemCache"
     val STEM_FILENAMES = arrayOf("vocals.pcm", "drums.pcm", "bass.pcm", "other.pcm")
+    private const val DONE_FILENAME = "done"
 
     fun getStemsDir(context: Context, songId: String): File {
         val safeId = songId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
@@ -23,11 +22,32 @@ object StemCache {
     fun isStemsCached(context: Context, songId: String): Boolean {
         val dir = getStemsDir(context, songId)
         if (!dir.exists() || !dir.isDirectory) return false
+        if (!File(dir, DONE_FILENAME).exists()) return false
         for (name in STEM_FILENAMES) {
             val f = File(dir, name)
             if (!f.exists() || f.length() <= 0) return false
         }
         return true
+    }
+
+    fun markStemsDone(context: Context, songId: String) {
+        val dir = getStemsDir(context, songId)
+        try {
+            File(dir, DONE_FILENAME).createNewFile()
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to write done marker for $songId: ${e.message}")
+        }
+    }
+
+    fun deleteStems(context: Context, songId: String) {
+        val dir = getStemsDir(context, songId)
+        try {
+            if (dir.exists()) {
+                dir.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete stems directory for $songId: ${e.message}")
+        }
     }
 
     fun saveStemsToCache(context: Context, songId: String, stems: Array<FloatArray>) {
@@ -47,6 +67,7 @@ object StemCache {
                 Log.e(TAG, "Failed to save stem ${STEM_FILENAMES[i]} to cache: ${e.message}", e)
             }
         }
+        markStemsDone(context, songId)
     }
 
     /**

@@ -12,12 +12,98 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.nio.FloatBuffer
 import kotlin.math.PI
 import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * AI-powered Stem Separation Engine using SCNet ONNX model.
+ * Radix-2 FFT implementation for size N=4096 with precomputed twiddle tables.
+ */
+class Radix2FFT(val n: Int = 4096) {
+    private val logN = 31 - Integer.numberOfLeadingZeros(n)
+    private val bitRev = IntArray(n) { i ->
+        var rev = 0
+        var temp = i
+        for (j in 0 until logN) {
+            rev = (rev shl 1) or (temp and 1)
+            temp = temp ushr 1
+        }
+        rev
+    }
+
+    private val cosTable = FloatArray(n / 2)
+    private val sinTable = FloatArray(n / 2)
+
+    init {
+        for (i in 0 until n / 2) {
+            val angle = 2.0 * PI * i / n
+            cosTable[i] = cos(angle).toFloat()
+            sinTable[i] = sin(angle).toFloat()
+        }
+    }
+
+    fun fft(re: FloatArray, im: FloatArray) {
+        transform(re, im, inverse = false)
+    }
+
+    fun ifft(re: FloatArray, im: FloatArray) {
+        transform(re, im, inverse = true)
+    }
+
+    private fun transform(re: FloatArray, im: FloatArray, inverse: Boolean) {
+        for (i in 0 until n) {
+            val j = bitRev[i]
+            if (i < j) {
+                val tempR = re[i]
+                re[i] = re[j]
+                re[j] = tempR
+                val tempI = im[i]
+                im[i] = im[j]
+                im[j] = tempI
+            }
+        }
+
+        var len = 2
+        while (len <= n) {
+            val halfLen = len / 2
+            val step = n / len
+            for (i in 0 until n step len) {
+                for (j in 0 until halfLen) {
+                    val tableIdx = j * step
+                    val cosW = cosTable[tableIdx]
+                    val sinW = if (inverse) sinTable[tableIdx] else -sinTable[tableIdx]
+
+                    val reRight = re[i + j + halfLen]
+                    val imRight = im[i + j + halfLen]
+
+                    val tRe = reRight * cosW - imRight * sinW
+                    val tIm = reRight * sinW + imRight * cosW
+
+                    val uRe = re[i + j]
+                    val uIm = im[i + j]
+
+                    re[i + j] = uRe + tRe
+                    im[i + j] = uIm + tIm
+                    re[i + j + halfLen] = uRe - tRe
+                    im[i + j + halfLen] = uIm - tIm
+                }
+            }
+            len = len shl 1
+        }
+
+        if (inverse) {
+            // Incorporate scale 1/64.0f (undoes 1/sqrt(4096) STFT scale)
+            val scale = 1.0f / 64.0f
+            for (i in 0 until n) {
+                re[i] *= scale
+                im[i] *= scale
+            }
+        }
+    }
+}
+
+/**
+ * AI-powered Stem Separation Engine using SCNet int8 ONNX model.
  * Separates stereo audio waveform @ 44.1 kHz into 4 stems: Vocals, Drums, Bass, Other.
  * Uses ONNX Runtime with NNAPI / XNNPACK / CPU fallback, guarded by a session lock.
  */
@@ -28,12 +114,14 @@ class StemSeparator(private val context: Context) {
         private const val MODEL_FILENAME = "scnet.onnx"
         private const val ASSET_PATH = "models/$MODEL_FILENAME"
 
-        /** Sample rate required by SCNet model (44.1 kHz). */
         const val SAMPLE_RATE = 44100
+        const val N_FFT = 4096
+        const val HOP_SIZE = 1024
+        const val N_FRAMES = 476
+        const val SEGMENT_SAMPLES = 485100 // 11 s @ 44.1 kHz
+        const val PAD_SAMPLES = 2048
+        const val PADDED_SAMPLES = 490496 // 2048 + 485100 + 2048 extended to fit 476 frames
 
-        /**
-         * Returns whether the SCNet ONNX model file exists in app filesDir or assets.
-         */
         fun isModelInstalled(context: Context?): Boolean {
             if (context == null) return false
             val fileInFiles = File(context.filesDir, "models/$MODEL_FILENAME")
@@ -53,18 +141,10 @@ class StemSeparator(private val context: Context) {
             return false
         }
 
-        /**
-         * Process an input stereo PCM array with chunk overlap-add (COLA) using Hann window crossfade.
-         * [inputPcm]: Interleaved stereo float array (length = 2 * N).
-         * [chunkSizeFrames]: Number of audio frames per chunk (default 441000 = 10 sec @ 44.1 kHz).
-         * [hopSizeFrames]: Hop size in frames for 50% overlap (default 220500).
-         * [processChunk]: Lambda processing one chunk [2, chunkSizeFrames] into 4 stems [4, 2, chunkSizeFrames].
-         * Returns 4 stems array of FloatArrays (each length = 2 * N, interleaved stereo float).
-         */
         fun processOverlapAdd(
             inputPcm: FloatArray,
-            chunkSizeFrames: Int = 441000,
-            hopSizeFrames: Int = 220500,
+            chunkSizeFrames: Int = 485100,
+            hopSizeFrames: Int = 121275,
             progressCallback: ((Float) -> Unit)? = null,
             isCancelled: (() -> Boolean)? = null,
             processChunk: (inChunk: Array<FloatArray>, numFrames: Int) -> Array<Array<FloatArray>>?
@@ -73,11 +153,9 @@ class StemSeparator(private val context: Context) {
             if (totalFrames == 0) return null
 
             val numStems = 4
-            // Accumulator for 4 stems: [stem][channel][frame]
             val outAccum = Array(numStems) { Array(2) { FloatArray(totalFrames) } }
             val weightAccum = FloatArray(totalFrames)
 
-            // Pre-calculate Hann window of length chunkSizeFrames
             val hann = FloatArray(chunkSizeFrames) { i ->
                 0.5f * (1.0f - cos(2.0 * PI * i / chunkSizeFrames).toFloat())
             }
@@ -88,7 +166,6 @@ class StemSeparator(private val context: Context) {
 
                 val framesInChunk = minOf(chunkSizeFrames, totalFrames - framePos)
 
-                // Build chunk input [2][chunkSizeFrames] (de-interleave + zero pad)
                 val inChunk = Array(2) { FloatArray(chunkSizeFrames) }
                 for (i in 0 until framesInChunk) {
                     val idx = (framePos + i) * 2
@@ -96,10 +173,8 @@ class StemSeparator(private val context: Context) {
                     inChunk[1][i] = inputPcm[idx + 1]
                 }
 
-                // Run inference on chunk
                 val chunkStems = processChunk(inChunk, chunkSizeFrames) ?: return null
 
-                // Overlap-add with Hann window
                 for (s in 0 until numStems) {
                     for (ch in 0..1) {
                         val stemCh = chunkStems[s][ch]
@@ -119,7 +194,6 @@ class StemSeparator(private val context: Context) {
                 progressCallback?.invoke((framePos.toFloat() / totalFrames).coerceIn(0f, 1f))
             }
 
-            // Normalize by accumulated weight to preserve constant signals and exact energy
             val resultStems = Array(numStems) { FloatArray(totalFrames * 2) }
             for (f in 0 until totalFrames) {
                 val w = if (weightAccum[f] > 1e-6f) weightAccum[f] else 1.0f
@@ -139,17 +213,11 @@ class StemSeparator(private val context: Context) {
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
 
-    /**
-     * Guards native ONNX session creation, inference, and release to prevent concurrent access or crash during close.
-     */
     private val sessionLock = Any()
-
     @Volatile private var closed = false
     @Volatile private var isInitialized = false
 
-    private var inputName: String = "input"
-    private var outputName: String = "output"
-    private var isInputRank3 = true // true if [1, 2, T], false if 4D spectrogram [1, 2, F, T]
+    private val radix2Fft = Radix2FFT(N_FFT)
 
     fun initialize(): Boolean = synchronized(sessionLock) { initializeLocked() }
 
@@ -168,7 +236,7 @@ class StemSeparator(private val context: Context) {
 
             var session: OrtSession? = null
 
-            // 1. Try NNAPI acceleration
+            // 1. NNAPI
             try {
                 val opts = OrtSession.SessionOptions()
                 opts.addNnapi()
@@ -179,7 +247,7 @@ class StemSeparator(private val context: Context) {
                 Log.w(TAG, "NNAPI acceleration unavailable for SCNet, trying XNNPACK: ${e.message}")
             }
 
-            // 2. Try XNNPACK acceleration
+            // 2. XNNPACK
             if (session == null) {
                 try {
                     val opts = OrtSession.SessionOptions()
@@ -192,7 +260,7 @@ class StemSeparator(private val context: Context) {
                 }
             }
 
-            // 3. Fallback to CPU
+            // 3. CPU fallback
             if (session == null) {
                 try {
                     val opts = OrtSession.SessionOptions()
@@ -206,14 +274,26 @@ class StemSeparator(private val context: Context) {
             }
 
             if (session != null) {
-                inputName = session.inputNames.firstOrNull() ?: "input"
-                outputName = session.outputNames.firstOrNull() ?: "output"
+                // Verify contract
+                val mixSpecInfo = session.inputInfo["mix_spec"]?.info as? TensorInfo
+                val stemsSpecInfo = session.outputInfo["stems_spec"]?.info as? TensorInfo
 
-                val inputInfo = session.inputInfo[inputName]?.info as? TensorInfo
-                val shape = inputInfo?.shape
-                isInputRank3 = shape == null || shape.size == 3
+                val expectedInputShape = longArrayOf(1, 4, 2049, 476)
+                val expectedOutputShape = longArrayOf(1, 16, 2049, 476)
 
-                Log.i(TAG, "SCNet model initialized. Inputs: ${session.inputInfo}, Outputs: ${session.outputInfo}")
+                if (mixSpecInfo == null || stemsSpecInfo == null ||
+                    !mixSpecInfo.shape.contentEquals(expectedInputShape) ||
+                    !stemsSpecInfo.shape.contentEquals(expectedOutputShape)
+                ) {
+                    val actualIn = mixSpecInfo?.shape?.contentToString() ?: "missing"
+                    val actualOut = stemsSpecInfo?.shape?.contentToString() ?: "missing"
+                    Log.e(TAG, "SCNet model contract mismatch: input mix_spec $actualIn (expected [1, 4, 2049, 476]), output stems_spec $actualOut (expected [1, 16, 2049, 476])")
+                    session.close()
+                    isInitialized = true
+                    return false
+                }
+
+                Log.i(TAG, "SCNet model contract verified successfully. Inputs: ${session.inputInfo}, Outputs: ${session.outputInfo}")
                 ortSession = session
                 isInitialized = true
                 true
@@ -258,7 +338,20 @@ class StemSeparator(private val context: Context) {
     }
 
     /**
+     * Reflected sample lookup for STFT padding.
+     */
+    private fun getReflectSample(idx: Int, n: Int, pcm: FloatArray): Float {
+        if (n == 0) return 0f
+        var p = idx
+        if (p < 0) p = -p
+        if (p >= n) p = 2 * n - 2 - p
+        p = p.coerceIn(0, n - 1)
+        return pcm[p]
+    }
+
+    /**
      * Infer single chunk [2][chunkSize]. Returns [4][2][chunkSize] output stems.
+     * App stem order: Vocals (0), Drums (1), Bass (2), Other (3).
      */
     fun inferChunk(inChunk: Array<FloatArray>, chunkSize: Int): Array<Array<FloatArray>>? = synchronized(sessionLock) {
         if (closed) return@synchronized null
@@ -267,36 +360,128 @@ class StemSeparator(private val context: Context) {
         val env = ortEnv ?: return@synchronized null
 
         try {
-            // Flatten inChunk into float buffer: Left channel first, then Right channel (shape [1, 2, chunkSize])
-            val inBuf = ByteBuffer.allocateDirect(2 * chunkSize * 4)
+            val inLen = minOf(chunkSize, SEGMENT_SAMPLES)
+
+            // 1. STFT forward pass: prepare float buffer for tensor "mix_spec" [1, 4, 2049, 476]
+            val totalMixFloats = 1 * 4 * 2049 * N_FRAMES
+            val mixBuf = ByteBuffer.allocateDirect(totalMixFloats * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer()
 
-            inBuf.put(inChunk[0], 0, chunkSize)
-            inBuf.put(inChunk[1], 0, chunkSize)
-            inBuf.rewind()
+            val mixArray = FloatArray(totalMixFloats)
+            val reBuf = FloatArray(N_FFT)
+            val imBuf = FloatArray(N_FFT)
+            val scale = 1.0f / 64.0f // 1 / sqrt(4096)
 
-            val tensorShape = longArrayOf(1, 2, chunkSize.toLong())
-            val tensor = OnnxTensor.createTensor(env, inBuf, tensorShape)
+            for (ch in 0..1) {
+                val pcm = inChunk[ch]
+                val chPcmLen = minOf(pcm.size, inLen)
+
+                for (t in 0 until N_FRAMES) {
+                    val frameStart = t * HOP_SIZE - PAD_SAMPLES
+
+                    for (n in 0 until N_FFT) {
+                        val sampleIdx = frameStart + n
+                        reBuf[n] = getReflectSample(sampleIdx, chPcmLen, pcm)
+                        imBuf[n] = 0.0f
+                    }
+
+                    radix2Fft.fft(reBuf, imBuf)
+
+                    val baseReCh = if (ch == 0) 0 else 2
+                    val baseImCh = if (ch == 0) 1 else 3
+
+                    for (f in 0..2048) {
+                        val reIdx = (baseReCh * 2049 + f) * N_FRAMES + t
+                        val imIdx = (baseImCh * 2049 + f) * N_FRAMES + t
+                        mixArray[reIdx] = reBuf[f] * scale
+                        mixArray[imIdx] = imBuf[f] * scale
+                    }
+                }
+            }
+
+            mixBuf.put(mixArray)
+            mixBuf.rewind()
+
+            val tensorShape = longArrayOf(1, 4, 2049, N_FRAMES.toLong())
+            val inputTensor = OnnxTensor.createTensor(env, mixBuf, tensorShape)
             var result: OrtSession.Result? = null
 
             try {
-                result = session.run(mapOf(inputName to tensor))
+                result = session.run(mapOf("mix_spec" to inputTensor))
                 val outputTensor = result.get(0) as? OnnxTensor ?: return@synchronized null
-                val outFloatBuf = outputTensor.floatBuffer
+                val stemsBuf = outputTensor.floatBuffer
+                stemsBuf.rewind()
 
-                val outStems = Array(4) { Array(2) { FloatArray(chunkSize) } }
-                outFloatBuf.rewind()
+                val stemsArray = FloatArray(1 * 16 * 2049 * N_FRAMES)
+                stemsBuf.get(stemsArray)
 
-                // Output tensor is [1, 4, 2, chunkSize]: 4 stems, 2 channels each, chunkSize floats each
-                for (s in 0 until 4) {
+                val chunkStems = Array(4) { Array(2) { FloatArray(chunkSize) } }
+                val outAccum = FloatArray(PADDED_SAMPLES)
+                val winSqAccum = FloatArray(PADDED_SAMPLES)
+
+                // Model sources: 0=DRUMS, 1=BASS, 2=OTHER, 3=VOCALS
+                // Remap to app stem cache order: 0=VOCALS, 1=DRUMS, 2=BASS, 3=OTHER
+                for (appStem in 0 until 4) {
+                    val modelSource = when (appStem) {
+                        0 -> 3 // VOCALS
+                        1 -> 0 // DRUMS
+                        2 -> 1 // BASS
+                        3 -> 2 // OTHER
+                        else -> 0
+                    }
+
                     for (ch in 0..1) {
-                        outFloatBuf.get(outStems[s][ch], 0, chunkSize)
+                        val reCh = modelSource * 4 + (if (ch == 0) 0 else 2)
+                        val imCh = modelSource * 4 + (if (ch == 0) 1 else 3)
+
+                        outAccum.fill(0f)
+                        winSqAccum.fill(0f)
+
+                        for (t in 0 until N_FRAMES) {
+                            for (f in 0..2048) {
+                                val reVal = stemsArray[(reCh * 2049 + f) * N_FRAMES + t]
+                                val imVal = stemsArray[(imCh * 2049 + f) * N_FRAMES + t]
+                                reBuf[f] = reVal
+                                imBuf[f] = imVal
+                            }
+
+                            for (f in 1 until 2048) {
+                                reBuf[N_FFT - f] = reBuf[f]
+                                imBuf[N_FFT - f] = -imBuf[f]
+                            }
+                            imBuf[0] = 0f
+                            imBuf[2048] = 0f
+
+                            radix2Fft.ifft(reBuf, imBuf)
+
+                            val offset = t * HOP_SIZE
+                            for (n in 0 until N_FFT) {
+                                if (offset + n < PADDED_SAMPLES) {
+                                    outAccum[offset + n] += reBuf[n]
+                                    winSqAccum[offset + n] += 1.0f
+                                }
+                            }
+                        }
+
+                        // Divide by window square envelope
+                        for (i in 0 until PADDED_SAMPLES) {
+                            val w = winSqAccum[i]
+                            if (w > 1e-6f) outAccum[i] /= w
+                        }
+
+                        // Remove 2048 center padding
+                        val dst = chunkStems[appStem][ch]
+                        val copyLen = minOf(chunkSize, SEGMENT_SAMPLES)
+                        for (i in 0 until copyLen) {
+                            dst[i] = outAccum[PAD_SAMPLES + i]
+                        }
                     }
                 }
-                outStems
+
+                chunkStems
             } finally {
-                tensor.close()
+                inputTensor.close()
                 result?.close()
             }
         } catch (e: Exception) {
@@ -305,10 +490,6 @@ class StemSeparator(private val context: Context) {
         }
     }
 
-    /**
-     * Separates complete song audio into 4 stems on background thread.
-     * [inputPcm]: Interleaved stereo float array @ 44.1 kHz.
-     */
     suspend fun separate(
         inputPcm: FloatArray,
         progressCallback: (Float) -> Unit,
@@ -321,8 +502,8 @@ class StemSeparator(private val context: Context) {
 
         processOverlapAdd(
             inputPcm = inputPcm,
-            chunkSizeFrames = 441000,
-            hopSizeFrames = 220500,
+            chunkSizeFrames = 485100,
+            hopSizeFrames = 121275,
             progressCallback = progressCallback,
             isCancelled = isCancelled
         ) { inChunk, numFrames ->

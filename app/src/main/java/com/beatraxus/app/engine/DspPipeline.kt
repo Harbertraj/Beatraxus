@@ -294,12 +294,6 @@ private class StemMixerProcessor(
 
         val songId = s.id
 
-        if (StemSeparator.isModelInstalled(context) && !StemCache.isStemsCached(context, songId)) {
-            StemSeparatorManager.requestSeparation(context, s)
-            currentFrame += input.sampleCount / channels
-            return input
-        }
-
         if (!StemCache.isStemsCached(context, songId)) {
             currentFrame += input.sampleCount / channels
             return input

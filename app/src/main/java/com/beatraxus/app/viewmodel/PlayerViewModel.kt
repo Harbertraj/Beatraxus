@@ -37,6 +37,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
+import com.beatraxus.app.engine.StemSeparator
+import com.beatraxus.app.engine.StemSeparatorManager
 import com.beatraxus.app.model.LrcLine
 import com.beatraxus.app.model.withSurroundKnob
 import com.beatraxus.app.model.withSurroundLab
@@ -45,6 +47,7 @@ import com.beatraxus.app.model.withSurroundMove
 import com.beatraxus.app.model.withSurroundPosition
 import com.beatraxus.app.model.withSurroundPositionPreset
 import com.beatraxus.app.model.withSurroundPositionReset
+import com.beatraxus.app.model.activeStemMix
 import com.beatraxus.app.model.withStemGain
 import com.beatraxus.app.model.withStemMixPreset
 import com.beatraxus.app.model.withStemMixReset
@@ -2017,6 +2020,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             handleSongChangeForSleepTimer(pbState.currentSong)
                             fetchOnlineInfo(pbState.currentSong)
                             loadLyrics(pbState.currentSong)
+                            triggerStemSeparationIfNecessary(song = pbState.currentSong)
                             // Ensure preloading is triggered on song change
                             service?.let { svc ->
                                 preloadUpcomingLyrics(svc.getUpcomingSongs().take(15))
@@ -3906,11 +3910,24 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val updated = transform(_uiState.value.dsp.config)
         _uiState.update { it.copy(dsp = it.dsp.copy(config = updated, autoEqError = null)) }
         service?.updateDspConfig(updated)
+        triggerStemSeparationIfNecessary(config = updated)
 
         dspSaveJob?.cancel()
         dspSaveJob = viewModelScope.launch {
             delay(500) // Debounce saving to disk
             dspPreferences.saveConfig(updated, dspPreferences.getCurrentDeviceId())
+        }
+    }
+
+    private fun triggerStemSeparationIfNecessary(
+        song: com.beatraxus.app.model.Song? = _uiState.value.currentSong,
+        config: DspConfig = _uiState.value.dsp.config
+    ) {
+        val s = song ?: return
+        if (config.stemMixerEnabled && config.activeStemMix() != "Original") {
+            if (StemSeparator.isModelInstalled(getApplication())) {
+                StemSeparatorManager.requestSeparation(getApplication(), s)
+            }
         }
     }
 

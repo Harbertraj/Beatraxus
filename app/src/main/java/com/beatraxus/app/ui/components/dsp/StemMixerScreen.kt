@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MusicNote
@@ -60,6 +61,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.beatraxus.app.engine.StemModelDownloadState
+import com.beatraxus.app.engine.StemModelDownloader
 import com.beatraxus.app.engine.StemSeparationState
 import com.beatraxus.app.engine.StemSeparator
 import com.beatraxus.app.engine.StemSeparatorManager
@@ -87,7 +90,8 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val pal = DspPaletteState.current
     val accent = pal.accent
 
-    val isModelInstalled = remember(context) { StemSeparator.isModelInstalled(context) }
+    val downloaderState by StemModelDownloader.state.collectAsState()
+    val isModelInstalled = remember(downloaderState, context) { StemSeparator.isModelInstalled(context) }
     val sepState by StemSeparatorManager.state.collectAsState()
 
     val song = uiState.currentSong
@@ -171,10 +175,56 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             }
 
             if (!isModelInstalled) {
-                Text(
-                    "Preview: the splitter model is not bundled yet. Your mix is saved and will apply once it is.",
-                    color = amber.copy(0.85f), fontSize = 10.sp, lineHeight = 14.sp
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth().stemSubPanel(amber),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "Splitter model not installed (13 MB).",
+                        color = amber, fontSize = 11.sp, fontWeight = FontWeight.Bold
+                    )
+                    when (val dlState = downloaderState) {
+                        is StemModelDownloadState.Idle -> {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                StemActionButton("Download model", Icons.Rounded.Download, accent) {
+                                    StemModelDownloader.download(context)
+                                }
+                            }
+                        }
+                        is StemModelDownloadState.Downloading -> {
+                            val pct = (dlState.progress * 100).toInt()
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Downloading $pct%",
+                                    color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                StemActionButton("Cancel", Icons.Rounded.Close, red) {
+                                    StemModelDownloader.cancel()
+                                }
+                            }
+                            LinearProgressIndicator(
+                                progress = { dlState.progress },
+                                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                color = accent,
+                                trackColor = Color.White.copy(0.1f)
+                            )
+                        }
+                        is StemModelDownloadState.Failed -> {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    "Download failed: ${dlState.errorText}",
+                                    color = red, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                StemActionButton("Retry", Icons.Rounded.Refresh, accent) {
+                                    StemModelDownloader.download(context)
+                                }
+                            }
+                        }
+                        is StemModelDownloadState.Done -> {}
+                    }
+                }
             } else if (config.stemMixerEnabled) {
                 when (currentSepStatus) {
                     is StemSeparationState.Separating -> {
@@ -213,7 +263,7 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                     modifier = Modifier.weight(1f)
                                 )
                                 StemActionButton("Retry", Icons.Rounded.Refresh, accent) {
-                                    if (song != null) StemSeparatorManager.requestSeparation(context, song)
+                                    if (song != null) StemSeparatorManager.requestSeparation(context, song, force = true)
                                 }
                             }
                         }
