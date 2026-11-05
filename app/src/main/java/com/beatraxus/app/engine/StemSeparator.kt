@@ -157,7 +157,7 @@ class StemSeparator(private val context: Context) {
             val weightAccum = FloatArray(totalFrames)
 
             val hann = FloatArray(chunkSizeFrames) { i ->
-                0.5f * (1.0f - cos(2.0 * PI * i / chunkSizeFrames).toFloat())
+                sin(PI * (i + 0.5) / chunkSizeFrames).let { (it * it).toFloat() }
             }
 
             var framePos = 0
@@ -196,7 +196,7 @@ class StemSeparator(private val context: Context) {
 
             val resultStems = Array(numStems) { FloatArray(totalFrames * 2) }
             for (f in 0 until totalFrames) {
-                val w = if (weightAccum[f] > 1e-6f) weightAccum[f] else 1.0f
+                val w = if (weightAccum[f] > 1e-30f) weightAccum[f] else 1.0f
                 val invW = 1.0f / w
                 for (s in 0 until numStems) {
                     val stemOut = resultStems[s]
@@ -236,18 +236,8 @@ class StemSeparator(private val context: Context) {
 
             var session: OrtSession? = null
 
-            // 1. NNAPI
-            try {
-                val opts = OrtSession.SessionOptions()
-                opts.addNnapi()
-                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                session = ortEnv?.createSession(modelFile.absolutePath, opts)
-                Log.i(TAG, "ONNX Runtime session created with NNAPI")
-            } catch (e: Throwable) {
-                Log.w(TAG, "NNAPI acceleration unavailable for SCNet, trying XNNPACK: ${e.message}")
-            }
-
-            // 2. XNNPACK
+            // NNAPI is skipped on purpose: it can silently mis-run large int8 spectrogram models.
+            // 1. XNNPACK
             if (session == null) {
                 try {
                     val opts = OrtSession.SessionOptions()
@@ -260,7 +250,7 @@ class StemSeparator(private val context: Context) {
                 }
             }
 
-            // 3. CPU fallback
+            // 2. CPU fallback
             if (session == null) {
                 try {
                     val opts = OrtSession.SessionOptions()
@@ -368,7 +358,6 @@ class StemSeparator(private val context: Context) {
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer()
 
-            val mixArray = FloatArray(totalMixFloats)
             val reBuf = FloatArray(N_FFT)
             val imBuf = FloatArray(N_FFT)
             val scale = 1.0f / 64.0f // 1 / sqrt(4096)
@@ -394,13 +383,12 @@ class StemSeparator(private val context: Context) {
                     for (f in 0..2048) {
                         val reIdx = (baseReCh * 2049 + f) * N_FRAMES + t
                         val imIdx = (baseImCh * 2049 + f) * N_FRAMES + t
-                        mixArray[reIdx] = reBuf[f] * scale
-                        mixArray[imIdx] = imBuf[f] * scale
+                        mixBuf.put(reIdx, reBuf[f] * scale)
+                        mixBuf.put(imIdx, imBuf[f] * scale)
                     }
                 }
             }
 
-            mixBuf.put(mixArray)
             mixBuf.rewind()
 
             val tensorShape = longArrayOf(1, 4, 2049, N_FRAMES.toLong())
@@ -413,8 +401,10 @@ class StemSeparator(private val context: Context) {
                 val stemsBuf = outputTensor.floatBuffer
                 stemsBuf.rewind()
 
-                val stemsArray = FloatArray(1 * 16 * 2049 * N_FRAMES)
-                stemsBuf.get(stemsArray)
+                if (stemsBuf.capacity() < 16 * 2049 * N_FRAMES) {
+                    Log.e(TAG, "Unexpected SCNet output size ${stemsBuf.capacity()}")
+                    return@synchronized null
+                }
 
                 val chunkStems = Array(4) { Array(2) { FloatArray(chunkSize) } }
                 val outAccum = FloatArray(PADDED_SAMPLES)
@@ -440,8 +430,8 @@ class StemSeparator(private val context: Context) {
 
                         for (t in 0 until N_FRAMES) {
                             for (f in 0..2048) {
-                                val reVal = stemsArray[(reCh * 2049 + f) * N_FRAMES + t]
-                                val imVal = stemsArray[(imCh * 2049 + f) * N_FRAMES + t]
+                                val reVal = stemsBuf.get((reCh * 2049 + f) * N_FRAMES + t)
+                                val imVal = stemsBuf.get((imCh * 2049 + f) * N_FRAMES + t)
                                 reBuf[f] = reVal
                                 imBuf[f] = imVal
                             }

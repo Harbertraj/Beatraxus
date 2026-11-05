@@ -38,6 +38,8 @@ internal interface DspProcessor {
     fun updateOutputBitDepth(bitDepth: Int) {}
     fun updateAiEq(profile: AiEqProfile?) {}
     fun flush() {}
+    /** Called after a seek / pipeline swap so position-aware stages can realign to [positionMs]. */
+    fun seekTo(positionMs: Long) {}
     fun release() {}
     fun getLevels(): FloatArray = floatArrayOf(0f, 0f)
 }
@@ -227,6 +229,10 @@ internal class AudioDspPipeline(
         surroundUpmixer?.reset()
     }
 
+    fun seekTo(positionMs: Long) {
+        processors.forEach { it.seekTo(positionMs) }
+    }
+
     fun release() {
         processors.forEach { it.release() }
         surroundOutChannels = 0
@@ -258,7 +264,7 @@ internal class AudioDspPipeline(
             val effectiveInputRate = inputSampleRate.coerceAtLeast(8_000)
 
             if (context != null) {
-                processors += StemMixerProcessor(context, config, song)
+                processors += StemMixerProcessor(context, config, song, effectiveInputRate)
             }
             processors += NativeDspProcessor(config, effectiveInputRate, outputSampleRate, channels, outputBitDepth, song, aiEq)
 
@@ -270,10 +276,18 @@ internal class AudioDspPipeline(
 private class StemMixerProcessor(
     private val context: android.content.Context,
     config: DspConfig,
-    private val song: Song?
+    private val song: Song?,
+    private val inputSampleRate: Int
 ) : DspProcessor {
     private var currentConfig = config
-    private var currentFrame = 0L
+
+    /** Playback position in input-rate frames; realigned by [seekTo]. */
+    @Volatile private var currentFrame = 0L
+    private var ready = false
+    private var lastCheckNs = 0L
+    private var reader: StemCache.Reader? = null
+    private var stemBuf = FloatArray(0)
+    private var mixBuf = FloatArray(0)
 
     override fun updateConfig(config: DspConfig) {
         currentConfig = config
@@ -283,48 +297,81 @@ private class StemMixerProcessor(
         currentFrame = 0L
     }
 
+    override fun seekTo(positionMs: Long) {
+        currentFrame = positionMs * inputSampleRate / 1000L
+    }
+
+    override fun release() {
+        reader?.close()
+        reader = null
+    }
+
+    /** Throttled and sticky: the audio thread must not stat 5 files on every buffer. */
+    private fun cacheReady(songId: String): Boolean {
+        if (ready) return true
+        val now = System.nanoTime()
+        if (now - lastCheckNs < 500_000_000L) return false
+        lastCheckNs = now
+        ready = StemCache.isStemsCached(context, songId)
+        return ready
+    }
+
+    private fun gain(db: Float?): Float = if (db == null) 0f else Math.pow(10.0, db / 20.0).toFloat()
+
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         val s = song ?: return input
         val cfg = currentConfig
+        val numFrames = input.sampleCount / channels.coerceAtLeast(1)
 
-        if (!cfg.stemMixerEnabled || cfg.activeStemMix() == "Original") {
-            currentFrame += input.sampleCount / channels
-            return input
-        }
-
-        val songId = s.id
-
-        if (!StemCache.isStemsCached(context, songId)) {
-            currentFrame += input.sampleCount / channels
+        if (channels != 2 || !cfg.stemMixerEnabled || cfg.activeStemMix() == "Original" || !cacheReady(s.id)) {
+            currentFrame += numFrames
             return input
         }
 
         val gainsDb = cfg.stemEffectiveGainsDb()
-        val numFrames = input.sampleCount / channels
+        // App stem order: 0 vocals, 1 drums, 2 bass, 3 guitar, 4 piano, 5 other. The model has 4 sources.
+        val gains = floatArrayOf(gain(gainsDb.getOrNull(0)), gain(gainsDb.getOrNull(1)), gain(gainsDb.getOrNull(2)), gain(gainsDb.getOrNull(5)))
+
+        // Stems are 44.1 kHz; the stage may run at another rate, so read ceil(n * ratio) frames and resample.
+        val ratio = 44_100.0 / inputSampleRate
+        val srcStart = (currentFrame * ratio).toLong()
+        val srcFrames = Math.ceil(numFrames * ratio).toInt() + 2
+        if (stemBuf.size < srcFrames * 2) stemBuf = FloatArray(srcFrames * 2)
+        if (mixBuf.size < srcFrames * 2) mixBuf = FloatArray(srcFrames * 2)
+        java.util.Arrays.fill(mixBuf, 0, srcFrames * 2, 0f)
+
+        val r = reader ?: StemCache.Reader(context, s.id).also { reader = it }
+        var any = false
+        for (stem in 0 until 4) {
+            val g = gains[stem]
+            if (g <= 0f) continue
+            if (!r.read(stem, srcStart, srcFrames, stemBuf)) continue
+            any = true
+            for (i in 0 until srcFrames * 2) mixBuf[i] += stemBuf[i] * g
+        }
+
         val data = input.data
-
-        val gVocals = gainsDb.getOrNull(0)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
-        val gDrums = gainsDb.getOrNull(1)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
-        val gBass = gainsDb.getOrNull(2)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
-        val gOther = gainsDb.getOrNull(5)?.let { Math.pow(10.0, it / 20.0).toFloat() } ?: 0f
-
-        val stemBuf = FloatArray(numFrames * 2)
-
-        for (i in 0 until input.sampleCount) data[i] = 0f
-
-        if (gVocals > 0f && StemCache.readStemFrames(context, songId, 0, currentFrame, numFrames, stemBuf)) {
-            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gVocals
-        }
-        if (gDrums > 0f && StemCache.readStemFrames(context, songId, 1, currentFrame, numFrames, stemBuf)) {
-            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gDrums
-        }
-        if (gBass > 0f && StemCache.readStemFrames(context, songId, 2, currentFrame, numFrames, stemBuf)) {
-            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gBass
-        }
-        if (gOther > 0f && StemCache.readStemFrames(context, songId, 3, currentFrame, numFrames, stemBuf)) {
-            for (i in 0 until input.sampleCount) data[i] += stemBuf[i] * gOther
+        if (!any) {
+            // All stems muted => silence. Unreadable cache (or past the end of the stems) => pass the original through.
+            if (gains.all { it <= 0f }) java.util.Arrays.fill(data, 0, input.sampleCount, 0f)
+            currentFrame += numFrames
+            return input
         }
 
+        if (inputSampleRate == 44_100) {
+            System.arraycopy(mixBuf, 0, data, 0, numFrames * 2)
+        } else {
+            for (i in 0 until numFrames) {
+                val pos = i * ratio
+                val i0 = pos.toInt()
+                val f = (pos - i0).toFloat()
+                for (ch in 0..1) {
+                    val a = mixBuf[i0 * 2 + ch]
+                    val b = mixBuf[(i0 + 1) * 2 + ch]
+                    data[i * 2 + ch] = a + (b - a) * f
+                }
+            }
+        }
         currentFrame += numFrames
         return input
     }

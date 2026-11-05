@@ -1687,6 +1687,7 @@ class AudioEngine(
             ringBuffer.clear()
             output.flush()
             dspPipeline.flush()
+            dspPipeline.seekTo(positionMs)
             // BUGFIX: this used to be hardcoded to 0L, which made currentRenderedPositionMs()
             // compute elapsed time from the RAW absolute hardware frame counter (running since
             // the audio output was first created) instead of relative to this seeker point. That
@@ -1725,6 +1726,7 @@ class AudioEngine(
                         song = song,
                         aiEq = aiEqStore.get(song.id)
                     )
+                    newPipeline.seekTo(currentRenderedPositionMs())
                     dspPipeline = newPipeline
                     appliedDspRevision = dspRevision.get()
                     current

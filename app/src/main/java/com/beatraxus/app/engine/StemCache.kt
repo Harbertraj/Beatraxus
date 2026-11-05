@@ -114,4 +114,47 @@ object StemCache {
             false
         }
     }
+
+    /**
+     * Keeps the 4 stem files open and reuses one buffer, so the audio thread does no allocation or file opening per
+     * buffer. Close it when the song / pipeline goes away.
+     */
+    class Reader(private val context: Context, private val songId: String) : java.io.Closeable {
+        private val rafs = arrayOfNulls<RandomAccessFile>(STEM_FILENAMES.size)
+        private var bb: ByteBuffer = ByteBuffer.allocateDirect(1 shl 16).order(ByteOrder.nativeOrder())
+
+        /** Reads [frameCount] stereo frames at [frameOffset] into [out] (zero filled past EOF). False if unreadable. */
+        fun read(stemIndex: Int, frameOffset: Long, frameCount: Int, out: FloatArray): Boolean {
+            if (stemIndex !in STEM_FILENAMES.indices || out.size < frameCount * 2) return false
+            return try {
+                val raf = rafs[stemIndex] ?: RandomAccessFile(File(getStemsDir(context, songId), STEM_FILENAMES[stemIndex]), "r")
+                    .also { rafs[stemIndex] = it }
+                val byteOffset = frameOffset * 8
+                val size = raf.length()
+                if (byteOffset >= size) return false
+                val want = (minOf(frameCount * 8L, size - byteOffset).toInt()) and 7.inv()
+                if (bb.capacity() < want) bb = ByteBuffer.allocateDirect(want).order(ByteOrder.nativeOrder())
+                bb.clear()
+                bb.limit(want)
+                val ch = raf.channel
+                ch.position(byteOffset)
+                while (bb.hasRemaining()) if (ch.read(bb) < 0) break
+                bb.flip()
+                val floats = bb.remaining() / 4
+                bb.asFloatBuffer().get(out, 0, floats)
+                if (floats < frameCount * 2) out.fill(0f, floats, frameCount * 2)
+                true
+            } catch (e: Exception) {
+                Log.e(TAG, "Error reading stem frames: ${e.message}")
+                false
+            }
+        }
+
+        override fun close() {
+            for (i in rafs.indices) {
+                try { rafs[i]?.close() } catch (_: Throwable) {}
+                rafs[i] = null
+            }
+        }
+    }
 }

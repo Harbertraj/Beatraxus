@@ -32,6 +32,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -98,6 +99,13 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val songId = song?.id
     val currentSepStatus = remember(sepState, songId, context) {
         StemSeparatorManager.getStatusForSong(context, songId)
+    }
+
+    // Start separating right after the model is installed (the player only reacts to song / mix changes).
+    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, config.activeStemMix()) {
+        if (song != null && isModelInstalled && config.stemMixerEnabled && config.activeStemMix() != "Original") {
+            StemSeparatorManager.requestSeparation(context, song)
+        }
     }
 
     val bypassed = config.bypassAll || config.bitPerfectEnabled

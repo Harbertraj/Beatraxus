@@ -5,7 +5,10 @@ import android.util.Log
 import com.beatraxus.app.model.Song
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
+import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +19,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.PI
-import kotlin.math.cos
+import kotlin.math.sin
 
 sealed interface StemSeparationState {
     object Idle : StemSeparationState
@@ -49,6 +52,7 @@ object StemSeparatorManager {
         }
     }
 
+    @Synchronized
     fun requestSeparation(context: Context, song: Song, force: Boolean = false) {
         val songId = song.id
         val appContext = context.applicationContext
@@ -69,11 +73,16 @@ object StemSeparatorManager {
         cancelSeparation()
         activeSongId = songId
 
-        activeJob = scope.launch {
-            _state.value = StemSeparationState.Separating(songId, 0f)
+        activeJob = scope.launch(start = CoroutineStart.LAZY) {
+            val me = coroutineContext.job
+            // Only the job that is still the active one may publish state (cancelled / replaced jobs stay silent).
+            fun publish(st: StemSeparationState) {
+                synchronized(StemSeparatorManager) { if (activeJob === me) _state.value = st }
+            }
+            publish(StemSeparationState.Separating(songId, 0f))
 
             val separator = StemSeparator(appContext)
-            activeSeparator = separator
+            synchronized(StemSeparatorManager) { if (activeJob === me) activeSeparator = separator }
 
             val tempPcmFile = File(appContext.cacheDir, "temp_decode_$songId.pcm")
 
@@ -85,21 +94,21 @@ object StemSeparatorManager {
                     appContext,
                     song,
                     tempPcmFile,
-                    isCancelled = { activeJob?.isCancelled == true }
+                    isCancelled = { me.isCancelled }
                 )
 
-                if (totalFrames == null || totalFrames <= 0L || activeJob?.isCancelled == true) {
-                    if (activeJob?.isCancelled != true) {
-                        _state.value = StemSeparationState.Failed(songId, "Failed to decode song audio")
+                if (totalFrames == null || totalFrames <= 0L || me.isCancelled) {
+                    if (!me.isCancelled) {
+                        publish(StemSeparationState.Failed(songId, "Failed to decode song audio"))
                     } else {
-                        _state.value = StemSeparationState.Idle
+                        publish(StemSeparationState.Idle)
                     }
                     StemCache.deleteStems(appContext, songId)
                     return@launch
                 }
 
                 if (!separator.initialize()) {
-                    _state.value = StemSeparationState.Failed(songId, "Failed to initialize separator model")
+                    publish(StemSeparationState.Failed(songId, "Failed to initialize separator model"))
                     StemCache.deleteStems(appContext, songId)
                     return@launch
                 }
@@ -112,7 +121,7 @@ object StemSeparatorManager {
                 val outAccum = Array(4) { Array(2) { FloatArray(bufferCap) } }
                 val weightAccum = FloatArray(bufferCap)
                 val hann = FloatArray(chunkSize) { i ->
-                    0.5f * (1.0f - cos(2.0 * PI * i / chunkSize).toFloat())
+                    sin(PI * (i + 0.5) / chunkSize).let { (it * it).toFloat() }
                 }
 
                 val dir = StemCache.getStemsDir(appContext, songId)
@@ -129,7 +138,7 @@ object StemSeparatorManager {
                         val inByteBuf = ByteBuffer.allocateDirect(chunkSize * 8).order(ByteOrder.nativeOrder())
 
                         while (framePos < totalFrames) {
-                            if (activeJob?.isCancelled == true) throw CancellationException()
+                            if (me.isCancelled) throw CancellationException()
 
                             val framesInChunk = minOf(chunkSize.toLong(), totalFrames - framePos).toInt()
 
@@ -178,7 +187,7 @@ object StemSeparatorManager {
                                     outByteBuf.clear()
                                     val outFloats = outByteBuf.asFloatBuffer()
                                     for (i in 0 until numFlushed) {
-                                        val w = if (weightAccum[i] > 1e-6f) weightAccum[i] else 1.0f
+                                        val w = if (weightAccum[i] > 1e-30f) weightAccum[i] else 1.0f
                                         val invW = 1.0f / w
                                         outFloats.put(outAccum[s][0][i] * invW)
                                         outFloats.put(outAccum[s][1][i] * invW)
@@ -205,9 +214,12 @@ object StemSeparatorManager {
                                 baseFrame = finishedUntil
                             }
 
+                            // Final region flushed: stop (continuing would index before baseFrame).
+                            if (finishedUntil >= totalFrames) break
+
                             framePos += hopSize
                             val pct = (framePos.toFloat() / totalFrames).coerceIn(0f, 1f)
-                            _state.value = StemSeparationState.Separating(songId, pct)
+                            publish(StemSeparationState.Separating(songId, pct))
                         }
                     }
                 } finally {
@@ -217,29 +229,38 @@ object StemSeparatorManager {
                 }
 
                 StemCache.markStemsDone(appContext, songId)
-                _state.value = StemSeparationState.Ready(songId)
+                publish(StemSeparationState.Ready(songId))
                 Log.i(TAG, "Successfully separated and cached 4 stems for song $songId")
 
             } catch (e: CancellationException) {
                 StemCache.deleteStems(appContext, songId)
-                _state.value = StemSeparationState.Idle
+                publish(StemSeparationState.Idle)
             } catch (e: Exception) {
                 Log.e(TAG, "Separation error: ${e.message}", e)
                 StemCache.deleteStems(appContext, songId)
-                _state.value = StemSeparationState.Failed(songId, e.message ?: "Separation error")
+                publish(StemSeparationState.Failed(songId, e.message ?: "Separation error"))
             } finally {
                 if (tempPcmFile.exists()) tempPcmFile.delete()
                 separator.release()
-                if (activeSeparator == separator) activeSeparator = null
+                synchronized(StemSeparatorManager) {
+                    if (activeSeparator == separator) activeSeparator = null
+                    if (activeJob === me) {
+                        activeJob = null
+                        activeSongId = null
+                    }
+                }
             }
         }
+        activeJob?.start()
     }
 
+    @Synchronized
     fun cancelSeparation() {
-        val songId = activeSongId
         activeJob?.cancel()
         activeJob = null
-        activeSeparator?.release()
+        // release() waits for a running inference chunk: never block the caller (often the main thread) on it.
+        val old = activeSeparator
+        if (old != null) scope.launch(Dispatchers.IO) { old.release() }
         activeSeparator = null
         activeSongId = null
         _state.value = StemSeparationState.Idle
