@@ -70,12 +70,12 @@ object StemAudioDecoder {
 
             extractor.selectTrack(trackIndex)
 
-            val srcSampleRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else TARGET_SAMPLE_RATE
-            val srcChannels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
+            val headerRate = if (format.containsKey(MediaFormat.KEY_SAMPLE_RATE)) format.getInteger(MediaFormat.KEY_SAMPLE_RATE) else TARGET_SAMPLE_RATE
+            val headerChannels = if (format.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) format.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 2
 
-            try {
-                format.setInteger(MediaFormat.KEY_PCM_ENCODING, AudioFormat.ENCODING_PCM_FLOAT)
-            } catch (_: Throwable) {}
+            // Do NOT force KEY_PCM_ENCODING: on the pass-through raw decoder (FLAC / WAV arrive as audio/raw) that key
+            // describes the INPUT bytes, so forcing float made 16-bit samples be read as garbage floats (NaN / huge),
+            // which silenced the output and crashed the app. Whatever the codec outputs is converted below.
 
             codec = MediaCodec.createDecoderByType(mime)
             codec.configure(format, null, null, 0)
@@ -84,6 +84,9 @@ object StemAudioDecoder {
             val bufferInfo = MediaCodec.BufferInfo()
             var isEof = false
             var totalSrcFloats = 0L
+            // Real output layout; the track header can differ (and may be missing) so the output format wins.
+            var outChannels = headerChannels
+            var outRate = headerRate
 
             FileOutputStream(tempRawFile).use { fos ->
                 val channel = fos.channel
@@ -113,31 +116,55 @@ object StemAudioDecoder {
                         } else {
                             AudioFormat.ENCODING_PCM_16BIT
                         }
+                        if (outFormat.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) outChannels = outFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+                        if (outFormat.containsKey(MediaFormat.KEY_SAMPLE_RATE)) outRate = outFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceAtLeast(1)
 
                         if (outBuf != null && bufferInfo.size > 0) {
                             outBuf.position(bufferInfo.offset)
                             outBuf.limit(bufferInfo.offset + bufferInfo.size)
                             outBuf.order(ByteOrder.nativeOrder())
 
-                            val numFloats = if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                                bufferInfo.size / 4
-                            } else {
-                                bufferInfo.size / 2
+                            val bytesPer = when (pcmEncoding) {
+                                AudioFormat.ENCODING_PCM_FLOAT, AudioFormat.ENCODING_PCM_32BIT -> 4
+                                AudioFormat.ENCODING_PCM_24BIT_PACKED -> 3
+                                AudioFormat.ENCODING_PCM_8BIT -> 1
+                                else -> 2
                             }
+                            val numFloats = bufferInfo.size / bytesPer
 
                             val byteBuf = ByteBuffer.allocateDirect(numFloats * 4).order(ByteOrder.nativeOrder())
                             val floatBuf = byteBuf.asFloatBuffer()
 
-                            if (pcmEncoding == AudioFormat.ENCODING_PCM_FLOAT) {
-                                floatBuf.put(outBuf.asFloatBuffer())
-                            } else {
-                                val shortBuf = outBuf.asShortBuffer()
-                                while (shortBuf.hasRemaining()) {
-                                    floatBuf.put(shortBuf.get() / 32768.0f)
+                            when (pcmEncoding) {
+                                AudioFormat.ENCODING_PCM_FLOAT -> {
+                                    val fb = outBuf.asFloatBuffer()
+                                    for (k in 0 until numFloats) floatBuf.put(fb.get())
+                                }
+                                AudioFormat.ENCODING_PCM_32BIT -> {
+                                    val ib = outBuf.asIntBuffer()
+                                    for (k in 0 until numFloats) floatBuf.put(ib.get() / 2147483648.0f)
+                                }
+                                AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
+                                    var p = outBuf.position()
+                                    for (k in 0 until numFloats) {
+                                        val v = (outBuf.get(p).toInt() and 0xFF) or
+                                            ((outBuf.get(p + 1).toInt() and 0xFF) shl 8) or
+                                            (outBuf.get(p + 2).toInt() shl 16) // sign from the top byte
+                                        floatBuf.put(v / 8388608.0f)
+                                        p += 3
+                                    }
+                                }
+                                AudioFormat.ENCODING_PCM_8BIT -> {
+                                    for (k in 0 until numFloats) floatBuf.put(((outBuf.get().toInt() and 0xFF) - 128) / 128.0f)
+                                }
+                                else -> {
+                                    val shortBuf = outBuf.asShortBuffer()
+                                    for (k in 0 until numFloats) floatBuf.put(shortBuf.get() / 32768.0f)
                                 }
                             }
                             byteBuf.rewind()
-                            channel.write(byteBuf)
+                            byteBuf.limit(numFloats * 4)
+                            while (byteBuf.hasRemaining()) channel.write(byteBuf)
                             totalSrcFloats += numFloats
                         }
 
@@ -156,6 +183,8 @@ object StemAudioDecoder {
                 return@withContext null
             }
 
+            val srcChannels = outChannels
+            val srcSampleRate = outRate
             val numSrcFrames = (totalSrcFloats / srcChannels).toInt()
 
             // Stream remapped and resampled PCM into outputFile
@@ -166,7 +195,13 @@ object StemAudioDecoder {
 
                     if (srcChannels == 2 && srcSampleRate == TARGET_SAMPLE_RATE) {
                         // Direct copy
-                        rawChannel.transferTo(0, rawChannel.size(), outChannel)
+                        var pos = 0L
+                        val total = rawChannel.size()
+                        while (pos < total) {
+                            val n = rawChannel.transferTo(pos, total - pos, outChannel)
+                            if (n <= 0) break
+                            pos += n
+                        }
                         return@withContext numSrcFrames.toLong()
                     }
 
@@ -183,8 +218,8 @@ object StemAudioDecoder {
                             val framesToRead = minOf(chunkSize, numSrcFrames - framesRead)
                             inBuffer.clear()
                             inBuffer.limit(framesToRead * srcChannels * 4)
-                            rawChannel.read(inBuffer)
-                            inBuffer.rewind()
+                            while (inBuffer.hasRemaining()) if (rawChannel.read(inBuffer) < 0) break
+                            inBuffer.flip()
 
                             val srcFloats = inBuffer.asFloatBuffer()
                             outBuffer.clear()
@@ -203,54 +238,51 @@ object StemAudioDecoder {
                             }
                             outBuffer.rewind()
                             outBuffer.limit(framesToRead * 2 * 4)
-                            outChannel.write(outBuffer)
+                            while (outBuffer.hasRemaining()) outChannel.write(outBuffer)
                             framesRead += framesToRead
                         }
                         return@withContext targetFrames.toLong()
                     } else {
-                        // Resample loop
+                        // Linear resample, one block read per output block (it used to seek twice per output frame).
                         var targetFrameIdx = 0
-                        val srcFrameBuf = FloatArray(2 * srcChannels)
+                        val ratio = srcSampleRate.toDouble() / TARGET_SAMPLE_RATE
+                        var win = FloatArray(0)
                         while (targetFrameIdx < targetFrames) {
                             if (isCancelled()) return@withContext null
                             val framesToProcess = minOf(chunkSize, targetFrames - targetFrameIdx)
                             outBuffer.clear()
                             val outFloats = outBuffer.asFloatBuffer()
 
+                            val first = floor(targetFrameIdx * ratio).toInt().coerceIn(0, numSrcFrames - 1)
+                            val last = (floor((targetFrameIdx + framesToProcess) * ratio).toInt() + 1).coerceIn(first, numSrcFrames - 1)
+                            val winFrames = last - first + 1
+                            if (win.size < winFrames * srcChannels) win = FloatArray(winFrames * srcChannels)
+                            val winBytes = ByteBuffer.allocateDirect(winFrames * srcChannels * 4).order(ByteOrder.nativeOrder())
+                            rawChannel.position(first.toLong() * srcChannels * 4)
+                            while (winBytes.hasRemaining()) if (rawChannel.read(winBytes) < 0) break
+                            winBytes.flip()
+                            val got = winBytes.remaining() / 4
+                            winBytes.asFloatBuffer().get(win, 0, got)
+                            if (got < winFrames * srcChannels) java.util.Arrays.fill(win, got, winFrames * srcChannels, 0f)
+
                             for (i in 0 until framesToProcess) {
-                                val currentTargetFrame = targetFrameIdx + i
-                                val srcPos = currentTargetFrame.toDouble() * srcSampleRate / TARGET_SAMPLE_RATE
-                                val idx0 = floor(srcPos).toInt().coerceIn(0, numSrcFrames - 1)
-                                val idx1 = (idx0 + 1).coerceIn(0, numSrcFrames - 1)
-                                val frac = (srcPos - idx0).toFloat()
-
-                                // Read samples for idx0 and idx1
-                                rawChannel.position(idx0.toLong() * srcChannels * 4)
-                                inBuffer.clear()
-                                inBuffer.limit(srcChannels * 4)
-                                rawChannel.read(inBuffer)
-                                inBuffer.rewind()
-                                val f0Buf = inBuffer.asFloatBuffer()
-
-                                rawChannel.position(idx1.toLong() * srcChannels * 4)
-                                inBuffer.clear()
-                                inBuffer.limit(srcChannels * 4)
-                                rawChannel.read(inBuffer)
-                                inBuffer.rewind()
-                                val f1Buf = inBuffer.asFloatBuffer()
-
-                                val l0 = f0Buf.get(0)
-                                val r0 = if (srcChannels >= 2) f0Buf.get(1) else l0
-                                val l1 = f1Buf.get(0)
-                                val r1 = if (srcChannels >= 2) f1Buf.get(1) else l1
-
+                                val srcPos = (targetFrameIdx + i) * ratio
+                                val idx0 = floor(srcPos).toInt().coerceIn(first, last)
+                                val idx1 = (idx0 + 1).coerceIn(first, last)
+                                val frac = (srcPos - idx0).toFloat().coerceIn(0f, 1f)
+                                val o0 = (idx0 - first) * srcChannels
+                                val o1 = (idx1 - first) * srcChannels
+                                val l0 = win[o0]
+                                val r0 = if (srcChannels >= 2) win[o0 + 1] else l0
+                                val l1 = win[o1]
+                                val r1 = if (srcChannels >= 2) win[o1 + 1] else l1
                                 outFloats.put(l0 * (1.0f - frac) + l1 * frac)
                                 outFloats.put(r0 * (1.0f - frac) + r1 * frac)
                             }
 
                             outBuffer.rewind()
                             outBuffer.limit(framesToProcess * 2 * 4)
-                            outChannel.write(outBuffer)
+                            while (outBuffer.hasRemaining()) outChannel.write(outBuffer)
                             targetFrameIdx += framesToProcess
                         }
                         return@withContext targetFrames.toLong()

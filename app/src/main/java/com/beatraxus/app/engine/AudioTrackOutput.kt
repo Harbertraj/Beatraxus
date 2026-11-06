@@ -925,6 +925,7 @@ class AudioTrackOutput(
             if (len <= 0) return
             val snap = FloatArray(len)
             System.arraycopy(data, offsetInSamples, snap, 0, len)
+            for (i in 0 until len) { val v = snap[i]; if (v - v != 0f) snap[i] = 0f } // keep NaN out of the UI meters
             liveCaptureSamples = snap
             liveCaptureChannels = ch
         } catch (_: Exception) {}

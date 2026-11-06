@@ -87,6 +87,7 @@ object StemSeparatorManager {
             val tempPcmFile = File(appContext.cacheDir, "temp_decode_$songId.pcm")
 
             try {
+                StemCache.purgeOutdated(appContext)
                 StemCache.deleteStems(appContext, songId)
 
                 // Step 1: Decode song audio to 44.1 kHz stereo float temp file
@@ -114,8 +115,8 @@ object StemSeparatorManager {
                 }
 
                 // Step 2: Streaming separation into cache files
-                val chunkSize = 485100
-                val hopSize = 121275
+                val chunkSize = StemSeparator.SEGMENT_SAMPLES
+                val hopSize = StemSeparator.HOP_FRAMES
                 val bufferCap = chunkSize + hopSize
 
                 val outAccum = Array(4) { Array(2) { FloatArray(bufferCap) } }
@@ -129,13 +130,19 @@ object StemSeparatorManager {
                     RandomAccessFile(File(dir, StemCache.STEM_FILENAMES[i]), "rw")
                 }
 
+                // Buffers reused for every chunk (they used to be allocated again each time).
+                val inChunk = Array(2) { FloatArray(chunkSize) }
+                val inByteBuf = ByteBuffer.allocateDirect(chunkSize * 8).order(ByteOrder.nativeOrder())
+                val outByteBuf = ByteBuffer.allocateDirect(bufferCap * 8).order(ByteOrder.nativeOrder())
+
                 var baseFrame = 0L
                 var framePos = 0L
+                var chunks = 0
+                val tStart = System.nanoTime()
 
                 try {
                     RandomAccessFile(tempPcmFile, "r").use { tempRaf ->
                         val tempChannel = tempRaf.channel
-                        val inByteBuf = ByteBuffer.allocateDirect(chunkSize * 8).order(ByteOrder.nativeOrder())
 
                         while (framePos < totalFrames) {
                             if (me.isCancelled) throw CancellationException()
@@ -145,18 +152,24 @@ object StemSeparatorManager {
                             inByteBuf.clear()
                             inByteBuf.limit(framesInChunk * 8)
                             tempChannel.position(framePos * 8)
-                            tempChannel.read(inByteBuf)
-                            inByteBuf.rewind()
+                            while (inByteBuf.hasRemaining()) if (tempChannel.read(inByteBuf) < 0) break
+                            inByteBuf.flip()
                             val inFloats = inByteBuf.asFloatBuffer()
 
-                            val inChunk = Array(2) { FloatArray(chunkSize) }
-                            for (i in 0 until framesInChunk) {
+                            val readFrames = inFloats.remaining() / 2
+                            for (i in 0 until readFrames) {
                                 inChunk[0][i] = inFloats.get()
                                 inChunk[1][i] = inFloats.get()
                             }
+                            java.util.Arrays.fill(inChunk[0], readFrames, chunkSize, 0f)
+                            java.util.Arrays.fill(inChunk[1], readFrames, chunkSize, 0f)
+                            // The decoder is trusted no more: one NaN here would poison the whole model run.
+                            StemDsp.sanitize(inChunk[0], 0, readFrames, 1e3f)
+                            StemDsp.sanitize(inChunk[1], 0, readFrames, 1e3f)
 
                             val chunkStems = separator.inferChunk(inChunk, chunkSize)
-                                ?: throw Exception("Inference chunk failed")
+                                ?: throw Exception(separator.lastError ?: "Inference chunk failed")
+                            chunks++
 
                             // Accumulate
                             for (s in 0 until 4) {
@@ -164,16 +177,13 @@ object StemSeparatorManager {
                                     val stemCh = chunkStems[s][ch]
                                     val outCh = outAccum[s][ch]
                                     for (i in 0 until framesInChunk) {
-                                        val targetFrame = framePos + i
-                                        val relIdx = (targetFrame - baseFrame).toInt()
-                                        val w = hann[i]
-                                        outCh[relIdx] += stemCh[i] * w
+                                        val relIdx = (framePos + i - baseFrame).toInt()
+                                        outCh[relIdx] += stemCh[i] * hann[i]
                                     }
                                 }
                             }
                             for (i in 0 until framesInChunk) {
-                                val targetFrame = framePos + i
-                                val relIdx = (targetFrame - baseFrame).toInt()
+                                val relIdx = (framePos + i - baseFrame).toInt()
                                 weightAccum[relIdx] += hann[i]
                             }
 
@@ -182,7 +192,6 @@ object StemSeparatorManager {
                             val numFlushed = (finishedUntil - baseFrame).toInt()
 
                             if (numFlushed > 0) {
-                                val outByteBuf = ByteBuffer.allocateDirect(numFlushed * 8).order(ByteOrder.nativeOrder())
                                 for (s in 0 until 4) {
                                     outByteBuf.clear()
                                     val outFloats = outByteBuf.asFloatBuffer()
@@ -192,12 +201,12 @@ object StemSeparatorManager {
                                         outFloats.put(outAccum[s][0][i] * invW)
                                         outFloats.put(outAccum[s][1][i] * invW)
                                     }
-                                    outByteBuf.rewind()
+                                    outByteBuf.position(0)
                                     outByteBuf.limit(numFlushed * 8)
 
                                     val chnl = stemRafs[s].channel
                                     chnl.position(baseFrame * 8)
-                                    chnl.write(outByteBuf)
+                                    while (outByteBuf.hasRemaining()) chnl.write(outByteBuf)
                                 }
 
                                 // Shift accumulators left
@@ -227,6 +236,11 @@ object StemSeparatorManager {
                         try { raf.close() } catch (_: Throwable) {}
                     }
                 }
+                Log.i(
+                    TAG,
+                    "Separation of $songId: $chunks chunks, ${totalFrames / StemSeparator.SAMPLE_RATE} s of audio in " +
+                        "${(System.nanoTime() - tStart) / 1_000_000} ms"
+                )
 
                 StemCache.markStemsDone(appContext, songId)
                 publish(StemSeparationState.Ready(songId))

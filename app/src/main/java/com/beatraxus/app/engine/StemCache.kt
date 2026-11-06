@@ -12,6 +12,12 @@ object StemCache {
     val STEM_FILENAMES = arrayOf("vocals.pcm", "drums.pcm", "bass.pcm", "other.pcm")
     private const val DONE_FILENAME = "done"
 
+    /**
+     * Bump when the stem format or quality changes. Version 2: stems made before the decoder fix were built from
+     * garbage (16-bit FLAC read as float), so they are silent, noisy or NaN and must be separated again.
+     */
+    private const val CACHE_VERSION = "2"
+
     fun getStemsDir(context: Context, songId: String): File {
         val safeId = songId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val dir = File(File(context.cacheDir, "stems"), safeId)
@@ -22,7 +28,7 @@ object StemCache {
     fun isStemsCached(context: Context, songId: String): Boolean {
         val dir = getStemsDir(context, songId)
         if (!dir.exists() || !dir.isDirectory) return false
-        if (!File(dir, DONE_FILENAME).exists()) return false
+        if (!isCurrentMarker(File(dir, DONE_FILENAME))) return false
         for (name in STEM_FILENAMES) {
             val f = File(dir, name)
             if (!f.exists() || f.length() <= 0) return false
@@ -33,9 +39,25 @@ object StemCache {
     fun markStemsDone(context: Context, songId: String) {
         val dir = getStemsDir(context, songId)
         try {
-            File(dir, DONE_FILENAME).createNewFile()
+            File(dir, DONE_FILENAME).writeText(CACHE_VERSION)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to write done marker for $songId: ${e.message}")
+        }
+    }
+
+    private fun isCurrentMarker(f: File): Boolean =
+        f.isFile && try { f.readText().trim() == CACHE_VERSION } catch (_: Exception) { false }
+
+    /** Deletes stem folders written by an older version (their done marker has another version). */
+    fun purgeOutdated(context: Context) {
+        try {
+            val root = File(context.cacheDir, "stems")
+            root.listFiles()?.forEach { d ->
+                val marker = File(d, DONE_FILENAME)
+                if (d.isDirectory && marker.exists() && !isCurrentMarker(marker)) d.deleteRecursively()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "purgeOutdated failed: ${e.message}")
         }
     }
 

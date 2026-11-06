@@ -435,7 +435,8 @@ fun DspScreen(
                     for (f in 0 until frames) {
                         val l = capture.samples[f * ch]
                         val r = if (ch > 1) capture.samples[f * ch + 1] else l
-                        ring[ringPos] = (l + r) * 0.5f
+                        val m = (l + r) * 0.5f
+                        ring[ringPos] = if (m - m != 0f) 0f else m // NaN / Infinity would make every bar NaN
                         ringPos = (ringPos + 1) % fftSize
                     }
                     val windowed = FloatArray(fftSize) { idx ->
@@ -461,7 +462,8 @@ fun DspScreen(
                         }
                         if (count > 0) {
                             val boost = 1.0f + (b.toFloat() / bars.size) * 1.5f
-                            bars[b] = (sum / count / (fftSize / 8f) * boost).coerceIn(0f, 1f)
+                            val v = sum / count / (fftSize / 8f) * boost
+                            bars[b] = if (v - v != 0f) 0f else v.coerceIn(0f, 1f)
                         }
                     }
                     // fast attack, smooth release
@@ -2565,7 +2567,9 @@ private fun EqPreviewGraph(bands: List<ParametricEqBand>, enabled: Boolean, show
             val barW = (w / fftBars.size) - barGap
             val cornerRadius = CornerRadius(barW / 2f, barW / 2f)
 
-            fftBars.forEachIndexed { i, mag ->
+            fftBars.forEachIndexed { i, rawMag ->
+                // Brush.verticalGradient throws IllegalArgumentException on NaN / Infinity coordinates.
+                val mag = if (rawMag - rawMag != 0f) 0f else rawMag.coerceIn(0f, 1f)
                 val x = i * (barW + barGap)
                 val barH = (mag * h * 0.45f).coerceAtLeast(2f)
 

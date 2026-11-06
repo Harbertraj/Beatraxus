@@ -349,6 +349,8 @@ private class StemMixerProcessor(
             any = true
             for (i in 0 until srcFrames * 2) mixBuf[i] += stemBuf[i] * g
         }
+        // Stems from an old / broken cache must never push NaN into the filter chain (it would stay there forever).
+        if (any) StemDsp.sanitize(mixBuf, 0, srcFrames * 2)
 
         val data = input.data
         if (!any) {

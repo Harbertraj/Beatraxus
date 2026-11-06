@@ -12,100 +12,17 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.nio.FloatBuffer
 import kotlin.math.PI
-import kotlin.math.cos
 import kotlin.math.sin
-
-/**
- * Radix-2 FFT implementation for size N=4096 with precomputed twiddle tables.
- */
-class Radix2FFT(val n: Int = 4096) {
-    private val logN = 31 - Integer.numberOfLeadingZeros(n)
-    private val bitRev = IntArray(n) { i ->
-        var rev = 0
-        var temp = i
-        for (j in 0 until logN) {
-            rev = (rev shl 1) or (temp and 1)
-            temp = temp ushr 1
-        }
-        rev
-    }
-
-    private val cosTable = FloatArray(n / 2)
-    private val sinTable = FloatArray(n / 2)
-
-    init {
-        for (i in 0 until n / 2) {
-            val angle = 2.0 * PI * i / n
-            cosTable[i] = cos(angle).toFloat()
-            sinTable[i] = sin(angle).toFloat()
-        }
-    }
-
-    fun fft(re: FloatArray, im: FloatArray) {
-        transform(re, im, inverse = false)
-    }
-
-    fun ifft(re: FloatArray, im: FloatArray) {
-        transform(re, im, inverse = true)
-    }
-
-    private fun transform(re: FloatArray, im: FloatArray, inverse: Boolean) {
-        for (i in 0 until n) {
-            val j = bitRev[i]
-            if (i < j) {
-                val tempR = re[i]
-                re[i] = re[j]
-                re[j] = tempR
-                val tempI = im[i]
-                im[i] = im[j]
-                im[j] = tempI
-            }
-        }
-
-        var len = 2
-        while (len <= n) {
-            val halfLen = len / 2
-            val step = n / len
-            for (i in 0 until n step len) {
-                for (j in 0 until halfLen) {
-                    val tableIdx = j * step
-                    val cosW = cosTable[tableIdx]
-                    val sinW = if (inverse) sinTable[tableIdx] else -sinTable[tableIdx]
-
-                    val reRight = re[i + j + halfLen]
-                    val imRight = im[i + j + halfLen]
-
-                    val tRe = reRight * cosW - imRight * sinW
-                    val tIm = reRight * sinW + imRight * cosW
-
-                    val uRe = re[i + j]
-                    val uIm = im[i + j]
-
-                    re[i + j] = uRe + tRe
-                    im[i + j] = uIm + tIm
-                    re[i + j + halfLen] = uRe - tRe
-                    im[i + j + halfLen] = uIm - tIm
-                }
-            }
-            len = len shl 1
-        }
-
-        if (inverse) {
-            // Incorporate scale 1/64.0f (undoes 1/sqrt(4096) STFT scale)
-            val scale = 1.0f / 64.0f
-            for (i in 0 until n) {
-                re[i] *= scale
-                im[i] *= scale
-            }
-        }
-    }
-}
 
 /**
  * AI-powered Stem Separation Engine using SCNet int8 ONNX model.
  * Separates stereo audio waveform @ 44.1 kHz into 4 stems: Vocals, Drums, Bass, Other.
- * Uses ONNX Runtime with NNAPI / XNNPACK / CPU fallback, guarded by a session lock.
+ * Uses ONNX Runtime with XNNPACK / CPU fallback, guarded by a session lock.
+ *
+ * The FFT maths lives in [StemDsp]. One instance keeps its big work buffers (about 15 MB of input spectrogram, the
+ * per-chunk stem arrays) for its whole life instead of allocating them again for every 11 second chunk.
  */
 class StemSeparator(private val context: Context) {
 
@@ -115,12 +32,29 @@ class StemSeparator(private val context: Context) {
         private const val ASSET_PATH = "models/$MODEL_FILENAME"
 
         const val SAMPLE_RATE = 44100
-        const val N_FFT = 4096
-        const val HOP_SIZE = 1024
-        const val N_FRAMES = 476
-        const val SEGMENT_SAMPLES = 485100 // 11 s @ 44.1 kHz
-        const val PAD_SAMPLES = 2048
-        const val PADDED_SAMPLES = 490496 // 2048 + 485100 + 2048 extended to fit 476 frames
+        const val N_FFT = StemDsp.N_FFT
+        const val HOP_SIZE = StemDsp.HOP_SIZE
+        const val N_FRAMES = StemDsp.N_FRAMES
+        const val SEGMENT_SAMPLES = StemDsp.SEGMENT_SAMPLES // 11 s @ 44.1 kHz
+        const val PAD_SAMPLES = StemDsp.PAD_SAMPLES
+        const val PADDED_SAMPLES = StemDsp.PADDED_SAMPLES // 2048 + 485100 + 2048 extended to fit 476 frames
+
+        /**
+         * Distance between the starts of two model chunks: 75 % of a chunk, so neighbours overlap by 25 % (2.75 s)
+         * and are cross-faded with a Hann weight. It used to be 25 % of a chunk (75 % overlap), which ran the model
+         * four times over every second of music. This costs a third of that and is the usual overlap of
+         * Demucs-style separators. A smaller number is slower and a little smoother at the chunk seams.
+         */
+        const val HOP_FRAMES = SEGMENT_SAMPLES * 3 / 4
+
+        /** A chunk this quiet is digital silence: skip the model (it also keeps a divide-by-silence out of it). */
+        private const val SILENCE_PEAK = 1e-6f
+
+        /** More non-finite spectrogram bins than this share in one model run means the model output is garbage. */
+        private const val MAX_BAD_BIN_RATIO = 0.05
+
+        /** App stem order (Vocals, Drums, Bass, Other) -> model source order (Drums, Bass, Other, Vocals). */
+        private val APP_TO_MODEL_SOURCE = intArrayOf(3, 0, 1, 2)
 
         fun isModelInstalled(context: Context?): Boolean {
             if (context == null) return false
@@ -143,8 +77,8 @@ class StemSeparator(private val context: Context) {
 
         fun processOverlapAdd(
             inputPcm: FloatArray,
-            chunkSizeFrames: Int = 485100,
-            hopSizeFrames: Int = 121275,
+            chunkSizeFrames: Int = SEGMENT_SAMPLES,
+            hopSizeFrames: Int = HOP_FRAMES,
             progressCallback: ((Float) -> Unit)? = null,
             isCancelled: (() -> Boolean)? = null,
             processChunk: (inChunk: Array<FloatArray>, numFrames: Int) -> Array<Array<FloatArray>>?
@@ -190,6 +124,8 @@ class StemSeparator(private val context: Context) {
                     weightAccum[framePos + i] += hann[i]
                 }
 
+                // The last chunk reached the end of the song: another one would only re-run the tail.
+                if (framePos + chunkSizeFrames >= totalFrames) break
                 framePos += hopSizeFrames
                 progressCallback?.invoke((framePos.toFloat() / totalFrames).coerceIn(0f, 1f))
             }
@@ -217,7 +153,36 @@ class StemSeparator(private val context: Context) {
     @Volatile private var closed = false
     @Volatile private var isInitialized = false
 
+    /** Why the last [inferChunk] returned null (shown to the user), or null. */
+    @Volatile var lastError: String? = null
+        private set
+
     private val radix2Fft = Radix2FFT(N_FFT)
+
+    // Work buffers, created on first use and reused for every chunk (see class comment).
+    private val reBuf = FloatArray(N_FFT)
+    private val imBuf = FloatArray(N_FFT)
+    private val outL = FloatArray(PADDED_SAMPLES)
+    private val outR = FloatArray(PADDED_SAMPLES)
+    private var mixFloats: FloatBuffer? = null
+    private var stemOut: Array<Array<FloatArray>>? = null
+
+    private fun obtainMix(): FloatBuffer {
+        mixFloats?.let { return it }
+        val fb = ByteBuffer.allocateDirect(4 * StemDsp.BINS * N_FRAMES * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+        mixFloats = fb
+        return fb
+    }
+
+    private fun obtainStemOut(chunkSize: Int): Array<Array<FloatArray>> {
+        val cur = stemOut
+        if (cur != null && cur[0][0].size == chunkSize) return cur
+        val fresh = Array(4) { Array(2) { FloatArray(chunkSize) } }
+        stemOut = fresh
+        return fresh
+    }
 
     fun initialize(): Boolean = synchronized(sessionLock) { initializeLocked() }
 
@@ -328,153 +293,100 @@ class StemSeparator(private val context: Context) {
     }
 
     /**
-     * Reflected sample lookup for STFT padding.
-     */
-    private fun getReflectSample(idx: Int, n: Int, pcm: FloatArray): Float {
-        if (n == 0) return 0f
-        var p = idx
-        if (p < 0) p = -p
-        if (p >= n) p = 2 * n - 2 - p
-        p = p.coerceIn(0, n - 1)
-        return pcm[p]
-    }
-
-    /**
      * Infer single chunk [2][chunkSize]. Returns [4][2][chunkSize] output stems.
      * App stem order: Vocals (0), Drums (1), Bass (2), Other (3).
+     *
+     * The returned arrays are reused by the next call: read them before calling again.
+     * Every returned sample is finite and within +-[StemDsp.MAX_ABS]. A model run whose output is mostly
+     * NaN / Infinity returns null with [lastError] set, rather than silent or noisy stems.
      */
     fun inferChunk(inChunk: Array<FloatArray>, chunkSize: Int): Array<Array<FloatArray>>? = synchronized(sessionLock) {
         if (closed) return@synchronized null
         if (!isInitialized && !initializeLocked()) return@synchronized null
         val session = ortSession ?: return@synchronized null
         val env = ortEnv ?: return@synchronized null
+        lastError = null
 
         try {
-            val inLen = minOf(chunkSize, SEGMENT_SAMPLES)
+            val t0 = System.nanoTime()
+            val inLen = minOf(chunkSize, SEGMENT_SAMPLES, inChunk[0].size, inChunk[1].size)
+            val out = obtainStemOut(chunkSize)
 
-            // 1. STFT forward pass: prepare float buffer for tensor "mix_spec" [1, 4, 2049, 476]
-            val totalMixFloats = 1 * 4 * 2049 * N_FRAMES
-            val mixBuf = ByteBuffer.allocateDirect(totalMixFloats * 4)
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer()
-
-            val reBuf = FloatArray(N_FFT)
-            val imBuf = FloatArray(N_FFT)
-            val scale = 1.0f / 64.0f // 1 / sqrt(4096)
-
-            for (ch in 0..1) {
-                val pcm = inChunk[ch]
-                val chPcmLen = minOf(pcm.size, inLen)
-
-                for (t in 0 until N_FRAMES) {
-                    val frameStart = t * HOP_SIZE - PAD_SAMPLES
-
-                    for (n in 0 until N_FFT) {
-                        val sampleIdx = frameStart + n
-                        reBuf[n] = getReflectSample(sampleIdx, chPcmLen, pcm)
-                        imBuf[n] = 0.0f
-                    }
-
-                    radix2Fft.fft(reBuf, imBuf)
-
-                    val baseReCh = if (ch == 0) 0 else 2
-                    val baseImCh = if (ch == 0) 1 else 3
-
-                    for (f in 0..2048) {
-                        val reIdx = (baseReCh * 2049 + f) * N_FRAMES + t
-                        val imIdx = (baseImCh * 2049 + f) * N_FRAMES + t
-                        mixBuf.put(reIdx, reBuf[f] * scale)
-                        mixBuf.put(imIdx, imBuf[f] * scale)
-                    }
-                }
+            if (StemDsp.peak(inChunk[0], inLen) < SILENCE_PEAK && StemDsp.peak(inChunk[1], inLen) < SILENCE_PEAK) {
+                for (s in 0 until 4) for (ch in 0..1) java.util.Arrays.fill(out[s][ch], 0f)
+                return@synchronized out
             }
 
-            mixBuf.rewind()
+            // 1. STFT forward pass into the reused tensor buffer "mix_spec" [1, 4, 2049, 476]
+            val mix = obtainMix()
+            StemDsp.forward(radix2Fft, inChunk[0], inChunk[1], inLen, mix, reBuf, imBuf)
+            mix.rewind()
+            val tPre = System.nanoTime()
 
-            val tensorShape = longArrayOf(1, 4, 2049, N_FRAMES.toLong())
-            val inputTensor = OnnxTensor.createTensor(env, mixBuf, tensorShape)
+            val inputTensor = OnnxTensor.createTensor(env, mix, longArrayOf(1, 4, StemDsp.BINS.toLong(), N_FRAMES.toLong()))
             var result: OrtSession.Result? = null
 
             try {
                 result = session.run(mapOf("mix_spec" to inputTensor))
+                val tRun = System.nanoTime()
                 val outputTensor = result.get(0) as? OnnxTensor ?: return@synchronized null
                 val stemsBuf = outputTensor.floatBuffer
                 stemsBuf.rewind()
 
-                if (stemsBuf.capacity() < 16 * 2049 * N_FRAMES) {
+                if (stemsBuf.capacity() < 16 * StemDsp.BINS * N_FRAMES) {
+                    lastError = "Unexpected model output size ${stemsBuf.capacity()}"
                     Log.e(TAG, "Unexpected SCNet output size ${stemsBuf.capacity()}")
                     return@synchronized null
                 }
 
-                val chunkStems = Array(4) { Array(2) { FloatArray(chunkSize) } }
-                val outAccum = FloatArray(PADDED_SAMPLES)
-                val winSqAccum = FloatArray(PADDED_SAMPLES)
-
-                // Model sources: 0=DRUMS, 1=BASS, 2=OTHER, 3=VOCALS
-                // Remap to app stem cache order: 0=VOCALS, 1=DRUMS, 2=BASS, 3=OTHER
+                // Model sources: 0=DRUMS, 1=BASS, 2=OTHER, 3=VOCALS; the app wants 0=VOCALS, 1=DRUMS, 2=BASS, 3=OTHER.
+                val copyLen = minOf(chunkSize, SEGMENT_SAMPLES)
+                var badBins = 0
+                var badSamples = 0
                 for (appStem in 0 until 4) {
-                    val modelSource = when (appStem) {
-                        0 -> 3 // VOCALS
-                        1 -> 0 // DRUMS
-                        2 -> 1 // BASS
-                        3 -> 2 // OTHER
-                        else -> 0
+                    badBins += StemDsp.inverseSource(
+                        radix2Fft, stemsBuf, APP_TO_MODEL_SOURCE[appStem], outL, outR, reBuf, imBuf
+                    )
+                    val dstL = out[appStem][0]
+                    val dstR = out[appStem][1]
+                    // Remove 2048 center padding
+                    System.arraycopy(outL, PAD_SAMPLES, dstL, 0, copyLen)
+                    System.arraycopy(outR, PAD_SAMPLES, dstR, 0, copyLen)
+                    if (chunkSize > copyLen) {
+                        java.util.Arrays.fill(dstL, copyLen, chunkSize, 0f)
+                        java.util.Arrays.fill(dstR, copyLen, chunkSize, 0f)
                     }
-
-                    for (ch in 0..1) {
-                        val reCh = modelSource * 4 + (if (ch == 0) 0 else 2)
-                        val imCh = modelSource * 4 + (if (ch == 0) 1 else 3)
-
-                        outAccum.fill(0f)
-                        winSqAccum.fill(0f)
-
-                        for (t in 0 until N_FRAMES) {
-                            for (f in 0..2048) {
-                                val reVal = stemsBuf.get((reCh * 2049 + f) * N_FRAMES + t)
-                                val imVal = stemsBuf.get((imCh * 2049 + f) * N_FRAMES + t)
-                                reBuf[f] = reVal
-                                imBuf[f] = imVal
-                            }
-
-                            for (f in 1 until 2048) {
-                                reBuf[N_FFT - f] = reBuf[f]
-                                imBuf[N_FFT - f] = -imBuf[f]
-                            }
-                            imBuf[0] = 0f
-                            imBuf[2048] = 0f
-
-                            radix2Fft.ifft(reBuf, imBuf)
-
-                            val offset = t * HOP_SIZE
-                            for (n in 0 until N_FFT) {
-                                if (offset + n < PADDED_SAMPLES) {
-                                    outAccum[offset + n] += reBuf[n]
-                                    winSqAccum[offset + n] += 1.0f
-                                }
-                            }
-                        }
-
-                        // Divide by window square envelope
-                        for (i in 0 until PADDED_SAMPLES) {
-                            val w = winSqAccum[i]
-                            if (w > 1e-6f) outAccum[i] /= w
-                        }
-
-                        // Remove 2048 center padding
-                        val dst = chunkStems[appStem][ch]
-                        val copyLen = minOf(chunkSize, SEGMENT_SAMPLES)
-                        for (i in 0 until copyLen) {
-                            dst[i] = outAccum[PAD_SAMPLES + i]
-                        }
-                    }
+                    badSamples += StemDsp.sanitize(dstL, 0, chunkSize) + StemDsp.sanitize(dstR, 0, chunkSize)
                 }
 
-                chunkStems
+                val totalBins = 4L * StemDsp.BINS * N_FRAMES
+                if (badBins > totalBins * MAX_BAD_BIN_RATIO) {
+                    lastError = "The separation model returned invalid audio ($badBins bad values)"
+                    Log.e(TAG, "SCNet output is mostly non-finite: $badBins of $totalBins bins. Input peak " +
+                        "${StemDsp.peak(inChunk[0], inLen)} / ${StemDsp.peak(inChunk[1], inLen)}")
+                    return@synchronized null
+                }
+                if (badBins > 0 || badSamples > 0) {
+                    Log.w(TAG, "SCNet output had $badBins non-finite bins and $badSamples non-finite samples; zeroed")
+                }
+
+                val tPost = System.nanoTime()
+                Log.i(
+                    TAG,
+                    "chunk done: stft ${(tPre - t0) / 1_000_000} ms, model ${(tRun - tPre) / 1_000_000} ms, " +
+                        "istft ${(tPost - tRun) / 1_000_000} ms"
+                )
+                out
             } finally {
                 inputTensor.close()
                 result?.close()
             }
+        } catch (e: OutOfMemoryError) {
+            lastError = "Out of memory while separating"
+            Log.e(TAG, "Out of memory running SCNet inference chunk", e)
+            null
         } catch (e: Exception) {
+            lastError = e.message ?: "Inference failed"
             Log.e(TAG, "Error running SCNet inference chunk: ${e.message}", e)
             null
         }
@@ -492,8 +404,8 @@ class StemSeparator(private val context: Context) {
 
         processOverlapAdd(
             inputPcm = inputPcm,
-            chunkSizeFrames = 485100,
-            hopSizeFrames = 121275,
+            chunkSizeFrames = SEGMENT_SAMPLES,
+            hopSizeFrames = HOP_FRAMES,
             progressCallback = progressCallback,
             isCancelled = isCancelled
         ) { inChunk, numFrames ->
@@ -514,6 +426,8 @@ class StemSeparator(private val context: Context) {
                 ortSession = null
                 ortEnv = null
                 isInitialized = false
+                mixFloats = null
+                stemOut = null
             }
         }
     }
