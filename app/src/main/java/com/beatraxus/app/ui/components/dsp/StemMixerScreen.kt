@@ -74,7 +74,6 @@ import com.beatraxus.app.model.StemSpecs
 import com.beatraxus.app.model.STEM_GAIN_MAX_DB
 import com.beatraxus.app.model.STEM_GAIN_MIN_DB
 import com.beatraxus.app.model.activeStemMix
-import com.beatraxus.app.model.stemMixNeedsStems
 import com.beatraxus.app.model.sanitizeStemGains
 import com.beatraxus.app.model.sanitizeStemMask
 import com.beatraxus.app.model.stemMixDescription
@@ -107,9 +106,13 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val stemTotal = StemSpecs.forQuality(quality).size
 
     // Start separating right after the model is installed (the player only reacts to song / mix changes).
-    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, config.stemMixNeedsStems(), quality) {
-        if (song != null && isModelInstalled && config.stemMixNeedsStems()) {
-            StemSeparatorManager.requestSeparation(context, song, quality)
+    // It starts as soon as the mixer is ON, from where the song is now, so the first parts are ready sooner.
+    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, quality, config.bypassAll, config.bitPerfectEnabled) {
+        if (song != null && isModelInstalled && config.stemMixerEnabled && !config.bypassAll && !config.bitPerfectEnabled) {
+            StemSeparatorManager.requestSeparation(
+                context, song, quality,
+                positionProvider = { viewModel.progressMs.value }
+            )
         }
     }
 
@@ -302,6 +305,10 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                 modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
                                 color = accent,
                                 trackColor = Color.White.copy(0.1f)
+                            )
+                            Text(
+                                "The mix already works on the parts that are done. The rest plays as the original until it is ready.",
+                                color = Color.White.copy(0.6f), fontSize = 10.sp
                             )
                         }
                     }

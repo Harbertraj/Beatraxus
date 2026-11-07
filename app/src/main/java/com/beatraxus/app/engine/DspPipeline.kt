@@ -320,19 +320,36 @@ private class StemMixerProcessor(
         readerQuality = null
     }
 
-    /** Throttled and sticky per quality: the audio thread must not stat the stem files on every buffer. */
-    private fun cacheReady(songId: String, quality: StemQuality): Boolean {
+    private var readerGeneration = -1L
+
+    /**
+     * Which parts of the song's stems may be read right now: everything once the song is cached, the parts the
+     * separator has already finished while it is still running, or null when there are none. The live check is a
+     * volatile read; the file check is throttled and sticky per quality (the audio thread must not stat files on
+     * every buffer).
+     */
+    private fun stemCoverage(songId: String, quality: StemQuality): StemCoverage? {
         if (readyQuality != quality) {
             ready = false
             readyQuality = quality
             lastCheckNs = 0L
         }
-        if (ready) return true
+        if (ready) return StemCoverage.FULL
+        val live = StemSeparatorManager.liveFor(songId, quality)
+        if (live != null) {
+            // A new run rewrites the files: a reader opened on the old ones must not be reused.
+            if (live.generation != readerGeneration) {
+                reader?.close()
+                reader = null
+                readerGeneration = live.generation
+            }
+            return live.coverage
+        }
         val now = System.nanoTime()
-        if (now - lastCheckNs < 500_000_000L) return false
+        if (now - lastCheckNs < 500_000_000L) return null
         lastCheckNs = now
         ready = StemCache.isStemsCached(context, songId, quality)
-        return ready
+        return if (ready) StemCoverage.FULL else null
     }
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
@@ -341,7 +358,8 @@ private class StemMixerProcessor(
         val numFrames = input.sampleCount / channels.coerceAtLeast(1)
         val quality = cfg.stemQuality
 
-        if (channels != 2 || !cfg.stemMixerEnabled || cfg.stemMixIsOriginal() || !cacheReady(s.id, quality)) {
+        val coverage = if (channels == 2 && cfg.stemMixerEnabled && !cfg.stemMixIsOriginal()) stemCoverage(s.id, quality) else null
+        if (coverage == null) {
             blend = 0f   // the original is playing; the next time stems start they fade in
             currentFrame += numFrames
             return input
@@ -357,6 +375,13 @@ private class StemMixerProcessor(
         val ratio = 44_100.0 / inputSampleRate
         val srcStart = (currentFrame * ratio).toLong()
         val srcFrames = Math.ceil(numFrames * ratio).toInt() + 2
+        if (!coverage.contains(srcStart, srcStart + srcFrames)) {
+            // This part is not separated yet (still running, or the playhead is ahead of it): play the original here.
+            // When the separator has covered it, the stems fade in again.
+            blend = 0f
+            currentFrame += numFrames
+            return input
+        }
         if (stemBuf.size < srcFrames * 2) stemBuf = FloatArray(srcFrames * 2)
         if (mixBuf.size < srcFrames * 2) mixBuf = FloatArray(srcFrames * 2)
 

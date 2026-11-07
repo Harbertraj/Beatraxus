@@ -119,8 +119,63 @@ object StemSeparatorManager {
 
     private var checkedPreviousRun = false
 
+    /**
+     * What the audio stage may read while a song is still being separated. [coverage] grows after every flushed part;
+     * [generation] changes with every run, so a reader opened on files of an older run is dropped.
+     */
+    class LiveStems(val songId: String, val quality: StemQuality, val generation: Long, val coverage: StemCoverage)
+
+    @Volatile private var live: LiveStems? = null
+    private var generationCounter = 0L
+
+    /** Lock-free snapshot for the audio thread: the live coverage of this song + quality, or null. */
+    fun liveFor(songId: String, quality: StemQuality): LiveStems? {
+        val l = live ?: return null
+        return if (l.songId == songId && l.quality == quality) l else null
+    }
+
+    /** Safety lead: separation starts this far ahead of the playhead (the part right under it is gone by then). */
+    private const val START_LEAD_MS = 1_500L
+
+    // A loaded Fast engine is kept for a short while after a song, so the next song does not pay the model load again.
+    private const val WARM_ENGINE_MS = 90_000L
+    private var warmEngine: StemEngine? = null
+    private var warmQuality: StemQuality? = null
+    private var warmReleaseJob: Job? = null
+
     @Synchronized
-    fun requestSeparation(context: Context, song: Song, quality: StemQuality, force: Boolean = false) {
+    private fun takeWarmEngine(quality: StemQuality): StemEngine? {
+        val e = warmEngine
+        if (e == null || warmQuality != quality) return null
+        warmReleaseJob?.cancel(); warmReleaseJob = null
+        warmEngine = null; warmQuality = null
+        return e
+    }
+
+    @Synchronized
+    private fun stashWarmEngine(engine: StemEngine, quality: StemQuality) {
+        warmReleaseJob?.cancel()
+        val old = warmEngine
+        if (old != null && old !== engine) scope.launch(Dispatchers.IO) { old.release() }
+        warmEngine = engine; warmQuality = quality
+        warmReleaseJob = scope.launch {
+            kotlinx.coroutines.delay(WARM_ENGINE_MS)
+            val drop = synchronized(StemSeparatorManager) {
+                if (warmEngine === engine) { warmEngine = null; warmQuality = null; true } else false
+            }
+            if (drop) engine.release()
+        }
+    }
+
+    @Synchronized
+    fun requestSeparation(
+        context: Context,
+        song: Song,
+        quality: StemQuality,
+        force: Boolean = false,
+        /** Playback position right now; separation starts there (then wraps to the beginning). Null = from 0. */
+        positionProvider: (() -> Long)? = null
+    ) {
         val songId = song.id
         val appContext = context.applicationContext
 
@@ -137,12 +192,19 @@ object StemSeparatorManager {
         if (!checkedPreviousRun) {
             checkedPreviousRun = true
             val unfinished = marker.consumeUnfinished()
+            if (unfinished != null && unfinished.quality == StemQuality.MAX) {
+                val lvl = StemLoadProfile.escalate(appContext)
+                Log.w(TAG, "Max separation was killed last time; load level is now $lvl")
+            }
             if (unfinished != null && unfinished.quality == quality && !force) {
                 Log.w(TAG, "Previous ${unfinished.quality.name} separation of ${unfinished.songId} was cut short (process killed)")
                 _state.value = StemSeparationState.Failed(
                     songId,
-                    "The last ${quality.label} separation was stopped by Android, most likely because the phone ran low on memory. " +
-                        "Close other apps and tap Retry, or switch to Fast.",
+                    if (quality == StemQuality.MAX && StemLoadProfile.isMaxBlocked(StemLoadProfile.level(appContext)))
+                        "Max separation was stopped by Android on this phone more than once (not enough memory). Use Fast."
+                    else
+                        "The last ${quality.label} separation was stopped by Android, most likely because the phone ran low on memory. " +
+                            "Tap Retry to try again with a lighter, slower load, or switch to Fast.",
                     quality
                 )
                 return
@@ -151,6 +213,15 @@ object StemSeparatorManager {
 
         val cur = _state.value
         if (!force && cur is StemSeparationState.Failed && cur.songId == songId && cur.quality == quality) return
+
+        if (quality == StemQuality.MAX && StemLoadProfile.isMaxBlocked(StemLoadProfile.level(appContext))) {
+            _state.value = StemSeparationState.Failed(
+                songId,
+                "Max separation was stopped by Android on this phone more than once (not enough memory). Use Fast.",
+                quality
+            )
+            return
+        }
 
         cancelSeparation()
         activeSongId = songId
@@ -165,10 +236,16 @@ object StemSeparatorManager {
             }
             // A cancelled job must not delete the stems of the job that replaced it.
             fun ownsSong(): Boolean = synchronized(StemSeparatorManager) { activeJob === me || activeJob == null }
-            fun cleanup() { if (ownsSong()) StemCache.deleteStems(appContext, songId, quality) }
+            fun cleanup() {
+                if (ownsSong()) {
+                    synchronized(StemSeparatorManager) { if (live?.songId == songId && live?.quality == quality) live = null }
+                    StemCache.deleteStems(appContext, songId, quality)
+                }
+            }
 
             val runToken = marker.begin(songId, quality)
-            val engine = StemEngines.create(appContext, quality)
+            val engine = takeWarmEngine(quality) ?: StemEngines.create(appContext, quality)
+            var finishedOk = false
             synchronized(StemSeparatorManager) { if (activeJob === me) activeEngine = engine }
 
             val tempPcmFile = File(appContext.cacheDir, "temp_decode_${quality.folderName}_$songId.pcm")
@@ -196,6 +273,10 @@ object StemSeparatorManager {
 
                 StemCache.purgeOutdated(appContext)
                 StemCache.deleteStems(appContext, songId, quality)
+                val generation = synchronized(StemSeparatorManager) { ++generationCounter }
+                synchronized(StemSeparatorManager) {
+                    if (activeJob === me) live = LiveStems(songId, quality, generation, StemCoverage.EMPTY)
+                }
 
                 // Load the model while the song decodes: the two do not need each other, and loading is slow.
                 val initDeferred = async(Dispatchers.Default) { lowPriority { engine.initialize() } }
@@ -234,7 +315,10 @@ object StemSeparatorManager {
                 Log.i(TAG, "Model ready (waited ${(System.nanoTime() - tInit) / 1_000_000} ms after decoding), app RSS ${rssMb()} MB")
 
                 // Step 2: streaming separation into the cache files (shared loop for every engine).
-                val totalChunks = StemOverlapAdd.chunkCount(totalFrames, engine.segmentSamples, engine.hopSamples)
+                // Start where the listener is now (they moved on while the song decoded and the model loaded), then wrap.
+                val posMs: Long = (try { positionProvider?.invoke() } catch (_: Throwable) { null }) ?: 0L
+                val startFrame = ((posMs + START_LEAD_MS).coerceAtLeast(0L) * StemSeparator.SAMPLE_RATE) / 1000L
+                val totalChunks = StemOverlapAdd.chunkCountFrom(totalFrames, startFrame, engine.segmentSamples, engine.hopSamples)
                 val tStart = System.nanoTime()
                 var lastChunkAt = tStart
                 Log.i(TAG, "Separating $songId with ${engine.describe()}: $totalChunks chunks")
@@ -250,6 +334,16 @@ object StemSeparatorManager {
                     window = engine.window,
                     isCancelled = { me.isCancelled },
                     errorMessage = { engine.lastError },
+                    startFrame = startFrame,
+                    onFlushed = { from, to ->
+                        // Publish the new part so the audio stage can use it right away.
+                        synchronized(StemSeparatorManager) {
+                            val cur = live
+                            if (activeJob === me && cur != null && cur.generation == generation) {
+                                live = LiveStems(songId, quality, generation, cur.coverage.plus(from, to))
+                            }
+                        }
+                    },
                     onProgress = { p ->
                         val now = System.nanoTime()
                         Log.i(TAG, "chunk ${p.chunk}/${p.totalChunks} wall ${(now - lastChunkAt) / 1_000_000} ms, app RSS ${rssMb()} MB")
@@ -285,6 +379,10 @@ object StemSeparatorManager {
                 )
 
                 StemCache.markStemsDone(appContext, songId, quality)
+                synchronized(StemSeparatorManager) {
+                    if (activeJob === me) live = LiveStems(songId, quality, generation, StemCoverage.FULL)
+                }
+                finishedOk = true
                 publish(StemSeparationState.Ready(songId, quality))
                 Log.i(TAG, "Successfully separated and cached ${engine.stemCount} stems for song $songId")
 
@@ -302,7 +400,8 @@ object StemSeparatorManager {
             } finally {
                 marker.end(runToken)
                 if (tempPcmFile.exists()) tempPcmFile.delete()
-                engine.release()   // frees the ONNX session and its RAM as soon as the song is done
+                // The small Fast engine stays loaded for a moment (next song starts without a model load); Max is freed at once.
+                if (finishedOk && quality == StemQuality.FAST && !me.isCancelled) stashWarmEngine(engine, quality) else engine.release()
                 synchronized(StemSeparatorManager) {
                     if (activeEngine === engine) activeEngine = null
                     if (activeJob === me) {
@@ -327,6 +426,7 @@ object StemSeparatorManager {
         activeEngine = null
         activeSongId = null
         activeQuality = null
+        live = null
         _state.value = StemSeparationState.Idle
     }
 }

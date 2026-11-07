@@ -33,6 +33,24 @@ object StemOverlapAdd {
         return 1 + ((rest + hopSamples - 1) / hopSamples).toInt()
     }
 
+    /**
+     * Where a run that starts near [startFrame] really starts: the chunk grid is [hopSamples] wide, so the start is
+     * rounded down to it. 0 (a single pass from the beginning) when [startFrame] is not inside the song.
+     */
+    fun alignedStart(totalFrames: Long, startFrame: Long, hopSamples: Int): Long =
+        if (startFrame in 1 until totalFrames) (startFrame / hopSamples) * hopSamples else 0L
+
+    /**
+     * Chunks of a run that begins at [startFrame]: first from there to the end of the song, then (if it did not start
+     * at 0) from 0 up to the start, so the whole song ends up separated.
+     */
+    fun chunkCountFrom(totalFrames: Long, startFrame: Long, segmentSamples: Int, hopSamples: Int): Int {
+        val s = alignedStart(totalFrames, startFrame, hopSamples)
+        val first = chunkCount(totalFrames - s, segmentSamples, hopSamples)
+        if (s == 0L) return first
+        return first + ((s + hopSamples - 1) / hopSamples).toInt()
+    }
+
     /** sin^2 window: smooth, never exactly 0 (so the weight sum is never 0 inside a chunk). */
     fun hannWindow(n: Int): FloatArray = FloatArray(n) { i ->
         sin(PI * (i + 0.5) / n).let { (it * it).toFloat() }
@@ -55,6 +73,10 @@ object StemOverlapAdd {
      * Separates [inputFile] (interleaved stereo float, [totalFrames] frames) into [outputFiles], one per stem, with
      * constant memory: only the overlap between two chunks is held. Stem files are rewritten from scratch.
      *
+     * @param startFrame where to begin (rounded down to the chunk grid). The song is separated from there to its end,
+     *   then from 0 up to there. With the default 0 it is one pass from the start.
+     * @param onFlushed called after the stem files hold final audio for `[fromFrame, toFrame)`, so a player can already
+     *   use that part while the rest is still being separated. The files are created at full length up front.
      * @param inferChunk gets [2][segmentSamples] (zero padded at the end of the song) and returns
      *   [stemCount][2][segmentSamples], or null when the model failed. The returned arrays may be reused by the engine.
      * @param errorMessage asked for the reason when [inferChunk] returns null.
@@ -73,6 +95,8 @@ object StemOverlapAdd {
         isCancelled: () -> Boolean = { false },
         onProgress: (Progress) -> Unit = {},
         errorMessage: () -> String? = { null },
+        startFrame: Long = 0L,
+        onFlushed: (fromFrame: Long, toFrame: Long) -> Unit = { _, _ -> },
         inferChunk: (inChunk: Array<FloatArray>, segmentSamples: Int) -> Array<Array<FloatArray>>?
     ): Int {
         require(segmentSamples > 0 && hopSamples in 1..segmentSamples) { "bad segment/hop $segmentSamples/$hopSamples" }
@@ -81,7 +105,8 @@ object StemOverlapAdd {
         if (totalFrames <= 0L) return 0
 
         val bufferCap = segmentSamples + hopSamples
-        val totalChunks = chunkCount(totalFrames, segmentSamples, hopSamples)
+        val start = alignedStart(totalFrames, startFrame, hopSamples)
+        val totalChunks = chunkCountFrom(totalFrames, start, segmentSamples, hopSamples)
 
         val outAccum = Array(stemCount) { Array(2) { FloatArray(bufferCap) } }
         val weightAccum = FloatArray(bufferCap)
@@ -92,93 +117,108 @@ object StemOverlapAdd {
         val stemRafs = arrayOfNulls<RandomAccessFile>(stemCount)
         try {
             for (s in 0 until stemCount) {
-                stemRafs[s] = RandomAccessFile(outputFiles[s], "rw").also { it.setLength(0) }
+                // Full length up front (sparse): the parts are written out of order when the run starts mid-song.
+                stemRafs[s] = RandomAccessFile(outputFiles[s], "rw").also { it.setLength(0); it.setLength(totalFrames * 8) }
             }
 
-            var baseFrame = 0L
-            var framePos = 0L
+            // Pass 1: start .. end of song. Pass 2 (only when start > 0): 0 .. start.
+            val passes = if (start > 0L) listOf(start to totalFrames, 0L to start) else listOf(0L to totalFrames)
             var chunks = 0
+            var flushedTotal = 0L
 
             RandomAccessFile(inputFile, "r").use { inRaf ->
                 val inChannel = inRaf.channel
 
-                while (framePos < totalFrames) {
-                    if (isCancelled()) throw CancellationException("cancelled")
+                for ((passStart, passEnd) in passes) {
+                    for (s in 0 until stemCount) for (ch in 0..1) outAccum[s][ch].fill(0f)
+                    weightAccum.fill(0f)
+                    val toSongEnd = passEnd == totalFrames
+                    var baseFrame = passStart
+                    var framePos = passStart
 
-                    val framesInChunk = min(segmentSamples.toLong(), totalFrames - framePos).toInt()
+                    while (framePos < passEnd) {
+                        if (isCancelled()) throw CancellationException("cancelled")
 
-                    inByteBuf.clear()
-                    inByteBuf.limit(framesInChunk * 8)
-                    inChannel.position(framePos * 8)
-                    while (inByteBuf.hasRemaining()) if (inChannel.read(inByteBuf) < 0) break
-                    inByteBuf.flip()
-                    val inFloats = inByteBuf.asFloatBuffer()
-                    val readFrames = inFloats.remaining() / 2
-                    for (i in 0 until readFrames) {
-                        inChunk[0][i] = inFloats.get()
-                        inChunk[1][i] = inFloats.get()
-                    }
-                    java.util.Arrays.fill(inChunk[0], readFrames, segmentSamples, 0f)
-                    java.util.Arrays.fill(inChunk[1], readFrames, segmentSamples, 0f)
-                    StemDsp.sanitize(inChunk[0], 0, readFrames, INPUT_LIMIT)
-                    StemDsp.sanitize(inChunk[1], 0, readFrames, INPUT_LIMIT)
+                        // Real audio the model gets (also past passEnd: it is context), and how much of the chunk is kept.
+                        val readCount = min(segmentSamples.toLong(), totalFrames - framePos).toInt()
+                        val framesInChunk = min(segmentSamples.toLong(), passEnd - framePos).toInt()
 
-                    val chunkStems = inferChunk(inChunk, segmentSamples)
-                        ?: throw StemSeparationException(errorMessage() ?: "Inference chunk failed")
-                    chunks++
-
-                    for (s in 0 until stemCount) {
-                        for (ch in 0..1) {
-                            val stemCh = chunkStems[s][ch]
-                            val outCh = outAccum[s][ch]
-                            for (i in 0 until framesInChunk) {
-                                val rel = (framePos + i - baseFrame).toInt()
-                                outCh[rel] += stemCh[i] * window[i]
-                            }
+                        inByteBuf.clear()
+                        inByteBuf.limit(readCount * 8)
+                        inChannel.position(framePos * 8)
+                        while (inByteBuf.hasRemaining()) if (inChannel.read(inByteBuf) < 0) break
+                        inByteBuf.flip()
+                        val inFloats = inByteBuf.asFloatBuffer()
+                        val readFrames = inFloats.remaining() / 2
+                        for (i in 0 until readFrames) {
+                            inChunk[0][i] = inFloats.get()
+                            inChunk[1][i] = inFloats.get()
                         }
-                    }
-                    for (i in 0 until framesInChunk) {
-                        weightAccum[(framePos + i - baseFrame).toInt()] += window[i]
-                    }
+                        java.util.Arrays.fill(inChunk[0], readFrames, segmentSamples, 0f)
+                        java.util.Arrays.fill(inChunk[1], readFrames, segmentSamples, 0f)
+                        StemDsp.sanitize(inChunk[0], 0, readFrames, INPUT_LIMIT)
+                        StemDsp.sanitize(inChunk[1], 0, readFrames, INPUT_LIMIT)
 
-                    // The last chunk reaches the end of the song: another one would only re-run the tail.
-                    val isLast = framePos + segmentSamples >= totalFrames
-                    val finishedUntil = if (isLast) totalFrames else framePos + hopSamples
-                    val numFlushed = (finishedUntil - baseFrame).toInt()
+                        val chunkStems = inferChunk(inChunk, segmentSamples)
+                            ?: throw StemSeparationException(errorMessage() ?: "Inference chunk failed")
+                        chunks++
 
-                    if (numFlushed > 0) {
-                        for (s in 0 until stemCount) {
-                            outByteBuf.clear()
-                            val outFloats = outByteBuf.asFloatBuffer()
-                            for (i in 0 until numFlushed) {
-                                val w = if (weightAccum[i] > 1e-30f) weightAccum[i] else 1.0f
-                                val invW = 1.0f / w
-                                outFloats.put(outAccum[s][0][i] * invW)
-                                outFloats.put(outAccum[s][1][i] * invW)
-                            }
-                            outByteBuf.position(0)
-                            outByteBuf.limit(numFlushed * 8)
-                            val chnl = stemRafs[s]!!.channel
-                            chnl.position(baseFrame * 8)
-                            while (outByteBuf.hasRemaining()) chnl.write(outByteBuf)
-                        }
-
-                        // Shift the accumulators left; what is left is the start of the next chunk's overlap.
-                        val remaining = bufferCap - numFlushed
                         for (s in 0 until stemCount) {
                             for (ch in 0..1) {
-                                System.arraycopy(outAccum[s][ch], numFlushed, outAccum[s][ch], 0, remaining)
-                                outAccum[s][ch].fill(0f, remaining, bufferCap)
+                                val stemCh = chunkStems[s][ch]
+                                val outCh = outAccum[s][ch]
+                                for (i in 0 until framesInChunk) {
+                                    val rel = (framePos + i - baseFrame).toInt()
+                                    outCh[rel] += stemCh[i] * window[i]
+                                }
                             }
                         }
-                        System.arraycopy(weightAccum, numFlushed, weightAccum, 0, remaining)
-                        weightAccum.fill(0f, remaining, bufferCap)
-                        baseFrame = finishedUntil
-                    }
+                        for (i in 0 until framesInChunk) {
+                            weightAccum[(framePos + i - baseFrame).toInt()] += window[i]
+                        }
 
-                    onProgress(Progress(chunks, totalChunks, (finishedUntil.toFloat() / totalFrames).coerceIn(0f, 1f)))
-                    if (isLast) break
-                    framePos += hopSamples
+                        // The last chunk of a pass reaches its end: another one would only re-run the tail.
+                        val isLast = if (toSongEnd) framePos + segmentSamples >= totalFrames else framePos + hopSamples >= passEnd
+                        val finishedUntil = if (isLast) passEnd else framePos + hopSamples
+                        val numFlushed = (finishedUntil - baseFrame).toInt()
+
+                        if (numFlushed > 0) {
+                            for (s in 0 until stemCount) {
+                                outByteBuf.clear()
+                                val outFloats = outByteBuf.asFloatBuffer()
+                                for (i in 0 until numFlushed) {
+                                    val w = if (weightAccum[i] > 1e-30f) weightAccum[i] else 1.0f
+                                    val invW = 1.0f / w
+                                    outFloats.put(outAccum[s][0][i] * invW)
+                                    outFloats.put(outAccum[s][1][i] * invW)
+                                }
+                                outByteBuf.position(0)
+                                outByteBuf.limit(numFlushed * 8)
+                                val chnl = stemRafs[s]!!.channel
+                                chnl.position(baseFrame * 8)
+                                while (outByteBuf.hasRemaining()) chnl.write(outByteBuf)
+                            }
+                            // Every stem file now holds final audio for this range.
+                            onFlushed(baseFrame, finishedUntil)
+                            flushedTotal += numFlushed
+
+                            // Shift the accumulators left; what is left is the start of the next chunk's overlap.
+                            val remaining = bufferCap - numFlushed
+                            for (s in 0 until stemCount) {
+                                for (ch in 0..1) {
+                                    System.arraycopy(outAccum[s][ch], numFlushed, outAccum[s][ch], 0, remaining)
+                                    outAccum[s][ch].fill(0f, remaining, bufferCap)
+                                }
+                            }
+                            System.arraycopy(weightAccum, numFlushed, weightAccum, 0, remaining)
+                            weightAccum.fill(0f, remaining, bufferCap)
+                            baseFrame = finishedUntil
+                        }
+
+                        onProgress(Progress(chunks, totalChunks, (flushedTotal.toFloat() / totalFrames).coerceIn(0f, 1f)))
+                        if (isLast) break
+                        framePos += hopSamples
+                    }
                 }
             }
             return chunks

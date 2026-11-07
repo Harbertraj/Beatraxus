@@ -53,6 +53,8 @@ class HtDemucsSeparator(private val context: Context) : StemEngine {
             // No arena / planned memory block: intermediate tensors are freed after each run instead of being kept.
             try { opts.setCPUArenaAllocator(false) } catch (e: Throwable) { Log.w(TAG, "arena option: ${e.message}") }
             try { opts.setMemoryPatternOptimization(false) } catch (e: Throwable) { Log.w(TAG, "mem pattern option: ${e.message}") }
+            // Initializers (the weights) are allocated once, directly, instead of through the arena plus a copy.
+            try { opts.addConfigEntry("session.use_device_allocator_for_initializers", "1") } catch (e: Throwable) { Log.w(TAG, "initializer allocator option: ${e.message}") }
             // Idle worker threads sleep instead of spinning, so the audio thread keeps its CPU time.
             try { opts.addConfigEntry("session.intra_op.allow_spinning", "0") } catch (e: Throwable) { Log.w(TAG, "spin option: ${e.message}") }
         }
@@ -140,31 +142,29 @@ class HtDemucsSeparator(private val context: Context) : StemEngine {
             var session: OrtSession? = null
             val t0 = System.nanoTime()
 
-            // 1. XNNPACK (operators it cannot run stay on the CPU provider)
+            // CPU provider only. XNNPACK pre-packs the weights into a second copy, which on a 136 MB fp16 model that
+            // is widened at load was the biggest avoidable part of the memory peak that got the app killed.
+            val level = StemLoadProfile.level(context)
+            if (StemLoadProfile.isMaxBlocked(level)) {
+                lastErrorText = "Max separation was stopped by Android on this phone more than once (not enough memory). Use Fast."
+                isInitialized = true
+                return false
+            }
             try {
                 val opts = OrtSession.SessionOptions()
                 leanOptions(opts)
-                opts.addXnnpack(mapOf("intra_op_num_threads" to THREADS.toString()))
-                opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                opts.setOptimizationLevel(
+                    if (StemLoadProfile.noGraphOptimisation(level)) OrtSession.SessionOptions.OptLevel.NO_OPT
+                    else OrtSession.SessionOptions.OptLevel.BASIC_OPT
+                )
+                opts.setIntraOpNumThreads(StemLoadProfile.threads(level))
+                opts.setInterOpNumThreads(1)
+                Log.i(TAG, "Loading HTDemucs: load level $level, ${StemLoadProfile.threads(level)} threads, CPU provider")
                 session = env.createSession(modelFile.absolutePath, opts)
-                Log.i(TAG, "ONNX Runtime session created with XNNPACK")
+                Log.i(TAG, "ONNX Runtime session created (CPU)")
             } catch (e: Throwable) {
-                Log.w(TAG, "XNNPACK unavailable for HTDemucs, trying CPU fallback: ${e.message}")
-            }
-
-            // 2. CPU fallback
-            if (session == null) {
-                try {
-                    val opts = OrtSession.SessionOptions()
-                    leanOptions(opts)
-                    opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    opts.setIntraOpNumThreads(THREADS)
-                    session = env.createSession(modelFile.absolutePath, opts)
-                    Log.i(TAG, "ONNX Runtime session created with CPU fallback")
-                } catch (e: Throwable) {
-                    Log.e(TAG, "CPU fallback failed for HTDemucs: ${e.message}", e)
-                    lastErrorText = "The Max separation model could not be loaded (${e.message ?: "unknown error"})"
-                }
+                Log.e(TAG, "HTDemucs session failed: ${e.message}", e)
+                lastErrorText = "The Max separation model could not be loaded (${e.message ?: "unknown error"})"
             }
             if (session == null) {
                 isInitialized = true

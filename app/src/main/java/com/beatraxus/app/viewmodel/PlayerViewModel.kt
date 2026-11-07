@@ -50,7 +50,6 @@ import com.beatraxus.app.model.withSurroundPosition
 import com.beatraxus.app.model.withSurroundPositionPreset
 import com.beatraxus.app.model.withSurroundPositionReset
 import com.beatraxus.app.model.activeStemMix
-import com.beatraxus.app.model.stemMixNeedsStems
 import com.beatraxus.app.model.withStemGain
 import com.beatraxus.app.model.withStemMixPreset
 import com.beatraxus.app.model.withStemMixReset
@@ -3927,10 +3926,28 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         config: DspConfig = _uiState.value.dsp.config
     ) {
         val s = song ?: return
-        if (config.stemMixNeedsStems()) {
+        // Start as soon as the mixer is ON (not only once the mix differs from Original): the separation then runs
+        // while the user is still choosing, and the finished parts are usable immediately.
+        if (config.stemMixerEnabled && !config.bypassAll && !config.bitPerfectEnabled) {
             if (StemEngines.isModelInstalled(getApplication(), config.stemQuality)) {
-                StemSeparatorManager.requestSeparation(getApplication(), s, config.stemQuality)
+                StemSeparatorManager.requestSeparation(
+                    getApplication(), s, config.stemQuality,
+                    positionProvider = { service?.currentPositionMs ?: _progressMs.value }
+                )
             }
+        }
+    }
+
+    // A new song (or the mixer / quality being switched on) while the Stem Mixer is ON: begin separating at once, even
+    // when the Stems screen is not open.
+    init {
+        viewModelScope.launch {
+            _uiState
+                .map { Triple(it.currentSong?.id, it.dsp.config.stemMixerEnabled, it.dsp.config.stemQuality) }
+                .distinctUntilChanged()
+                .collect { (songId, enabled, _) ->
+                    if (songId != null && enabled) triggerStemSeparationIfNecessary()
+                }
         }
     }
 
