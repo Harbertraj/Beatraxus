@@ -37,6 +37,8 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import com.google.api.client.googleapis.extensions.android.gms.auth.UserRecoverableAuthIOException
 import kotlin.math.roundToInt
 import com.beatraxus.app.BeatraxusApplication
+import com.beatraxus.app.engine.StemCache
+import com.beatraxus.app.engine.StemEngines
 import com.beatraxus.app.engine.StemSeparator
 import com.beatraxus.app.engine.StemSeparatorManager
 import com.beatraxus.app.model.LrcLine
@@ -48,6 +50,7 @@ import com.beatraxus.app.model.withSurroundPosition
 import com.beatraxus.app.model.withSurroundPositionPreset
 import com.beatraxus.app.model.withSurroundPositionReset
 import com.beatraxus.app.model.activeStemMix
+import com.beatraxus.app.model.stemMixNeedsStems
 import com.beatraxus.app.model.withStemGain
 import com.beatraxus.app.model.withStemMixPreset
 import com.beatraxus.app.model.withStemMixReset
@@ -3924,9 +3927,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         config: DspConfig = _uiState.value.dsp.config
     ) {
         val s = song ?: return
-        if (config.stemMixerEnabled && config.activeStemMix() != "Original") {
-            if (StemSeparator.isModelInstalled(getApplication())) {
-                StemSeparatorManager.requestSeparation(getApplication(), s)
+        if (config.stemMixNeedsStems()) {
+            if (StemEngines.isModelInstalled(getApplication(), config.stemQuality)) {
+                StemSeparatorManager.requestSeparation(getApplication(), s, config.stemQuality)
             }
         }
     }
@@ -4603,6 +4606,18 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun applyStemMix(name: String) = applyDspConfig { it.withStemMixPreset(name) }
 
     fun resetStemMix() = applyDspConfig { it.withStemMixReset() }
+
+    /** Fast (SCNet, 4 stems) or Max (HTDemucs, 6 stems). Each keeps its own cache, so switching never deletes stems. */
+    fun setStemQuality(quality: com.beatraxus.app.model.StemQuality) = applyDspConfig { it.copy(stemQuality = quality) }
+
+    /** Max only: one "Other + Guitar + Piano" strip instead of three. */
+    fun setStemCombineOther(combine: Boolean) = applyDspConfig { it.copy(stemCombineOther = combine) }
+
+    /** "Clear stem cache" in Settings: every stem of every song, Fast and Max. */
+    fun clearStemCache() {
+        StemSeparatorManager.cancelSeparation()
+        viewModelScope.launch(Dispatchers.IO) { StemCache.clearAll(getApplication()) }
+    }
 
     // ── Upmix Lab (Studio DSP > Surround). The five numbers behind the surround mode. ───────────────────────
 

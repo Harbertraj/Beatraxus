@@ -14,7 +14,11 @@ import com.beatraxus.app.model.surroundPositionOffsetsDb
 import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
 import com.beatraxus.app.model.activeStemMix
-import com.beatraxus.app.model.stemEffectiveGainsDb
+import com.beatraxus.app.model.STEM_COUNT
+import com.beatraxus.app.model.StemQuality
+import com.beatraxus.app.model.StemSpecs
+import com.beatraxus.app.model.stemLinearGains
+import com.beatraxus.app.model.stemMixIsOriginal
 import kotlin.math.abs
 import kotlin.math.pow
 import kotlin.math.log10
@@ -284,10 +288,13 @@ private class StemMixerProcessor(
     /** Playback position in input-rate frames; realigned by [seekTo]. */
     @Volatile private var currentFrame = 0L
     private var ready = false
+    private var readyQuality: StemQuality? = null
     private var lastCheckNs = 0L
-    private var reader: StemCache.Reader? = null
+    private var reader: StemCacheStore.Reader? = null
+    private var readerQuality: StemQuality? = null
     private var stemBuf = FloatArray(0)
     private var mixBuf = FloatArray(0)
+    private var gains = FloatArray(STEM_COUNT)
 
     override fun updateConfig(config: DspConfig) {
         currentConfig = config
@@ -304,33 +311,40 @@ private class StemMixerProcessor(
     override fun release() {
         reader?.close()
         reader = null
+        readerQuality = null
     }
 
-    /** Throttled and sticky: the audio thread must not stat 5 files on every buffer. */
-    private fun cacheReady(songId: String): Boolean {
+    /** Throttled and sticky per quality: the audio thread must not stat the stem files on every buffer. */
+    private fun cacheReady(songId: String, quality: StemQuality): Boolean {
+        if (readyQuality != quality) {
+            ready = false
+            readyQuality = quality
+            lastCheckNs = 0L
+        }
         if (ready) return true
         val now = System.nanoTime()
         if (now - lastCheckNs < 500_000_000L) return false
         lastCheckNs = now
-        ready = StemCache.isStemsCached(context, songId)
+        ready = StemCache.isStemsCached(context, songId, quality)
         return ready
     }
-
-    private fun gain(db: Float?): Float = if (db == null) 0f else Math.pow(10.0, db / 20.0).toFloat()
 
     override fun process(input: DspProcessResult, channels: Int): DspProcessResult {
         val s = song ?: return input
         val cfg = currentConfig
         val numFrames = input.sampleCount / channels.coerceAtLeast(1)
+        val quality = cfg.stemQuality
 
-        if (channels != 2 || !cfg.stemMixerEnabled || cfg.activeStemMix() == "Original" || !cacheReady(s.id)) {
+        if (channels != 2 || !cfg.stemMixerEnabled || cfg.stemMixIsOriginal() || !cacheReady(s.id, quality)) {
             currentFrame += numFrames
             return input
         }
 
-        val gainsDb = cfg.stemEffectiveGainsDb()
-        // App stem order: 0 vocals, 1 drums, 2 bass, 3 guitar, 4 piano, 5 other. The model has 4 sources.
-        val gains = floatArrayOf(gain(gainsDb.getOrNull(0)), gain(gainsDb.getOrNull(1)), gain(gainsDb.getOrNull(2)), gain(gainsDb.getOrNull(5)))
+        // One gain per stem of the ACTIVE engine (4 for Fast, 6 for Max), in the order of its cache files.
+        val specs = StemSpecs.forQuality(quality)
+        val stemCount = specs.size
+        if (gains.size < stemCount) gains = FloatArray(stemCount)
+        cfg.stemLinearGains(specs, gains)
 
         // Stems are 44.1 kHz; the stage may run at another rate, so read ceil(n * ratio) frames and resample.
         val ratio = 44_100.0 / inputSampleRate
@@ -338,16 +352,14 @@ private class StemMixerProcessor(
         val srcFrames = Math.ceil(numFrames * ratio).toInt() + 2
         if (stemBuf.size < srcFrames * 2) stemBuf = FloatArray(srcFrames * 2)
         if (mixBuf.size < srcFrames * 2) mixBuf = FloatArray(srcFrames * 2)
-        java.util.Arrays.fill(mixBuf, 0, srcFrames * 2, 0f)
 
-        val r = reader ?: StemCache.Reader(context, s.id).also { reader = it }
-        var any = false
-        for (stem in 0 until 4) {
-            val g = gains[stem]
-            if (g <= 0f) continue
-            if (!r.read(stem, srcStart, srcFrames, stemBuf)) continue
-            any = true
-            for (i in 0 until srcFrames * 2) mixBuf[i] += stemBuf[i] * g
+        if (readerQuality != quality) {
+            reader?.close()
+            reader = null
+        }
+        val r = reader ?: StemCache.openReader(context, s.id, quality).also { reader = it; readerQuality = quality }
+        val any = StemMixMath.mixInto(gains, stemCount, srcFrames * 2, mixBuf, stemBuf) { stem, dst ->
+            r.read(stem, srcStart, srcFrames, dst)
         }
         // Stems from an old / broken cache must never push NaN into the filter chain (it would stay there forever).
         if (any) StemDsp.sanitize(mixBuf, 0, srcFrames * 2)
@@ -355,7 +367,7 @@ private class StemMixerProcessor(
         val data = input.data
         if (!any) {
             // All stems muted => silence. Unreadable cache (or past the end of the stems) => pass the original through.
-            if (gains.all { it <= 0f }) java.util.Arrays.fill(data, 0, input.sampleCount, 0f)
+            if (StemMixMath.allSilent(gains, stemCount)) java.util.Arrays.fill(data, 0, input.sampleCount, 0f)
             currentFrame += numFrames
             return input
         }

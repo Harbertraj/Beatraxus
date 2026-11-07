@@ -6518,6 +6518,30 @@ fun BackupRestoreContent(
         )
     }
 
+    val stemContext = LocalContext.current
+    var stemCacheBytes by remember { mutableStateOf(-1L) }
+    LaunchedEffect(Unit) {
+        stemCacheBytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.beatraxus.app.engine.StemCache.totalSizeBytes(stemContext)
+        }
+    }
+    SettingsSection(
+        title = "Stem Cache",
+        icon = Icons.Rounded.Storage
+    ) {
+        val sizeText = if (stemCacheBytes < 0) "Calculating size..." else "Using ${stemCacheBytes / 1_000_000} MB (kept under 3 GB, oldest stems go first)"
+        SettingMenuItem(
+            title = "Clear stem cache",
+            subtitle = sizeText,
+            icon = Icons.Rounded.Delete,
+            iconColor = Color.White,
+            onClick = {
+                playerViewModel.clearStemCache()
+                stemCacheBytes = 0L
+            }
+        )
+    }
+
     SettingsSection(
         title = "Device Assignment",
         icon = Icons.Rounded.Devices

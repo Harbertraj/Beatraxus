@@ -6,6 +6,8 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
+import com.beatraxus.app.model.StemSpec
+import com.beatraxus.app.model.StemSpecs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -13,8 +15,6 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
-import kotlin.math.PI
-import kotlin.math.sin
 
 /**
  * AI-powered Stem Separation Engine using SCNet int8 ONNX model.
@@ -24,7 +24,7 @@ import kotlin.math.sin
  * The FFT maths lives in [StemDsp]. One instance keeps its big work buffers (about 15 MB of input spectrogram, the
  * per-chunk stem arrays) for its whole life instead of allocating them again for every 11 second chunk.
  */
-class StemSeparator(private val context: Context) {
+class StemSeparator(private val context: Context) : StemEngine {
 
     companion object {
         private const val TAG = "StemSeparator"
@@ -50,11 +50,8 @@ class StemSeparator(private val context: Context) {
         /** A chunk this quiet is digital silence: skip the model (it also keeps a divide-by-silence out of it). */
         private const val SILENCE_PEAK = 1e-6f
 
-        /** More non-finite spectrogram bins than this share in one model run means the model output is garbage. */
-        private const val MAX_BAD_BIN_RATIO = 0.05
-
-        /** App stem order (Vocals, Drums, Bass, Other) -> model source order (Drums, Bass, Other, Vocals). */
-        private val APP_TO_MODEL_SOURCE = intArrayOf(3, 0, 1, 2)
+        /** App stem order (Vocals, Drums, Bass, Other) -> model source order (Drums, Bass, Other, Vocals): 3, 0, 1, 2. */
+        private val APP_TO_MODEL_SOURCE = StemSpecs.appToModelSources(StemSpecs.FAST, StemSpecs.SCNET_MODEL_ORDER)
 
         fun isModelInstalled(context: Context?): Boolean {
             if (context == null) return false
@@ -75,6 +72,14 @@ class StemSeparator(private val context: Context) {
             return false
         }
 
+        /** Stem order of this engine: Vocals, Drums, Bass, Other. */
+        val SPECS: List<StemSpec> = StemSpecs.FAST
+
+        /**
+         * Overlap-add of a whole song held in memory, with the Hann cross-fade this engine uses. The shared
+         * implementation is [StemOverlapAdd]; the streaming form the app runs on songs is
+         * [StemOverlapAdd.separateFile].
+         */
         fun processOverlapAdd(
             inputPcm: FloatArray,
             chunkSizeFrames: Int = SEGMENT_SAMPLES,
@@ -82,69 +87,23 @@ class StemSeparator(private val context: Context) {
             progressCallback: ((Float) -> Unit)? = null,
             isCancelled: (() -> Boolean)? = null,
             processChunk: (inChunk: Array<FloatArray>, numFrames: Int) -> Array<Array<FloatArray>>?
-        ): Array<FloatArray>? {
-            val totalFrames = inputPcm.size / 2
-            if (totalFrames == 0) return null
-
-            val numStems = 4
-            val outAccum = Array(numStems) { Array(2) { FloatArray(totalFrames) } }
-            val weightAccum = FloatArray(totalFrames)
-
-            val hann = FloatArray(chunkSizeFrames) { i ->
-                sin(PI * (i + 0.5) / chunkSizeFrames).let { (it * it).toFloat() }
-            }
-
-            var framePos = 0
-            while (framePos < totalFrames) {
-                if (isCancelled?.invoke() == true) return null
-
-                val framesInChunk = minOf(chunkSizeFrames, totalFrames - framePos)
-
-                val inChunk = Array(2) { FloatArray(chunkSizeFrames) }
-                for (i in 0 until framesInChunk) {
-                    val idx = (framePos + i) * 2
-                    inChunk[0][i] = inputPcm[idx]
-                    inChunk[1][i] = inputPcm[idx + 1]
-                }
-
-                val chunkStems = processChunk(inChunk, chunkSizeFrames) ?: return null
-
-                for (s in 0 until numStems) {
-                    for (ch in 0..1) {
-                        val stemCh = chunkStems[s][ch]
-                        val outCh = outAccum[s][ch]
-                        for (i in 0 until framesInChunk) {
-                            val targetFrame = framePos + i
-                            val w = hann[i]
-                            outCh[targetFrame] += stemCh[i] * w
-                        }
-                    }
-                }
-                for (i in 0 until framesInChunk) {
-                    weightAccum[framePos + i] += hann[i]
-                }
-
-                // The last chunk reached the end of the song: another one would only re-run the tail.
-                if (framePos + chunkSizeFrames >= totalFrames) break
-                framePos += hopSizeFrames
-                progressCallback?.invoke((framePos.toFloat() / totalFrames).coerceIn(0f, 1f))
-            }
-
-            val resultStems = Array(numStems) { FloatArray(totalFrames * 2) }
-            for (f in 0 until totalFrames) {
-                val w = if (weightAccum[f] > 1e-30f) weightAccum[f] else 1.0f
-                val invW = 1.0f / w
-                for (s in 0 until numStems) {
-                    val stemOut = resultStems[s]
-                    val idx = f * 2
-                    stemOut[idx] = outAccum[s][0][f] * invW
-                    stemOut[idx + 1] = outAccum[s][1][f] * invW
-                }
-            }
-
-            return resultStems
-        }
+        ): Array<FloatArray>? = StemOverlapAdd.processInMemory(
+            inputPcm = inputPcm,
+            stemCount = SPECS.size,
+            segmentSamples = chunkSizeFrames,
+            hopSamples = hopSizeFrames,
+            window = StemOverlapAdd.hannWindow(chunkSizeFrames),
+            progressCallback = progressCallback,
+            isCancelled = isCancelled,
+            processChunk = processChunk
+        )
     }
+
+    override val id: String = com.beatraxus.app.model.StemQuality.FAST.engineId
+    override val specs: List<StemSpec> = SPECS
+    override val segmentSamples: Int = SEGMENT_SAMPLES
+    override val hopSamples: Int = HOP_FRAMES
+    override val window: FloatArray by lazy { StemOverlapAdd.hannWindow(SEGMENT_SAMPLES) }
 
     private var ortEnv: OrtEnvironment? = null
     private var ortSession: OrtSession? = null
@@ -153,9 +112,10 @@ class StemSeparator(private val context: Context) {
     @Volatile private var closed = false
     @Volatile private var isInitialized = false
 
-    /** Why the last [inferChunk] returned null (shown to the user), or null. */
-    @Volatile var lastError: String? = null
-        private set
+    @Volatile private var lastErrorText: String? = null
+
+    /** Why the last [initialize] / [inferChunk] failed (shown to the user), or null. */
+    override val lastError: String? get() = lastErrorText
 
     private val radix2Fft = Radix2FFT(N_FFT)
 
@@ -179,12 +139,12 @@ class StemSeparator(private val context: Context) {
     private fun obtainStemOut(chunkSize: Int): Array<Array<FloatArray>> {
         val cur = stemOut
         if (cur != null && cur[0][0].size == chunkSize) return cur
-        val fresh = Array(4) { Array(2) { FloatArray(chunkSize) } }
+        val fresh = Array(SPECS.size) { Array(2) { FloatArray(chunkSize) } }
         stemOut = fresh
         return fresh
     }
 
-    fun initialize(): Boolean = synchronized(sessionLock) { initializeLocked() }
+    override fun initialize(): Boolean = synchronized(sessionLock) { initializeLocked() }
 
     private fun initializeLocked(): Boolean {
         if (closed) return false
@@ -195,6 +155,7 @@ class StemSeparator(private val context: Context) {
             val modelFile = getOrExtractModelFile()
             if (modelFile == null || !modelFile.exists() || modelFile.length() <= 0) {
                 Log.w(TAG, "SCNet model file not present in filesDir or assets")
+                lastErrorText = "The Fast separation model is not installed"
                 isInitialized = true
                 return false
             }
@@ -243,6 +204,7 @@ class StemSeparator(private val context: Context) {
                     val actualIn = mixSpecInfo?.shape?.contentToString() ?: "missing"
                     val actualOut = stemsSpecInfo?.shape?.contentToString() ?: "missing"
                     Log.e(TAG, "SCNet model contract mismatch: input mix_spec $actualIn (expected [1, 4, 2049, 476]), output stems_spec $actualOut (expected [1, 16, 2049, 476])")
+                    lastErrorText = "The Fast separation model does not match this app (input $actualIn, output $actualOut)"
                     session.close()
                     isInitialized = true
                     return false
@@ -253,11 +215,17 @@ class StemSeparator(private val context: Context) {
                 isInitialized = true
                 true
             } else {
+                lastErrorText = "The Fast separation model could not be started"
                 isInitialized = true
                 false
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing SCNet StemSeparator: ${e.message}", e)
+            lastErrorText = e.message ?: "The Fast separation model could not be started"
+            false
+        } catch (e: OutOfMemoryError) {
+            Log.e(TAG, "Out of memory initializing SCNet", e)
+            lastErrorText = "Out of memory while loading the Fast separation model"
             false
         }
     }
@@ -300,12 +268,12 @@ class StemSeparator(private val context: Context) {
      * Every returned sample is finite and within +-[StemDsp.MAX_ABS]. A model run whose output is mostly
      * NaN / Infinity returns null with [lastError] set, rather than silent or noisy stems.
      */
-    fun inferChunk(inChunk: Array<FloatArray>, chunkSize: Int): Array<Array<FloatArray>>? = synchronized(sessionLock) {
+    override fun inferChunk(inChunk: Array<FloatArray>, chunkSize: Int): Array<Array<FloatArray>>? = synchronized(sessionLock) {
         if (closed) return@synchronized null
         if (!isInitialized && !initializeLocked()) return@synchronized null
         val session = ortSession ?: return@synchronized null
         val env = ortEnv ?: return@synchronized null
-        lastError = null
+        lastErrorText = null
 
         try {
             val t0 = System.nanoTime()
@@ -313,7 +281,7 @@ class StemSeparator(private val context: Context) {
             val out = obtainStemOut(chunkSize)
 
             if (StemDsp.peak(inChunk[0], inLen) < SILENCE_PEAK && StemDsp.peak(inChunk[1], inLen) < SILENCE_PEAK) {
-                for (s in 0 until 4) for (ch in 0..1) java.util.Arrays.fill(out[s][ch], 0f)
+                for (s in 0 until SPECS.size) for (ch in 0..1) java.util.Arrays.fill(out[s][ch], 0f)
                 return@synchronized out
             }
 
@@ -334,7 +302,7 @@ class StemSeparator(private val context: Context) {
                 stemsBuf.rewind()
 
                 if (stemsBuf.capacity() < 16 * StemDsp.BINS * N_FRAMES) {
-                    lastError = "Unexpected model output size ${stemsBuf.capacity()}"
+                    lastErrorText = "Unexpected model output size ${stemsBuf.capacity()}"
                     Log.e(TAG, "Unexpected SCNet output size ${stemsBuf.capacity()}")
                     return@synchronized null
                 }
@@ -343,7 +311,7 @@ class StemSeparator(private val context: Context) {
                 val copyLen = minOf(chunkSize, SEGMENT_SAMPLES)
                 var badBins = 0
                 var badSamples = 0
-                for (appStem in 0 until 4) {
+                for (appStem in 0 until SPECS.size) {
                     badBins += StemDsp.inverseSource(
                         radix2Fft, stemsBuf, APP_TO_MODEL_SOURCE[appStem], outL, outR, reBuf, imBuf
                     )
@@ -359,9 +327,9 @@ class StemSeparator(private val context: Context) {
                     badSamples += StemDsp.sanitize(dstL, 0, chunkSize) + StemDsp.sanitize(dstR, 0, chunkSize)
                 }
 
-                val totalBins = 4L * StemDsp.BINS * N_FRAMES
-                if (badBins > totalBins * MAX_BAD_BIN_RATIO) {
-                    lastError = "The separation model returned invalid audio ($badBins bad values)"
+                val totalBins = SPECS.size.toLong() * StemDsp.BINS * N_FRAMES
+                if (StemModelContract.tooManyBad(badBins.toLong(), totalBins)) {
+                    lastErrorText = "The separation model returned invalid audio ($badBins bad values)"
                     Log.e(TAG, "SCNet output is mostly non-finite: $badBins of $totalBins bins. Input peak " +
                         "${StemDsp.peak(inChunk[0], inLen)} / ${StemDsp.peak(inChunk[1], inLen)}")
                     return@synchronized null
@@ -382,11 +350,11 @@ class StemSeparator(private val context: Context) {
                 result?.close()
             }
         } catch (e: OutOfMemoryError) {
-            lastError = "Out of memory while separating"
+            lastErrorText = "Out of memory while separating"
             Log.e(TAG, "Out of memory running SCNet inference chunk", e)
             null
         } catch (e: Exception) {
-            lastError = e.message ?: "Inference failed"
+            lastErrorText = e.message ?: "Inference failed"
             Log.e(TAG, "Error running SCNet inference chunk: ${e.message}", e)
             null
         }
@@ -413,7 +381,7 @@ class StemSeparator(private val context: Context) {
         }
     }
 
-    fun release() {
+    override fun release() {
         if (closed) return
         closed = true
         synchronized(sessionLock) {

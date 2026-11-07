@@ -2,181 +2,90 @@ package com.beatraxus.app.engine
 
 import android.content.Context
 import android.util.Log
+import com.beatraxus.app.model.StemQuality
 import java.io.File
-import java.io.RandomAccessFile
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 
+/**
+ * Android face of the stem cache ([StemCacheStore] holds the logic). Stems live in `cacheDir/stems/v3/<fast|max>/<song>`
+ * so the system may reclaim them under storage pressure; the app also keeps them under [SIZE_LIMIT_BYTES].
+ */
 object StemCache {
     private const val TAG = "StemCache"
-    val STEM_FILENAMES = arrayOf("vocals.pcm", "drums.pcm", "bass.pcm", "other.pcm")
-    private const val DONE_FILENAME = "done"
 
     /**
-     * Bump when the stem format or quality changes. Version 2: stems made before the decoder fix were built from
-     * garbage (16-bit FLAC read as float), so they are silent, noisy or NaN and must be separated again.
+     * Total stem cache size the app keeps. A stem is 8 bytes per frame (44.1 kHz stereo float), about 21 MB per
+     * minute of music, so a minute costs about 85 MB as 4 stems and 127 MB as 6 stems (arithmetic, not measured).
      */
-    private const val CACHE_VERSION = "2"
+    const val SIZE_LIMIT_BYTES = 3L * 1024 * 1024 * 1024
 
-    fun getStemsDir(context: Context, songId: String): File {
-        val safeId = songId.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val dir = File(File(context.cacheDir, "stems"), safeId)
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+    fun store(context: Context): StemCacheStore {
+        val root = File(context.cacheDir, "stems")
+        if (!root.exists()) root.mkdirs()
+        return StemCacheStore(root)
     }
 
-    fun isStemsCached(context: Context, songId: String): Boolean {
-        val dir = getStemsDir(context, songId)
-        if (!dir.exists() || !dir.isDirectory) return false
-        if (!isCurrentMarker(File(dir, DONE_FILENAME))) return false
-        for (name in STEM_FILENAMES) {
-            val f = File(dir, name)
-            if (!f.exists() || f.length() <= 0) return false
-        }
-        return true
-    }
+    /** Bytes the stems of [totalFrames] frames take for [stemCount] stems. */
+    fun stemBytes(totalFrames: Long, stemCount: Int): Long = totalFrames * 8L * stemCount
 
-    fun markStemsDone(context: Context, songId: String) {
-        val dir = getStemsDir(context, songId)
+    fun getStemsDir(context: Context, songId: String, quality: StemQuality): File =
+        store(context).dirFor(songId, quality, create = true)
+
+    fun isStemsCached(context: Context, songId: String, quality: StemQuality): Boolean =
+        store(context).isCached(songId, quality)
+
+    fun markStemsDone(context: Context, songId: String, quality: StemQuality) {
         try {
-            File(dir, DONE_FILENAME).writeText(CACHE_VERSION)
+            store(context).markDone(songId, quality)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to write done marker for $songId: ${e.message}")
+            Log.e(TAG, "Failed to write done marker for $songId (${quality.name}): ${e.message}")
         }
     }
 
-    private fun isCurrentMarker(f: File): Boolean =
-        f.isFile && try { f.readText().trim() == CACHE_VERSION } catch (_: Exception) { false }
+    fun stemFiles(context: Context, songId: String, quality: StemQuality): List<File> =
+        store(context).stemFiles(songId, quality)
 
-    /** Deletes stem folders written by an older version (their done marker has another version). */
+    /** Deletes the stems of a song for one quality, or for both when [quality] is null. */
+    fun deleteStems(context: Context, songId: String, quality: StemQuality? = null) {
+        try {
+            store(context).deleteStems(songId, quality)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete stems for $songId: ${e.message}")
+        }
+    }
+
+    /** Removes caches written by an older layout or version (their marker or folder does not match). */
     fun purgeOutdated(context: Context) {
         try {
-            val root = File(context.cacheDir, "stems")
-            root.listFiles()?.forEach { d ->
-                val marker = File(d, DONE_FILENAME)
-                if (d.isDirectory && marker.exists() && !isCurrentMarker(marker)) d.deleteRecursively()
-            }
+            val n = store(context).purgeOutdated()
+            if (n > 0) Log.i(TAG, "purgeOutdated removed $n outdated stem folders")
         } catch (e: Exception) {
             Log.e(TAG, "purgeOutdated failed: ${e.message}")
         }
     }
 
-    fun deleteStems(context: Context, songId: String) {
-        val dir = getStemsDir(context, songId)
+    fun totalSizeBytes(context: Context): Long =
+        try { store(context).totalSizeBytes() } catch (_: Exception) { 0L }
+
+    /** "Clear stem cache": every stem of every song, Fast and Max. */
+    fun clearAll(context: Context) {
         try {
-            if (dir.exists()) {
-                dir.deleteRecursively()
-            }
+            store(context).clearAll()
+            Log.i(TAG, "Stem cache cleared")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to delete stems directory for $songId: ${e.message}")
+            Log.e(TAG, "clearAll failed: ${e.message}")
         }
     }
 
-    fun saveStemsToCache(context: Context, songId: String, stems: Array<FloatArray>) {
-        val dir = getStemsDir(context, songId)
-        for (i in 0 until minOf(stems.size, STEM_FILENAMES.size)) {
-            val file = File(dir, STEM_FILENAMES[i])
-            try {
-                RandomAccessFile(file, "rw").use { raf ->
-                    val channel = raf.channel
-                    val floatData = stems[i]
-                    val byteBuf = ByteBuffer.allocateDirect(floatData.size * 4).order(ByteOrder.nativeOrder())
-                    byteBuf.asFloatBuffer().put(floatData)
-                    byteBuf.rewind()
-                    channel.write(byteBuf)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to save stem ${STEM_FILENAMES[i]} to cache: ${e.message}", e)
-            }
-        }
-        markStemsDone(context, songId)
-    }
-
-    /**
-     * Reads [frameCount] stereo frames (i.e. [frameCount] * 2 floats) from stem index [stemIndex]
-     * starting at frame offset [frameOffset] into [outBuffer].
-     * Returns true if read succeeded, false otherwise.
-     */
-    fun readStemFrames(
-        context: Context,
-        songId: String,
-        stemIndex: Int,
-        frameOffset: Long,
-        frameCount: Int,
-        outBuffer: FloatArray
-    ): Boolean {
-        if (stemIndex !in STEM_FILENAMES.indices) return false
-        val dir = getStemsDir(context, songId)
-        val file = File(dir, STEM_FILENAMES[stemIndex])
-        if (!file.exists() || file.length() <= 0) return false
-
-        val byteOffset = frameOffset * 8 // 2 channels * 4 bytes per float
-        val bytesToRead = frameCount * 8
-        val fileSize = file.length()
-        if (byteOffset >= fileSize) return false
-
-        val actualBytesToRead = minOf(bytesToRead.toLong(), fileSize - byteOffset).toInt()
-        val floatsToRead = actualBytesToRead / 4
-
-        return try {
-            RandomAccessFile(file, "r").use { raf ->
-                val channel = raf.channel
-                channel.position(byteOffset)
-                val byteBuf = ByteBuffer.allocateDirect(actualBytesToRead).order(ByteOrder.nativeOrder())
-                channel.read(byteBuf)
-                byteBuf.rewind()
-                byteBuf.asFloatBuffer().get(outBuffer, 0, floatsToRead)
-                if (floatsToRead < outBuffer.size) {
-                    outBuffer.fill(0f, floatsToRead, outBuffer.size)
-                }
-                true
-            }
+    /** Makes room for [incomingBytes] under [SIZE_LIMIT_BYTES]; the song being written is never evicted. */
+    fun enforceLimit(context: Context, incomingBytes: Long, keepSongId: String, keepQuality: StemQuality) {
+        try {
+            val n = store(context).enforceLimit(SIZE_LIMIT_BYTES, incomingBytes, keepSongId, keepQuality)
+            if (n > 0) Log.i(TAG, "Size guard removed $n least recently used stem sets")
         } catch (e: Exception) {
-            Log.e(TAG, "Error reading stem frames: ${e.message}")
-            false
+            Log.e(TAG, "enforceLimit failed: ${e.message}")
         }
     }
 
-    /**
-     * Keeps the 4 stem files open and reuses one buffer, so the audio thread does no allocation or file opening per
-     * buffer. Close it when the song / pipeline goes away.
-     */
-    class Reader(private val context: Context, private val songId: String) : java.io.Closeable {
-        private val rafs = arrayOfNulls<RandomAccessFile>(STEM_FILENAMES.size)
-        private var bb: ByteBuffer = ByteBuffer.allocateDirect(1 shl 16).order(ByteOrder.nativeOrder())
-
-        /** Reads [frameCount] stereo frames at [frameOffset] into [out] (zero filled past EOF). False if unreadable. */
-        fun read(stemIndex: Int, frameOffset: Long, frameCount: Int, out: FloatArray): Boolean {
-            if (stemIndex !in STEM_FILENAMES.indices || out.size < frameCount * 2) return false
-            return try {
-                val raf = rafs[stemIndex] ?: RandomAccessFile(File(getStemsDir(context, songId), STEM_FILENAMES[stemIndex]), "r")
-                    .also { rafs[stemIndex] = it }
-                val byteOffset = frameOffset * 8
-                val size = raf.length()
-                if (byteOffset >= size) return false
-                val want = (minOf(frameCount * 8L, size - byteOffset).toInt()) and 7.inv()
-                if (bb.capacity() < want) bb = ByteBuffer.allocateDirect(want).order(ByteOrder.nativeOrder())
-                bb.clear()
-                bb.limit(want)
-                val ch = raf.channel
-                ch.position(byteOffset)
-                while (bb.hasRemaining()) if (ch.read(bb) < 0) break
-                bb.flip()
-                val floats = bb.remaining() / 4
-                bb.asFloatBuffer().get(out, 0, floats)
-                if (floats < frameCount * 2) out.fill(0f, floats, frameCount * 2)
-                true
-            } catch (e: Exception) {
-                Log.e(TAG, "Error reading stem frames: ${e.message}")
-                false
-            }
-        }
-
-        override fun close() {
-            for (i in rafs.indices) {
-                try { rafs[i]?.close() } catch (_: Throwable) {}
-                rafs[i] = null
-            }
-        }
-    }
+    fun openReader(context: Context, songId: String, quality: StemQuality): StemCacheStore.Reader =
+        store(context).openReader(songId, quality)
 }

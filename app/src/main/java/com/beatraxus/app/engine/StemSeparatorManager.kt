@@ -1,31 +1,41 @@
 package com.beatraxus.app.engine
 
+import android.app.ActivityManager
 import android.content.Context
 import android.util.Log
 import com.beatraxus.app.model.Song
+import com.beatraxus.app.model.StemQuality
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.job
-import kotlin.coroutines.coroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import java.io.File
-import java.io.RandomAccessFile
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlin.coroutines.cancellation.CancellationException
-import kotlin.math.PI
-import kotlin.math.sin
+import kotlin.coroutines.coroutineContext
 
 sealed interface StemSeparationState {
     object Idle : StemSeparationState
-    data class Separating(val songId: String, val progress: Float) : StemSeparationState
-    data class Ready(val songId: String) : StemSeparationState
-    data class Failed(val songId: String, val errorText: String) : StemSeparationState
+
+    /**
+     * [chunk] of [totalChunks] model chunks are done. [etaMs] is the remaining time extrapolated from the chunks
+     * already run on this device (null until two chunks are done); it is never a built-in guess.
+     */
+    data class Separating(
+        val songId: String,
+        val progress: Float,
+        val quality: StemQuality = StemQuality.FAST,
+        val chunk: Int = 0,
+        val totalChunks: Int = 0,
+        val etaMs: Long? = null
+    ) : StemSeparationState
+
+    data class Ready(val songId: String, val quality: StemQuality = StemQuality.FAST) : StemSeparationState
+    data class Failed(val songId: String, val errorText: String, val quality: StemQuality = StemQuality.FAST) : StemSeparationState
 }
 
 object StemSeparatorManager {
@@ -36,42 +46,59 @@ object StemSeparatorManager {
 
     private val scope = CoroutineScope(Dispatchers.Default)
     private var activeJob: Job? = null
-    private var activeSeparator: StemSeparator? = null
+    private var activeEngine: StemEngine? = null
     private var activeSongId: String? = null
+    private var activeQuality: StemQuality? = null
 
-    fun getStatusForSong(context: Context, songId: String?): StemSeparationState {
+    private fun stateQuality(st: StemSeparationState): StemQuality? = when (st) {
+        is StemSeparationState.Separating -> st.quality
+        is StemSeparationState.Ready -> st.quality
+        is StemSeparationState.Failed -> st.quality
+        else -> null
+    }
+
+    private fun stateSong(st: StemSeparationState): String? = when (st) {
+        is StemSeparationState.Separating -> st.songId
+        is StemSeparationState.Ready -> st.songId
+        is StemSeparationState.Failed -> st.songId
+        else -> null
+    }
+
+    /** Status of [songId] for [quality]: cached stems win, otherwise the live state if it is about this song and quality. */
+    fun getStatusForSong(context: Context, songId: String?, quality: StemQuality): StemSeparationState {
         if (songId == null) return StemSeparationState.Idle
-        if (StemCache.isStemsCached(context, songId)) return StemSeparationState.Ready(songId)
-
+        if (StemCache.isStemsCached(context, songId, quality)) return StemSeparationState.Ready(songId, quality)
         val current = _state.value
-        return when (current) {
-            is StemSeparationState.Separating -> if (current.songId == songId) current else StemSeparationState.Idle
-            is StemSeparationState.Ready -> if (current.songId == songId) current else StemSeparationState.Idle
-            is StemSeparationState.Failed -> if (current.songId == songId) current else StemSeparationState.Idle
-            else -> StemSeparationState.Idle
-        }
+        return if (stateSong(current) == songId && stateQuality(current) == quality) current else StemSeparationState.Idle
+    }
+
+    /** Free RAM the system reports right now (a heuristic: it counts what could be reclaimed only partly). */
+    private fun availableRamBytes(context: Context): Long? = try {
+        val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+        ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }.availMem
+    } catch (_: Exception) {
+        null
     }
 
     @Synchronized
-    fun requestSeparation(context: Context, song: Song, force: Boolean = false) {
+    fun requestSeparation(context: Context, song: Song, quality: StemQuality, force: Boolean = false) {
         val songId = song.id
         val appContext = context.applicationContext
 
-        if (StemCache.isStemsCached(appContext, songId)) {
-            _state.value = StemSeparationState.Ready(songId)
+        if (StemCache.isStemsCached(appContext, songId, quality)) {
+            StemCache.store(appContext).touch(songId, quality)
+            _state.value = StemSeparationState.Ready(songId, quality)
             return
         }
 
-        if (activeSongId == songId && activeJob?.isActive == true) {
-            return
-        }
+        if (activeSongId == songId && activeQuality == quality && activeJob?.isActive == true) return
 
-        if (!force && _state.value is StemSeparationState.Failed && (_state.value as StemSeparationState.Failed).songId == songId) {
-            return
-        }
+        val cur = _state.value
+        if (!force && cur is StemSeparationState.Failed && cur.songId == songId && cur.quality == quality) return
 
         cancelSeparation()
         activeSongId = songId
+        activeQuality = quality
 
         activeJob = scope.launch(start = CoroutineStart.LAZY) {
             val me = coroutineContext.job
@@ -79,188 +106,121 @@ object StemSeparatorManager {
             fun publish(st: StemSeparationState) {
                 synchronized(StemSeparatorManager) { if (activeJob === me) _state.value = st }
             }
-            publish(StemSeparationState.Separating(songId, 0f))
+            // A cancelled job must not delete the stems of the job that replaced it.
+            fun ownsSong(): Boolean = synchronized(StemSeparatorManager) { activeJob === me || activeJob == null }
+            fun cleanup() { if (ownsSong()) StemCache.deleteStems(appContext, songId, quality) }
 
-            val separator = StemSeparator(appContext)
-            synchronized(StemSeparatorManager) { if (activeJob === me) activeSeparator = separator }
+            publish(StemSeparationState.Separating(songId, 0f, quality))
 
-            val tempPcmFile = File(appContext.cacheDir, "temp_decode_$songId.pcm")
+            val engine = StemEngines.create(appContext, quality)
+            synchronized(StemSeparatorManager) { if (activeJob === me) activeEngine = engine }
+
+            val tempPcmFile = File(appContext.cacheDir, "temp_decode_${quality.folderName}_$songId.pcm")
 
             try {
+                if (!StemEngines.isModelInstalled(appContext, quality)) {
+                    publish(StemSeparationState.Failed(songId, "The ${quality.label} separation model is not installed", quality))
+                    return@launch
+                }
+
+                // RAM guard: the Max model is big, and a native out-of-memory kill cannot be caught.
+                val need = engine.minFreeRamBytes
+                val avail = availableRamBytes(appContext)
+                if (need > 0 && avail != null && avail < need) {
+                    val msg = "Not enough free memory for ${quality.label} (needs about ${need / 1_000_000} MB free, " +
+                        "${avail / 1_000_000} MB available). Close other apps or use Fast."
+                    Log.w(TAG, msg)
+                    publish(StemSeparationState.Failed(songId, msg, quality))
+                    return@launch
+                }
+
                 StemCache.purgeOutdated(appContext)
-                StemCache.deleteStems(appContext, songId)
+                StemCache.deleteStems(appContext, songId, quality)
 
-                // Step 1: Decode song audio to 44.1 kHz stereo float temp file
+                // Step 1: decode the song to a 44.1 kHz stereo float temp file.
+                val tDecode = System.nanoTime()
                 val totalFrames = StemAudioDecoder.decodeToStereoFloat44100File(
-                    appContext,
-                    song,
-                    tempPcmFile,
-                    isCancelled = { me.isCancelled }
+                    appContext, song, tempPcmFile, isCancelled = { me.isCancelled }
                 )
-
                 if (totalFrames == null || totalFrames <= 0L || me.isCancelled) {
-                    if (!me.isCancelled) {
-                        publish(StemSeparationState.Failed(songId, "Failed to decode song audio"))
-                    } else {
-                        publish(StemSeparationState.Idle)
-                    }
-                    StemCache.deleteStems(appContext, songId)
+                    publish(if (me.isCancelled) StemSeparationState.Idle else StemSeparationState.Failed(songId, "Failed to decode song audio", quality))
+                    cleanup()
+                    return@launch
+                }
+                Log.i(TAG, "Decoded $songId: ${totalFrames / StemSeparator.SAMPLE_RATE} s in ${(System.nanoTime() - tDecode) / 1_000_000} ms")
+
+                // Disk guard: stems of this song plus the cache size limit.
+                val stemBytes = StemCache.stemBytes(totalFrames, engine.stemCount)
+                StemCache.enforceLimit(appContext, stemBytes, songId, quality)
+                val dir = StemCache.getStemsDir(appContext, songId, quality)
+                if (dir.usableSpace < stemBytes + 100L * 1024 * 1024) {
+                    publish(StemSeparationState.Failed(songId, "Not enough free storage for ${engine.stemCount} stems (${stemBytes / 1_000_000} MB)", quality))
+                    cleanup()
                     return@launch
                 }
 
-                if (!separator.initialize()) {
-                    publish(StemSeparationState.Failed(songId, "Failed to initialize separator model"))
-                    StemCache.deleteStems(appContext, songId)
+                if (!engine.initialize()) {
+                    publish(StemSeparationState.Failed(songId, engine.lastError ?: "Failed to initialize ${quality.label} model", quality))
+                    cleanup()
                     return@launch
                 }
 
-                // Step 2: Streaming separation into cache files
-                val chunkSize = StemSeparator.SEGMENT_SAMPLES
-                val hopSize = StemSeparator.HOP_FRAMES
-                val bufferCap = chunkSize + hopSize
-
-                val outAccum = Array(4) { Array(2) { FloatArray(bufferCap) } }
-                val weightAccum = FloatArray(bufferCap)
-                val hann = FloatArray(chunkSize) { i ->
-                    sin(PI * (i + 0.5) / chunkSize).let { (it * it).toFloat() }
-                }
-
-                val dir = StemCache.getStemsDir(appContext, songId)
-                val stemRafs = Array(4) { i ->
-                    RandomAccessFile(File(dir, StemCache.STEM_FILENAMES[i]), "rw")
-                }
-
-                // Buffers reused for every chunk (they used to be allocated again each time).
-                val inChunk = Array(2) { FloatArray(chunkSize) }
-                val inByteBuf = ByteBuffer.allocateDirect(chunkSize * 8).order(ByteOrder.nativeOrder())
-                val outByteBuf = ByteBuffer.allocateDirect(bufferCap * 8).order(ByteOrder.nativeOrder())
-
-                var baseFrame = 0L
-                var framePos = 0L
-                var chunks = 0
+                // Step 2: streaming separation into the cache files (shared loop for every engine).
+                val totalChunks = StemOverlapAdd.chunkCount(totalFrames, engine.segmentSamples, engine.hopSamples)
                 val tStart = System.nanoTime()
+                var lastChunkAt = tStart
+                Log.i(TAG, "Separating $songId with ${engine.describe()}: $totalChunks chunks")
 
-                try {
-                    RandomAccessFile(tempPcmFile, "r").use { tempRaf ->
-                        val tempChannel = tempRaf.channel
-
-                        while (framePos < totalFrames) {
-                            if (me.isCancelled) throw CancellationException()
-
-                            val framesInChunk = minOf(chunkSize.toLong(), totalFrames - framePos).toInt()
-
-                            inByteBuf.clear()
-                            inByteBuf.limit(framesInChunk * 8)
-                            tempChannel.position(framePos * 8)
-                            while (inByteBuf.hasRemaining()) if (tempChannel.read(inByteBuf) < 0) break
-                            inByteBuf.flip()
-                            val inFloats = inByteBuf.asFloatBuffer()
-
-                            val readFrames = inFloats.remaining() / 2
-                            for (i in 0 until readFrames) {
-                                inChunk[0][i] = inFloats.get()
-                                inChunk[1][i] = inFloats.get()
-                            }
-                            java.util.Arrays.fill(inChunk[0], readFrames, chunkSize, 0f)
-                            java.util.Arrays.fill(inChunk[1], readFrames, chunkSize, 0f)
-                            // The decoder is trusted no more: one NaN here would poison the whole model run.
-                            StemDsp.sanitize(inChunk[0], 0, readFrames, 1e3f)
-                            StemDsp.sanitize(inChunk[1], 0, readFrames, 1e3f)
-
-                            val chunkStems = separator.inferChunk(inChunk, chunkSize)
-                                ?: throw Exception(separator.lastError ?: "Inference chunk failed")
-                            chunks++
-
-                            // Accumulate
-                            for (s in 0 until 4) {
-                                for (ch in 0..1) {
-                                    val stemCh = chunkStems[s][ch]
-                                    val outCh = outAccum[s][ch]
-                                    for (i in 0 until framesInChunk) {
-                                        val relIdx = (framePos + i - baseFrame).toInt()
-                                        outCh[relIdx] += stemCh[i] * hann[i]
-                                    }
-                                }
-                            }
-                            for (i in 0 until framesInChunk) {
-                                val relIdx = (framePos + i - baseFrame).toInt()
-                                weightAccum[relIdx] += hann[i]
-                            }
-
-                            val nextFramePos = framePos + hopSize
-                            val finishedUntil = if (nextFramePos < totalFrames && framesInChunk == chunkSize) nextFramePos else totalFrames
-                            val numFlushed = (finishedUntil - baseFrame).toInt()
-
-                            if (numFlushed > 0) {
-                                for (s in 0 until 4) {
-                                    outByteBuf.clear()
-                                    val outFloats = outByteBuf.asFloatBuffer()
-                                    for (i in 0 until numFlushed) {
-                                        val w = if (weightAccum[i] > 1e-30f) weightAccum[i] else 1.0f
-                                        val invW = 1.0f / w
-                                        outFloats.put(outAccum[s][0][i] * invW)
-                                        outFloats.put(outAccum[s][1][i] * invW)
-                                    }
-                                    outByteBuf.position(0)
-                                    outByteBuf.limit(numFlushed * 8)
-
-                                    val chnl = stemRafs[s].channel
-                                    chnl.position(baseFrame * 8)
-                                    while (outByteBuf.hasRemaining()) chnl.write(outByteBuf)
-                                }
-
-                                // Shift accumulators left
-                                val remaining = bufferCap - numFlushed
-                                for (s in 0 until 4) {
-                                    for (ch in 0..1) {
-                                        System.arraycopy(outAccum[s][ch], numFlushed, outAccum[s][ch], 0, remaining)
-                                        outAccum[s][ch].fill(0f, remaining, bufferCap)
-                                    }
-                                }
-                                System.arraycopy(weightAccum, numFlushed, weightAccum, 0, remaining)
-                                weightAccum.fill(0f, remaining, bufferCap)
-
-                                baseFrame = finishedUntil
-                            }
-
-                            // Final region flushed: stop (continuing would index before baseFrame).
-                            if (finishedUntil >= totalFrames) break
-
-                            framePos += hopSize
-                            val pct = (framePos.toFloat() / totalFrames).coerceIn(0f, 1f)
-                            publish(StemSeparationState.Separating(songId, pct))
-                        }
-                    }
-                } finally {
-                    for (raf in stemRafs) {
-                        try { raf.close() } catch (_: Throwable) {}
-                    }
-                }
+                val chunks = StemOverlapAdd.separateFile(
+                    inputFile = tempPcmFile,
+                    totalFrames = totalFrames,
+                    outputFiles = StemCache.stemFiles(appContext, songId, quality),
+                    segmentSamples = engine.segmentSamples,
+                    hopSamples = engine.hopSamples,
+                    stemCount = engine.stemCount,
+                    window = engine.window,
+                    isCancelled = { me.isCancelled },
+                    errorMessage = { engine.lastError },
+                    onProgress = { p ->
+                        val now = System.nanoTime()
+                        Log.i(TAG, "chunk ${p.chunk}/${p.totalChunks} wall ${(now - lastChunkAt) / 1_000_000} ms")
+                        lastChunkAt = now
+                        val eta = if (p.chunk >= 2) ((now - tStart) / 1_000_000) * (p.totalChunks - p.chunk) / p.chunk else null
+                        publish(StemSeparationState.Separating(songId, p.fraction, quality, p.chunk, p.totalChunks, eta))
+                    },
+                    inferChunk = { inChunk, size -> engine.inferChunk(inChunk, size) }
+                )
+                val elapsedMs = (System.nanoTime() - tStart) / 1_000_000
                 Log.i(
                     TAG,
-                    "Separation of $songId: $chunks chunks, ${totalFrames / StemSeparator.SAMPLE_RATE} s of audio in " +
-                        "${(System.nanoTime() - tStart) / 1_000_000} ms"
+                    "Separation of $songId (${quality.name}): $chunks chunks, ${totalFrames / StemSeparator.SAMPLE_RATE} s of audio " +
+                        "in $elapsedMs ms"
                 )
 
-                StemCache.markStemsDone(appContext, songId)
-                publish(StemSeparationState.Ready(songId))
-                Log.i(TAG, "Successfully separated and cached 4 stems for song $songId")
+                StemCache.markStemsDone(appContext, songId, quality)
+                publish(StemSeparationState.Ready(songId, quality))
+                Log.i(TAG, "Successfully separated and cached ${engine.stemCount} stems for song $songId")
 
             } catch (e: CancellationException) {
-                StemCache.deleteStems(appContext, songId)
+                cleanup()
                 publish(StemSeparationState.Idle)
+            } catch (e: OutOfMemoryError) {
+                Log.e(TAG, "Out of memory while separating $songId", e)
+                cleanup()
+                publish(StemSeparationState.Failed(songId, "Out of memory while separating. Close other apps or use Fast.", quality))
             } catch (e: Exception) {
                 Log.e(TAG, "Separation error: ${e.message}", e)
-                StemCache.deleteStems(appContext, songId)
-                publish(StemSeparationState.Failed(songId, e.message ?: "Separation error"))
+                cleanup()
+                publish(StemSeparationState.Failed(songId, e.message ?: "Separation error", quality))
             } finally {
                 if (tempPcmFile.exists()) tempPcmFile.delete()
-                separator.release()
+                engine.release()   // frees the ONNX session and its RAM as soon as the song is done
                 synchronized(StemSeparatorManager) {
-                    if (activeSeparator == separator) activeSeparator = null
+                    if (activeEngine === engine) activeEngine = null
                     if (activeJob === me) {
                         activeJob = null
                         activeSongId = null
+                        activeQuality = null
                     }
                 }
             }
@@ -273,10 +233,11 @@ object StemSeparatorManager {
         activeJob?.cancel()
         activeJob = null
         // release() waits for a running inference chunk: never block the caller (often the main thread) on it.
-        val old = activeSeparator
+        val old = activeEngine
         if (old != null) scope.launch(Dispatchers.IO) { old.release() }
-        activeSeparator = null
+        activeEngine = null
         activeSongId = null
+        activeQuality = null
         _state.value = StemSeparationState.Idle
     }
 }

@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import com.beatraxus.app.model.StemQuality
 import com.beatraxus.app.model.*
 import kotlinx.coroutines.flow.*
 import org.json.JSONArray
@@ -232,7 +233,11 @@ class DspPreferences(private val context: Context) {
             stemMixerEnabled = pref(STEM_MIXER_ENABLED, false),
             stemGainsDb = deserializeStemGains(prefNullable(STEM_GAINS)),
             stemMuteMask = sanitizeStemMask(pref(STEM_MUTE_MASK, 0)),
-            stemSoloMask = sanitizeStemMask(pref(STEM_SOLO_MASK, 0))
+            stemSoloMask = sanitizeStemMask(pref(STEM_SOLO_MASK, 0)),
+            // New keys: missing (every install before Max) reads as Fast / not combined. The older stem keys keep
+            // their names, so nobody loses a level, mute or solo; a 4-value gains string is widened by deserializeStemGains.
+            stemQuality = StemQuality.fromStored(pref(STEM_QUALITY, StemQuality.FAST.name)),
+            stemCombineOther = pref(STEM_COMBINE_OTHER, false)
         )
     }
 
@@ -380,6 +385,8 @@ class DspPreferences(private val context: Context) {
             set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
             set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
             set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
+            set(STEM_QUALITY, config.stemQuality.name)
+            set(STEM_COMBINE_OTHER, config.stemCombineOther)
         }
     }
 
@@ -562,6 +569,8 @@ class DspPreferences(private val context: Context) {
                 set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
                 set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
                 set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
+                set(STEM_QUALITY, config.stemQuality.name)
+                set(STEM_COMBINE_OTHER, config.stemCombineOther)
             }
         }
     }
@@ -974,6 +983,8 @@ class DspPreferences(private val context: Context) {
         private val STEM_GAINS = stringPreferencesKey("stem_gains_db")
         private val STEM_MUTE_MASK = intPreferencesKey("stem_mute_mask")
         private val STEM_SOLO_MASK = intPreferencesKey("stem_solo_mask")
+        private val STEM_QUALITY = stringPreferencesKey("stem_quality")
+        private val STEM_COMBINE_OTHER = booleanPreferencesKey("stem_combine_other")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")

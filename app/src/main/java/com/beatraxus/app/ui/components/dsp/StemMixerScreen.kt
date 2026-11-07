@@ -65,15 +65,16 @@ import androidx.compose.ui.unit.sp
 import com.beatraxus.app.engine.StemModelDownloadState
 import com.beatraxus.app.engine.StemModelDownloader
 import com.beatraxus.app.engine.StemSeparationState
-import com.beatraxus.app.engine.StemSeparator
+import com.beatraxus.app.engine.StemEngines
 import com.beatraxus.app.engine.StemSeparatorManager
 import com.beatraxus.app.model.BUILT_IN_STEM_MIXES
 import com.beatraxus.app.model.PlayerUiState
-import com.beatraxus.app.model.STEM_COUNT
+import com.beatraxus.app.model.StemQuality
+import com.beatraxus.app.model.StemSpecs
 import com.beatraxus.app.model.STEM_GAIN_MAX_DB
 import com.beatraxus.app.model.STEM_GAIN_MIN_DB
-import com.beatraxus.app.model.StemChannel
 import com.beatraxus.app.model.activeStemMix
+import com.beatraxus.app.model.stemMixNeedsStems
 import com.beatraxus.app.model.sanitizeStemGains
 import com.beatraxus.app.model.sanitizeStemMask
 import com.beatraxus.app.model.stemMixDescription
@@ -91,20 +92,24 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val pal = DspPaletteState.current
     val accent = pal.accent
 
-    val downloaderState by StemModelDownloader.state.collectAsState()
-    val isModelInstalled = remember(downloaderState, context) { StemSeparator.isModelInstalled(context) }
+    val quality = config.stemQuality
+    val modelFile = StemModelDownloader.modelFor(quality)
+    val downloaderState by StemModelDownloader.stateFor(quality).collectAsState()
+    val isModelInstalled = remember(downloaderState, quality, context) { StemEngines.isModelInstalled(context, quality) }
     val sepState by StemSeparatorManager.state.collectAsState()
 
     val song = uiState.currentSong
     val songId = song?.id
-    val currentSepStatus = remember(sepState, songId, context) {
-        StemSeparatorManager.getStatusForSong(context, songId)
+    val currentSepStatus = remember(sepState, songId, quality, context) {
+        StemSeparatorManager.getStatusForSong(context, songId, quality)
     }
+    val strips = remember(quality, config.stemCombineOther) { StemSpecs.strips(quality, config.stemCombineOther) }
+    val stemTotal = StemSpecs.forQuality(quality).size
 
     // Start separating right after the model is installed (the player only reacts to song / mix changes).
-    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, config.activeStemMix()) {
-        if (song != null && isModelInstalled && config.stemMixerEnabled && config.activeStemMix() != "Original") {
-            StemSeparatorManager.requestSeparation(context, song)
+    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, config.stemMixNeedsStems(), quality) {
+        if (song != null && isModelInstalled && config.stemMixNeedsStems()) {
+            StemSeparatorManager.requestSeparation(context, song, quality)
         }
     }
 
@@ -123,7 +128,7 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         currentSepStatus is StemSeparationState.Separating -> "SEPARATING ${(currentSepStatus.progress * 100).toInt()}%" to accent
         currentSepStatus is StemSeparationState.Ready -> "READY" to accent
         currentSepStatus is StemSeparationState.Failed -> "ERROR" to red
-        else -> "$STEM_COUNT STEMS" to accent
+        else -> "$stemTotal STEMS" to accent
     }
 
     Column(
@@ -182,20 +187,59 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 }
             }
 
+            // ── Quality: Fast (4 stems) / Max (6 stems) ───────────────────────────────────────────────────
+            Column(
+                modifier = Modifier.fillMaxWidth().stemSubPanel(accent),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                StemSectionLabel("QUALITY")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    StemQuality.entries.forEach { q ->
+                        StemMixChip(
+                            if (q == StemQuality.FAST) "Fast · 4 stems" else "Max · 6 stems",
+                            quality == q, accent, Modifier.weight(1f)
+                        ) { viewModel.setStemQuality(q) }
+                    }
+                }
+                Text(
+                    if (quality == StemQuality.FAST) {
+                        "Fast: 4 stems (Vocals, Drums, Bass, Other). Quicker and lighter on storage and battery."
+                    } else {
+                        "Max: 6 stems (adds Guitar and Piano), higher quality, but slower and it uses more storage and battery " +
+                            "(about 127 MB of cache per minute of music, against about 85 MB for Fast). " +
+                            "A time estimate appears after the first chunks. Piano is the weakest stem: expect some of it to stay in Other."
+                    },
+                    color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp
+                )
+                if (quality == StemQuality.MAX) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Other + Guitar + Piano as one", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Mix Max like the 4-stem version.", color = Color.White.copy(0.55f), fontSize = 10.sp)
+                        }
+                        PremiumSwitch(
+                            checked = config.stemCombineOther,
+                            onCheckedChange = { viewModel.setStemCombineOther(it) },
+                            accentColor = accent
+                        )
+                    }
+                }
+            }
+
             if (!isModelInstalled) {
                 Column(
                     modifier = Modifier.fillMaxWidth().stemSubPanel(amber),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text(
-                        "Splitter model not installed (13 MB).",
+                        "${quality.label} splitter model not installed (${modelFile.approxSizeLabel}).",
                         color = amber, fontSize = 11.sp, fontWeight = FontWeight.Bold
                     )
                     when (val dlState = downloaderState) {
                         is StemModelDownloadState.Idle -> {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 StemActionButton("Download model", Icons.Rounded.Download, accent) {
-                                    StemModelDownloader.download(context)
+                                    StemModelDownloader.download(context, quality)
                                 }
                             }
                         }
@@ -208,7 +252,7 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                     modifier = Modifier.weight(1f)
                                 )
                                 StemActionButton("Cancel", Icons.Rounded.Close, red) {
-                                    StemModelDownloader.cancel()
+                                    StemModelDownloader.cancel(quality)
                                 }
                             }
                             LinearProgressIndicator(
@@ -226,7 +270,7 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                     modifier = Modifier.weight(1f)
                                 )
                                 StemActionButton("Retry", Icons.Rounded.Refresh, accent) {
-                                    StemModelDownloader.download(context)
+                                    StemModelDownloader.download(context, quality)
                                 }
                             }
                         }
@@ -237,13 +281,15 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 when (currentSepStatus) {
                     is StemSeparationState.Separating -> {
                         val pct = (currentSepStatus.progress * 100).toInt()
+                        val chunkText = if (currentSepStatus.totalChunks > 0) " · chunk ${currentSepStatus.chunk}/${currentSepStatus.totalChunks}" else ""
+                        val etaText = currentSepStatus.etaMs?.let { " · about ${formatStemEta(it)} left" } ?: ""
                         Column(
                             modifier = Modifier.fillMaxWidth().stemSubPanel(accent),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "Separating $pct%",
+                                    "Separating $pct%$chunkText$etaText",
                                     color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -271,14 +317,14 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                                     modifier = Modifier.weight(1f)
                                 )
                                 StemActionButton("Retry", Icons.Rounded.Refresh, accent) {
-                                    if (song != null) StemSeparatorManager.requestSeparation(context, song, force = true)
+                                    if (song != null) StemSeparatorManager.requestSeparation(context, song, quality, force = true)
                                 }
                             }
                         }
                     }
                     is StemSeparationState.Ready -> {
                         Text(
-                            "Ready: 4 stems separated & cached.",
+                            "Ready: $stemTotal stems separated & cached (${quality.label}).",
                             color = accent.copy(0.9f), fontSize = 10.sp, fontWeight = FontWeight.Bold
                         )
                     }
@@ -312,22 +358,23 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                     Box(modifier = Modifier.weight(1f)) { StemSectionLabel("STEMS  (-12 to +12 dB, double tap = 0)") }
                     StemActionButton("Reset", Icons.Rounded.RestartAlt, accent) { viewModel.resetStemMix() }
                 }
-                StemChannel.entries.forEachIndexed { i, stem ->
+                strips.forEach { strip ->
+                    val i = strip.channel.ordinal
                     val muted = ((muteMask shr i) and 1) == 1
                     val solo = ((soloMask shr i) and 1) == 1
-                    val supported = (stem != StemChannel.GUITAR && stem != StemChannel.PIANO)
+                    // Only the strips on screen take part in solo, so a hidden Guitar solo cannot silence the rest.
+                    val shownSolo = strips.any { ((soloMask shr it.channel.ordinal) and 1) == 1 }
                     StemRow(
-                        stem = stem,
-                        color = STEM_COLORS[i],
+                        label = strip.label,
+                        color = Color(strip.colorArgb),
                         icon = STEM_ICONS[i],
-                        gainDb = if (supported) gains[i] else 0f,
-                        muted = muted && supported,
-                        solo = solo && supported,
-                        silent = !supported || muted || (soloMask != 0 && !solo),
-                        enabled = supported,
-                        onGain = { if (supported) viewModel.setStemGain(i, it) },
-                        onMute = { if (supported) viewModel.toggleStemMute(i) },
-                        onSolo = { if (supported) viewModel.toggleStemSolo(i) }
+                        gainDb = gains[i],
+                        muted = muted,
+                        solo = solo,
+                        silent = muted || (shownSolo && !solo),
+                        onGain = { viewModel.setStemGain(i, it) },
+                        onMute = { viewModel.toggleStemMute(i) },
+                        onSolo = { viewModel.toggleStemSolo(i) }
                     )
                 }
             }
@@ -335,16 +382,13 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     }
 }
 
-// ── Stem look ─────────────────────────────────────────────────────────────────────────────────────────────
+/** "1 min 20 s" style remaining time. */
+private fun formatStemEta(ms: Long): String {
+    val sec = (ms / 1000).coerceAtLeast(0)
+    return if (sec >= 60) "${sec / 60} min ${sec % 60} s" else "$sec s"
+}
 
-private val STEM_COLORS = listOf(
-    Color(0xFF42A5F5), // Vocals
-    Color(0xFFFF7043), // Drums
-    Color(0xFF26C6DA), // Bass
-    Color(0xFF66BB6A), // Guitar
-    Color(0xFFEC407A), // Piano
-    Color(0xFF9575CD)  // Other
-)
+// ── Stem look ─────────────────────────────────────────────────────────────────────────────────────────────
 
 private val STEM_ICONS: List<ImageVector> = listOf(
     Icons.Rounded.Mic,
@@ -357,7 +401,7 @@ private val STEM_ICONS: List<ImageVector> = listOf(
 
 @Composable
 private fun StemRow(
-    stem: StemChannel,
+    label: String,
     color: Color,
     icon: ImageVector,
     gainDb: Float,
@@ -404,7 +448,7 @@ private fun StemRow(
                 Icon(icon, null, tint = color, modifier = Modifier.size(19.dp))
             }
             Column(modifier = Modifier.width(54.dp)) {
-                Text(stem.label.uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp, maxLines = 1)
+                Text(label.uppercase(), color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.6.sp, maxLines = 1)
                 Text(
                     valueText,
                     color = if (!enabled || silent || abs(gainDb) < 0.05f) Color.White.copy(0.6f) else color,
@@ -413,8 +457,8 @@ private fun StemRow(
             }
             StemFader(gainDb, active = enabled && !silent, color, Modifier.weight(1f).height(40.dp), onChange = if (enabled) onGain else { _ -> })
         }
-        StemToggle("M", "Mute ${stem.label}", muted, Color(0xFFFF7043), onClick = if (enabled) onMute else { -> })
-        StemToggle("S", "Solo ${stem.label}", solo, Color(0xFFFFD54F), onClick = if (enabled) onSolo else { -> })
+        StemToggle("M", "Mute $label", muted, Color(0xFFFF7043), onClick = if (enabled) onMute else { -> })
+        StemToggle("S", "Solo $label", solo, Color(0xFFFFD54F), onClick = if (enabled) onSolo else { -> })
     }
 }
 

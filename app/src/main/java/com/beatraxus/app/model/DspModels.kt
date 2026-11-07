@@ -375,7 +375,11 @@ data class DspConfig(
     /** Bit i set = stem i is muted. */
     val stemMuteMask: Int = 0,
     /** Bit i set = stem i is soloed; while any bit is set, every other stem is silent. */
-    val stemSoloMask: Int = 0
+    val stemSoloMask: Int = 0,
+    /** Separation engine: Fast (SCNet, 4 stems) or Max (HTDemucs 6-stem). Decides which stems the mixer reads. */
+    val stemQuality: StemQuality = StemQuality.FAST,
+    /** Max only: one "Other + Guitar + Piano" strip instead of three, so Max can be mixed like the 4-stem Fast engine. */
+    val stemCombineOther: Boolean = false
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")
