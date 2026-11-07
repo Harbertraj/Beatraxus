@@ -73,6 +73,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -81,6 +82,7 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -1979,6 +1981,10 @@ private fun PremiumEqualizerCard(
     // and are hands-off: any touch opens the AI controller instead.
     val aiActive = config.aiEqEnabled && !config.bitPerfectEnabled
     val aiGains = aiProfile?.gains ?: FloatArray(0)
+    // Fader height follows the screen so Graphic Response, Presets, the EQ header, Preamp and the faders
+    // fit on one screen without scrolling: ~21.5% of the screen height, never below 140dp (still easy to
+    // drag) and never above the old fixed 250dp.
+    val faderHeight = (LocalConfiguration.current.screenHeightDp * 0.215f).coerceIn(140f, 250f).dp
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2102,6 +2108,7 @@ private fun PremiumEqualizerCard(
                 } else band
                 PremiumVerticalBand(
                     band = shownBand,
+                    faderHeight = faderHeight,
                     enabled = if (aiActive) !isEqBypassed else config.eqEnabled && !isEqBypassed && !isLocked,
                     aiControlled = aiActive,
                     onToggle = { if (aiActive) onShowAiOptions() else viewModel.setEqBandEnabled(index, it) },
@@ -2352,8 +2359,12 @@ private fun PremiumVerticalBand(
     onGainChange: (Float) -> Unit,
     onLongPress: () -> Unit,
     onFrequencyEdit: () -> Unit,
-    aiControlled: Boolean = false
+    aiControlled: Boolean = false,
+    faderHeight: Dp = 250.dp
 ) {
+    // How far the knob centre travels: the fader height minus the 48dp knob. At the old 250dp this is the
+    // original 202dp, and the 0 dB line sits at half of it (was 101dp).
+    val knobTravel = faderHeight - 48.dp
     val isActive = enabled && band.enabled
     val gainProgress by animateFloatAsState(
         targetValue = ((band.gainDb + 12f) / 24f).coerceIn(0f, 1f),
@@ -2388,7 +2399,7 @@ private fun PremiumVerticalBand(
 
         Box(
             modifier = Modifier
-                .height(250.dp) 
+                .height(faderHeight)
                 .width(36.dp)
                 .padding(vertical = 12.dp)
                 .pointerInput(isActive) {
@@ -2457,8 +2468,8 @@ private fun PremiumVerticalBand(
             // Aurora fill from the 0 dB line to the knob
             if (isActive) {
                 Canvas(modifier = Modifier.fillMaxSize()) {
-                    val knobY = 202.dp.toPx() * (1f - gainProgress)
-                    val midY = 101.dp.toPx()
+                    val knobY = knobTravel.toPx() * (1f - gainProgress)
+                    val midY = knobTravel.toPx() / 2f
                     val top = min(knobY, midY)
                     val hgt = abs(knobY - midY)
                     if (hgt > 0.5f) {
@@ -2481,7 +2492,7 @@ private fun PremiumVerticalBand(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .offset(y = (202.dp * (1f - gainProgress)) - 20.dp)
+                        .offset(y = (knobTravel * (1f - gainProgress)) - 20.dp)
                         .size(40.dp, 60.dp)
                         .background(
                             Brush.radialGradient(
@@ -2495,7 +2506,7 @@ private fun PremiumVerticalBand(
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = (202.dp * (1f - gainProgress)))
+                    .offset(y = (knobTravel * (1f - gainProgress)))
                     .graphicsLayer { translationY = -24.dp.toPx() }
                     .size(40.dp, 48.dp)
                     .shadow(12.dp, RoundedCornerShape(14.dp), spotColor = if (isActive) gainColor else Color.Black)
