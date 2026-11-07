@@ -277,6 +277,9 @@ internal class AudioDspPipeline(
     }
 }
 
+/** Length of the original -> stems fade-in, in frames (about 23 ms at 44.1 kHz). */
+private const val FADE_FRAMES = 1024
+
 private class StemMixerProcessor(
     private val context: android.content.Context,
     config: DspConfig,
@@ -295,6 +298,9 @@ private class StemMixerProcessor(
     private var stemBuf = FloatArray(0)
     private var mixBuf = FloatArray(0)
     private var gains = FloatArray(STEM_COUNT)
+
+    /** 0 = the original song, 1 = the stem mix. Ramps up over [FADE_FRAMES] when the stems take over, so it never clicks. */
+    private var blend = 1f
 
     override fun updateConfig(config: DspConfig) {
         currentConfig = config
@@ -336,6 +342,7 @@ private class StemMixerProcessor(
         val quality = cfg.stemQuality
 
         if (channels != 2 || !cfg.stemMixerEnabled || cfg.stemMixIsOriginal() || !cacheReady(s.id, quality)) {
+            blend = 0f   // the original is playing; the next time stems start they fade in
             currentFrame += numFrames
             return input
         }
@@ -372,17 +379,30 @@ private class StemMixerProcessor(
             return input
         }
 
+        val step = 1f / FADE_FRAMES
         if (inputSampleRate == 44_100) {
-            System.arraycopy(mixBuf, 0, data, 0, numFrames * 2)
+            if (blend >= 1f) {
+                System.arraycopy(mixBuf, 0, data, 0, numFrames * 2)
+            } else {
+                for (i in 0 until numFrames) {
+                    val t = blend
+                    blend = if (t + step > 1f) 1f else t + step
+                    data[i * 2] = data[i * 2] * (1f - t) + mixBuf[i * 2] * t
+                    data[i * 2 + 1] = data[i * 2 + 1] * (1f - t) + mixBuf[i * 2 + 1] * t
+                }
+            }
         } else {
             for (i in 0 until numFrames) {
                 val pos = i * ratio
                 val i0 = pos.toInt()
                 val f = (pos - i0).toFloat()
+                val t = blend
+                if (t < 1f) blend = if (t + step > 1f) 1f else t + step
                 for (ch in 0..1) {
                     val a = mixBuf[i0 * 2 + ch]
                     val b = mixBuf[(i0 + 1) * 2 + ch]
-                    data[i * 2 + ch] = a + (b - a) * f
+                    val m = a + (b - a) * f
+                    data[i * 2 + ch] = if (t >= 1f) m else data[i * 2 + ch] * (1f - t) + m * t
                 }
             }
         }

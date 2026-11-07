@@ -37,13 +37,25 @@ class HtDemucsSeparator(private val context: Context) : StemEngine {
 
         const val SEGMENT_SAMPLES = StemModelContract.HTDEMUCS_SEGMENT_SAMPLES   // 7.8 s @ 44.1 kHz
 
-        /** 25 % overlap between neighbouring chunks (1.95 s), cross-faded with a trapezoid window. */
-        const val HOP_SAMPLES = SEGMENT_SAMPLES * 3 / 4
+        /**
+         * 12.5 % overlap between neighbouring chunks (about 1 s), cross-faded with a trapezoid window. It was 25 %,
+         * which is 14 % more model runs for the same song; the seams are a little less smoothed in exchange.
+         */
+        const val HOP_SAMPLES = SEGMENT_SAMPLES * 7 / 8
 
         /** Heuristic: the card's 1.1 GB plus headroom for the app and the separation buffers (about 90 MB). */
         const val MIN_FREE_RAM_BYTES = 1_600_000_000L
 
         private const val THREADS = 4
+
+        /** Applied to every session: keep the resident memory low (the Max model sits next to a running player). */
+        private fun leanOptions(opts: OrtSession.SessionOptions) {
+            // No arena / planned memory block: intermediate tensors are freed after each run instead of being kept.
+            try { opts.setCPUArenaAllocator(false) } catch (e: Throwable) { Log.w(TAG, "arena option: ${e.message}") }
+            try { opts.setMemoryPatternOptimization(false) } catch (e: Throwable) { Log.w(TAG, "mem pattern option: ${e.message}") }
+            // Idle worker threads sleep instead of spinning, so the audio thread keeps its CPU time.
+            try { opts.addConfigEntry("session.intra_op.allow_spinning", "0") } catch (e: Throwable) { Log.w(TAG, "spin option: ${e.message}") }
+        }
 
         /** A chunk this quiet is digital silence: skip the model. */
         private const val SILENCE_PEAK = 1e-6f
@@ -131,6 +143,7 @@ class HtDemucsSeparator(private val context: Context) : StemEngine {
             // 1. XNNPACK (operators it cannot run stay on the CPU provider)
             try {
                 val opts = OrtSession.SessionOptions()
+                leanOptions(opts)
                 opts.addXnnpack(mapOf("intra_op_num_threads" to THREADS.toString()))
                 opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
                 session = env.createSession(modelFile.absolutePath, opts)
@@ -143,6 +156,7 @@ class HtDemucsSeparator(private val context: Context) : StemEngine {
             if (session == null) {
                 try {
                     val opts = OrtSession.SessionOptions()
+                    leanOptions(opts)
                     opts.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
                     opts.setIntraOpNumThreads(THREADS)
                     session = env.createSession(modelFile.absolutePath, opts)

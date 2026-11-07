@@ -6,6 +6,9 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.util.Log
+import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFmpegKitConfig
+import com.arthenica.ffmpegkit.ReturnCode
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SongSource
 import kotlinx.coroutines.Dispatchers
@@ -22,7 +25,128 @@ object StemAudioDecoder {
     private const val TARGET_SAMPLE_RATE = 44100
     private const val TIMEOUT_US = 5000L
 
+    /** Containers / codecs that go through FFmpeg first (Android has no decoder for some, and FFmpeg is faster for all). */
+    private val FFMPEG_FIRST_FORMATS = setOf("ALAC", "FLAC", "WAV", "AIFF", "CAF", "APE", "WV", "TTA", "MPC", "MKA", "DSD", "DSF", "DFF")
+    private val FFMPEG_FIRST_EXTENSIONS = setOf("alac", "flac", "wav", "bwf", "aif", "aiff", "caf", "ape", "wv", "tta", "mpc", "mka", "dsf", "dff", "dsd")
+
+    private fun extensionOf(song: Song): String =
+        song.uri.lastPathSegment?.substringAfterLast('.', "")?.lowercase(java.util.Locale.US).orEmpty()
+
+    /** True for lossless / exotic formats: decoded by FFmpeg first (ALAC has no MediaCodec decoder on many phones). */
+    internal fun prefersFfmpeg(song: Song): Boolean =
+        song.format.uppercase(java.util.Locale.US) in FFMPEG_FIRST_FORMATS ||
+            extensionOf(song) in FFMPEG_FIRST_EXTENSIONS ||
+            FfmpegOnlyFormats.isFfmpegOnly(extensionOf(song), song.format)
+
+    /**
+     * Decodes [song] to a 44.1 kHz stereo 32-bit float file and returns its frame count, or null on failure / cancel.
+     *
+     * ALAC, FLAC, WAV and other lossless formats go through FFmpeg (one pass: decode, downmix, resample, straight to
+     * the file). Everything else uses MediaCodec. Whichever is tried first, the other is the fallback, because
+     * MediaCodec has no `audio/alac` decoder on many devices and FFmpeg cannot read some cloud sources.
+     */
     suspend fun decodeToStereoFloat44100File(
+        context: Context,
+        song: Song,
+        outputFile: File,
+        isCancelled: () -> Boolean
+    ): Long? {
+        val ffmpegFirst = prefersFfmpeg(song)
+        val order = if (ffmpegFirst) listOf(true, false) else listOf(false, true)
+        for (useFfmpeg in order) {
+            if (isCancelled()) return null
+            val t0 = System.nanoTime()
+            val frames = if (useFfmpeg) decodeWithFfmpeg(context, song, outputFile, isCancelled)
+            else decodeWithMediaCodec(context, song, outputFile, isCancelled)
+            if (frames != null && frames > 0L) {
+                Log.i(TAG, "Decoded ${song.title} (${song.format}) with ${if (useFfmpeg) "FFmpeg" else "MediaCodec"}: " +
+                    "${frames / TARGET_SAMPLE_RATE} s in ${(System.nanoTime() - t0) / 1_000_000} ms")
+                return frames
+            }
+            if (outputFile.exists()) outputFile.delete()
+            Log.w(TAG, "${if (useFfmpeg) "FFmpeg" else "MediaCodec"} decode of ${song.title} failed, trying the other route")
+        }
+        return null
+    }
+
+    /** What FFmpeg reads for [song], or null when FFmpeg cannot reach it (cloud sources that need auth headers). */
+    private fun ffmpegInputFor(context: Context, song: Song): String? {
+        val scheme = song.uri.scheme?.lowercase(java.util.Locale.US)
+        return when {
+            scheme == "http" || scheme == "https" -> song.uri.toString()
+            scheme == "file" -> song.uri.path
+            song.source == SongSource.LOCAL && scheme == "content" ->
+                try { FFmpegKitConfig.getSafParameterForRead(context, song.uri) } catch (e: Exception) {
+                    Log.w(TAG, "No SAF parameter for ${song.uri}: ${e.message}"); null
+                }
+            else -> null
+        }
+    }
+
+    /**
+     * One FFmpeg run: decode, downmix to stereo, resample to 44.1 kHz, write raw float to [outputFile].
+     * Returns the number of frames, or null (failed, cancelled, or no usable input).
+     */
+    private suspend fun decodeWithFfmpeg(
+        context: Context,
+        song: Song,
+        outputFile: File,
+        isCancelled: () -> Boolean
+    ): Long? = withContext(Dispatchers.IO) {
+        val input = ffmpegInputFor(context, song) ?: return@withContext null
+        if (outputFile.exists()) outputFile.delete()
+        val ext = extensionOf(song)
+        // ALAC lives in an MP4 (mov) container; a SAF input has no reliable name for FFmpeg to probe from.
+        val hint = when {
+            song.format.equals("ALAC", true) || ext == "alac" || ext == "m4a" || ext == "mp4" || ext == "m4b" -> "mov"
+            else -> FfmpegOnlyFormats.demuxerHint(ext, song.format)
+        }
+        val args = buildList {
+            add("-y"); add("-nostdin"); addAll(listOf("-v", "warning"))
+            if (hint != null) addAll(listOf("-f", hint))
+            addAll(listOf("-analyzeduration", "2000000", "-probesize", "2000000"))
+            addAll(listOf("-i", input))
+            addAll(listOf("-map", "0:a:0", "-vn", "-sn", "-dn"))
+            addAll(listOf("-c:a", "pcm_f32le", "-ac", "2", "-ar", TARGET_SAMPLE_RATE.toString(), "-f", "f32le"))
+            add(outputFile.absolutePath)
+        }.toTypedArray()
+        Log.d(TAG, "FFmpeg stem decode args: ${args.joinToString(" ")}")
+
+        val done = kotlinx.coroutines.CompletableDeferred<Int>()
+        val session = FFmpegKit.executeWithArgumentsAsync(
+            args,
+            { finished -> done.complete(finished.returnCode?.value ?: -1) },
+            null,
+            null
+        )
+        try {
+            while (!done.isCompleted) {
+                if (isCancelled()) {
+                    session.cancel()
+                    if (outputFile.exists()) outputFile.delete()
+                    return@withContext null
+                }
+                kotlinx.coroutines.delay(100)
+            }
+            val code = done.await()
+            if (!ReturnCode.isSuccess(ReturnCode(code))) {
+                Log.e(TAG, "FFmpeg stem decode failed (code $code): ${session.allLogsAsString.takeLast(300)}")
+                if (outputFile.exists()) outputFile.delete()
+                return@withContext null
+            }
+            val frames = outputFile.length() / 8L
+            if (frames <= 0L) {
+                if (outputFile.exists()) outputFile.delete()
+                null
+            } else frames
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            session.cancel()
+            if (outputFile.exists()) outputFile.delete()
+            throw e
+        }
+    }
+
+    private suspend fun decodeWithMediaCodec(
         context: Context,
         song: Song,
         outputFile: File,

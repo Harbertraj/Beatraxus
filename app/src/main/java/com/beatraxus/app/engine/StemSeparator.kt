@@ -40,12 +40,11 @@ class StemSeparator(private val context: Context) : StemEngine {
         const val PADDED_SAMPLES = StemDsp.PADDED_SAMPLES // 2048 + 485100 + 2048 extended to fit 476 frames
 
         /**
-         * Distance between the starts of two model chunks: 75 % of a chunk, so neighbours overlap by 25 % (2.75 s)
-         * and are cross-faded with a Hann weight. It used to be 25 % of a chunk (75 % overlap), which ran the model
-         * four times over every second of music. This costs a third of that and is the usual overlap of
-         * Demucs-style separators. A smaller number is slower and a little smoother at the chunk seams.
+         * Distance between the starts of two model chunks: 87.5 % of a chunk, so neighbours overlap by 12.5 % (1.4 s)
+         * and are cross-faded with a Hann weight. It was 75 % (25 % overlap) and, before that, 25 % (75 % overlap).
+         * Fewer model runs per song is the speed lever here; a bigger overlap is smoother at the chunk seams.
          */
-        const val HOP_FRAMES = SEGMENT_SAMPLES * 3 / 4
+        const val HOP_FRAMES = SEGMENT_SAMPLES * 7 / 8
 
         /** A chunk this quiet is digital silence: skip the model (it also keeps a divide-by-silence out of it). */
         private const val SILENCE_PEAK = 1e-6f
