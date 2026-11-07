@@ -3,6 +3,7 @@ package com.beatraxus.app.ui.screens
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import com.beatraxus.app.utils.ImageUtils
+import com.beatraxus.app.ui.components.AlbumArtOrDefault
 import com.beatraxus.app.utils.HomeSectionKeys
 import com.beatraxus.app.utils.byDecade
 import com.beatraxus.app.utils.hiResVault
@@ -5600,19 +5601,7 @@ fun HomeSongCard(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
                 modifier = Modifier.padding(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (song.albumArtUri != null) {
-                    AsyncImage(
-                        model = song.albumArtUri,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                        contentScale = ContentScale.Crop,
-                        onError = { }
-                    )
-                } else {
-                    DefaultAlbumArt(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)))
-                }
+                AlbumArtOrDefault(model = song.albumArtUri, modifier = Modifier.size(56.dp).clip(RoundedCornerShape(10.dp)))
 
             Column(
                 modifier = Modifier
@@ -5656,17 +5645,7 @@ fun HomeSongItem(song: com.beatraxus.app.model.Song, onClick: () -> Unit) {
                 .background(Color.White.copy(0.05f))
                 .border(0.5.dp, Color.White.copy(0.10f), artShape)
         ) {
-            if (song.albumArtUri != null) {
-                AsyncImage(
-                    model = song.albumArtUri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                    onError = { /* falls through to default art below on next recomposition if needed */ }
-                )
-            } else {
-                DefaultAlbumArt(modifier = Modifier.fillMaxSize())
-            }
+            AlbumArtOrDefault(model = song.albumArtUri, modifier = Modifier.fillMaxSize())
             Box(
                 Modifier
                     .fillMaxSize()
@@ -5756,17 +5735,7 @@ fun HomeGridItem(title: String, subtitle: String, artUri: android.net.Uri?, onCl
                     .background(Color.White.copy(0.10f))
                     .border(0.5.dp, Color.White.copy(0.14f), artShape)
             ) {
-                if (artUri != null) {
-                    AsyncImage(
-                        model = artUri,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize(),
-                        onError = { /* fallback */ }
-                    )
-                } else {
-                    DefaultAlbumArt(modifier = Modifier.fillMaxSize())
-                }
+                AlbumArtOrDefault(model = artUri, modifier = Modifier.fillMaxSize())
                 Box(
                     Modifier
                         .fillMaxSize()

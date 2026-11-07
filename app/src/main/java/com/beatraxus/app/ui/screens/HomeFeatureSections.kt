@@ -48,6 +48,7 @@ import com.beatraxus.app.model.Song
 import com.beatraxus.app.utils.DecadeBucket
 import com.beatraxus.app.utils.GenreBucket
 import com.beatraxus.app.utils.hiResBadge
+import com.beatraxus.app.ui.components.AlbumArtOrDefault
 
 // Extra audio-home sections that live under "Browse by Mood". The song selection logic is in
 // utils/HomeSectionLogic.kt (pure + unit-tested); this file is only the presentation.
@@ -179,16 +180,7 @@ private fun HiResVaultCard(song: Song, onClick: () -> Unit) {
                     shape
                 )
         ) {
-            if (song.albumArtUri != null) {
-                AsyncImage(
-                    model = song.albumArtUri,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-            } else {
-                DefaultAlbumArt(modifier = Modifier.fillMaxSize())
-            }
+            AlbumArtOrDefault(model = song.albumArtUri, modifier = Modifier.fillMaxSize())
             Box(
                 Modifier
                     .fillMaxSize()

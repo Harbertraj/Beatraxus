@@ -76,6 +76,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.beatraxus.app.ui.components.AlbumArtOrDefault
 import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.model.NowPlayingBackgroundMode
 import com.beatraxus.app.model.Song
@@ -654,17 +655,7 @@ fun AudioFeaturedCard(
             )
             .clickable(onClick = onClick)
     ) {
-        if (song.albumArtUri != null) {
-            AsyncImage(
-                model = song.albumArtUri,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-                onError = { }
-            )
-        } else {
-            DefaultAlbumArt(modifier = Modifier.fillMaxSize())
-        }
+        AlbumArtOrDefault(model = song.albumArtUri, modifier = Modifier.fillMaxSize())
         Box(
             Modifier
                 .fillMaxSize()

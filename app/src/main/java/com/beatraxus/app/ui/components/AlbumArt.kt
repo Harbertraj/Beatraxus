@@ -56,3 +56,35 @@ fun AlbumArtImage(
         colorFilter = if (grayscale) ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0f) }) else null
     )
 }
+
+/**
+ * Cover art for home cards: the song's own art, or today's time-of-day default art (morning, afternoon,
+ * evening or night, see [ImageUtils.getDefaultAlbumArtRes]) when the song has no art OR its art fails to load.
+ * A card used to stay blank in the second case because nothing was set for load errors.
+ */
+@Composable
+fun AlbumArtOrDefault(
+    model: Any?,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Crop,
+    contentDescription: String? = null
+) {
+    val context = LocalContext.current
+    val defaultArt = ImageUtils.getDefaultAlbumArtRes()
+    val request = remember(model, defaultArt) {
+        ImageRequest.Builder(context)
+            .data(model)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .error(defaultArt)
+            .fallback(defaultArt)
+            .crossfade(200)
+            .build()
+    }
+    AsyncImage(
+        model = request,
+        contentDescription = contentDescription,
+        modifier = modifier,
+        contentScale = contentScale
+    )
+}
