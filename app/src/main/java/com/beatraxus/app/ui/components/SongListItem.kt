@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MusicNote
@@ -24,6 +23,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -221,94 +222,54 @@ fun SongListItem(
                     )
                 )
                 Spacer(Modifier.width(8.dp))
-            } else if (isPlaying) {
-                Box(
+            }
+            val artSize = if (isCompact) 44.dp else 60.dp
+            Box(contentAlignment = Alignment.Center) {
+                AlbumArtImage(
+                    song = song,
+                    size = artSize,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .combinedClickable(
-                            onClick = { onClick() },
-                            onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onLongClick?.invoke()
+                        .padding(vertical = 2.dp)
+                        .graphicsLayer {
+                            if (!isAvailable) {
+                                alpha = 0.8f
                             }
-                        )
-                ) {
-                    Box(Modifier.width(32.dp), contentAlignment = Alignment.Center) {
+                        },
+                    grayscale = !isAvailable
+                )
+                // Now-playing indicator sits on the artwork, so rows never shift sideways when playback starts.
+                if (isPlaying) {
+                    Box(
+                        modifier = Modifier
+                            .size(artSize)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
+                    ) {
                         PlaybackBars()
                     }
                 }
-                Spacer(Modifier.width(10.dp))
-            } else {
-                Column(
-                    modifier = Modifier
-                        .width(46.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .combinedClickable(
-                            onClick = { onClick() },
-                            onLongClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onLongClick?.invoke()
-                            }
-                        )
-                        .padding(vertical = 2.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    val formatColor = if (isAvailable) getFormatColor(baseFormat) else Color.Gray
-                    Surface(
-                        color = formatColor.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(5.dp),
-                        border = BorderStroke(0.6.dp, formatColor.copy(alpha = 0.4f)),
-                        modifier = Modifier.padding(bottom = 2.5.dp)
-                    ) {
-                        Text(
-                            text = if (isALAC) "ALAC" else baseFormat.uppercase(),
-                            color = formatColor,
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Black,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp),
-                            maxLines = 1,
-                            overflow = TextOverflow.Visible
-                        )
-                    }
-                    val bitDepthColor = if (!isAvailable) Color.Gray else if (isHiRes) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.8f)
-                    Surface(
-                        color = bitDepthColor.copy(alpha = 0.15f),
-                        shape = RoundedCornerShape(4.dp),
-                        border = BorderStroke(0.5.dp, bitDepthColor.copy(alpha = 0.15f))
-                    ) {
-                        Text(
-                            text = "${bitDepth}BIT",
-                            color = bitDepthColor,
-                            fontSize = 7.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
-                            maxLines = 1
-                        )
-                    }
-                }
-                Spacer(Modifier.width(8.dp))
             }
-            AlbumArtImage(
-                song = song,
-                size = if (isCompact) 44.dp else 60.dp,
-                modifier = Modifier
-                    .padding(vertical = 2.dp)
-                    .graphicsLayer {
-                        if (!isAvailable) {
-                            alpha = 0.8f
-                        }
-                    },
-                grayscale = !isAvailable
-            )
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(song.title, fontSize = if (isCompact) 14.sp else 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = if (isAvailable) Color.White else Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 
-                Text("${song.artist} • ${song.album}", fontSize = if (isCompact) 12.sp else 13.sp, color = if (isAvailable) Color.LightGray else Color.Gray.copy(0.7f),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val artistLine: @Composable (Modifier) -> Unit = { m ->
+                    Text("${song.artist} • ${song.album}", fontSize = if (isCompact) 12.sp else 13.sp, color = if (isAvailable) Color.LightGray else Color.Gray.copy(0.7f),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = m)
+                }
+                if (isCompact) {
+                    // Compact rows have no detail line, so the quality chip sits in front of the artist line.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        QualityChip(baseFormat, isALAC, bitDepth, isHiRes, isAvailable)
+                        Spacer(Modifier.width(6.dp))
+                        artistLine(Modifier.weight(1f, fill = false))
+                    }
+                } else {
+                    artistLine(Modifier)
+                }
                 
                 if (!isCompact) {
                     Row(
@@ -316,13 +277,8 @@ fun SongListItem(
                         modifier = Modifier.padding(top = 1.dp)
                     ) {
                         val badgeColor = if (!isAvailable) Color.Gray else if (isHiRes) Color(0xFFFFD54F).copy(0.7f) else if (isLosslessFormat) Color(0xFF4FC3F7).copy(0.7f) else Color.Gray
-                        Icon(
-                            Icons.Rounded.Badge, 
-                            null, 
-                            tint = badgeColor, 
-                            modifier = Modifier.size(10.dp)
-                        )
-                        Spacer(Modifier.width(3.dp))
+                        QualityChip(baseFormat, isALAC, bitDepth, isHiRes, isAvailable)
+                        Spacer(Modifier.width(6.dp))
                         Text(
                             text = buildString {
                                 append(formatDuration(song.durationMs))
@@ -370,6 +326,53 @@ fun SongListItem(
             }
 
 
+        }
+    }
+}
+
+
+/**
+ * One small inline quality chip, e.g. "WAV 16" or "FLAC 24". The chip is tinted by format; the bit depth is
+ * gold for hi-res. Replaces the old two-badge column that took ~54dp of width away from the title.
+ */
+@Composable
+private fun QualityChip(
+    baseFormat: String,
+    isALAC: Boolean,
+    bitDepth: Int,
+    isHiRes: Boolean,
+    isAvailable: Boolean
+) {
+    val label = if (isALAC) "ALAC" else baseFormat.uppercase()
+    val formatColor = if (isAvailable) getFormatColor(baseFormat) else Color.Gray
+    val depthColor = if (!isAvailable) Color.Gray else if (isHiRes) Color(0xFFFFD54F) else Color.White.copy(alpha = 0.85f)
+    Surface(
+        color = formatColor.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(5.dp),
+        border = BorderStroke(0.6.dp, formatColor.copy(alpha = 0.4f)),
+        modifier = Modifier.semantics(mergeDescendants = true) {
+            contentDescription = "$label, $bitDepth bit"
+        }
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = label,
+                color = formatColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 1
+            )
+            Spacer(Modifier.width(3.dp))
+            Text(
+                text = "$bitDepth",
+                color = depthColor,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
         }
     }
 }
