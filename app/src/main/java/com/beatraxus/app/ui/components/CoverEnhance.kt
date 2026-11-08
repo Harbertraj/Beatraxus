@@ -592,7 +592,7 @@ internal fun FullCoverBackdrop(
     }
 
     Box(modifier.fillMaxSize().background(Color.Black)) {
-        Crossfade(targetState = uri, animationSpec = tween(450), label = "fullCoverBackdrop") { target ->
+        Crossfade(targetState = uri, animationSpec = tween(200), label = "fullCoverBackdrop") { target ->
             val request = remember(target) {
                 ImageRequest.Builder(context)
                     .data(target)

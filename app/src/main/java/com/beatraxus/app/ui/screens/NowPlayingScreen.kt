@@ -220,7 +220,7 @@ fun NowPlayingScreen(
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
     val currentDominantColor by animateColorAsState(
         targetValue = dominantColorsCache[song.id] ?: Color(0xFF2C2C2C),
-        animationSpec = tween(600),
+        animationSpec = tween(250),
         label = "dominantColor"
     )
 
@@ -233,6 +233,34 @@ fun NowPlayingScreen(
             seed = currentDominantColor
         )
     } else null
+
+    // Always warm Coil's memory cache with the art of this and the neighbouring songs (same size/precision as the
+    // views below, so the cache keys match). Without it the art was only read from disk after the song had changed.
+    run {
+        val nextSong = upcomingSongs.firstOrNull()
+        val next2Song = upcomingSongs.getOrNull(1)
+        val prevSong = previousSongs.lastOrNull()
+        val blurIntensity = uiState.appearance.nowPlayingBlurIntensity
+        LaunchedEffect(song.albumArtUri, nextSong?.albumArtUri, next2Song?.albumArtUri, prevSong?.albumArtUri, blurIntensity) {
+            val loader = context.imageLoader
+            for (s in listOfNotNull(song, nextSong, prevSong, next2Song)) {
+                val art = s.albumArtUri ?: continue
+                loader.enqueue(
+                    ImageRequest.Builder(context).data(art)
+                        .size(600, 600).precision(Precision.INEXACT).build()
+                )
+                loader.enqueue(
+                    ImageRequest.Builder(context).data(art)
+                        .size(256, 256).precision(Precision.INEXACT)
+                        .apply {
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                                transformations(FastBlurTransformation(blurIntensity))
+                            }
+                        }.build()
+                )
+            }
+        }
+    }
 
     // Full Cover Art + HD: prepare the covers of this and the neighbouring songs ahead of time so a
     // song change shows its HD cover instantly.
@@ -446,7 +474,7 @@ fun NowPlayingScreen(
                 AnimatedContent(
                     targetState = song.id to song.albumArtUri,
                     transitionSpec = {
-                        fadeIn(tween(300)).togetherWith(fadeOut(tween(300)))
+                        fadeIn(tween(180)).togetherWith(fadeOut(tween(180)))
                     },
                     label = "backgroundTransition",
                     modifier = Modifier.fillMaxSize()
@@ -458,7 +486,7 @@ fun NowPlayingScreen(
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .size(256, 256)
                             .precision(Precision.INEXACT)
-                            .crossfade(true)
+                            .crossfade(false)
                             .error(ImageUtils.getDefaultAlbumArtRes())
                             .fallback(ImageUtils.getDefaultAlbumArtRes())
                             .apply {
@@ -809,33 +837,33 @@ fun NowPlayingScreen(
                                             when (uiState.appearance.albumArtTransform) {
                                                 // Soft cross-fade; the new art settles in from a hair larger.
                                                 AlbumArtTransform.SOFT_FADE ->
-                                                    (fadeIn(tween(520, easing = LinearOutSlowInEasing)) +
-                                                        scaleIn(tween(620, easing = FastOutSlowInEasing), initialScale = 1.06f))
-                                                        .togetherWith(fadeOut(tween(380)))
+                                                    (fadeIn(tween(220, easing = LinearOutSlowInEasing)) +
+                                                        scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 1.04f))
+                                                        .togetherWith(fadeOut(tween(160)))
                                                 // New art glides in from the right while the old one drifts left.
                                                 AlbumArtTransform.SLIDE ->
-                                                    (slideInHorizontally(tween(520, easing = FastOutSlowInEasing)) { it / 3 } +
-                                                        fadeIn(tween(420)))
+                                                    (slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 3 } +
+                                                        fadeIn(tween(200)))
                                                         .togetherWith(
-                                                            slideOutHorizontally(tween(520, easing = FastOutSlowInEasing)) { -it / 3 } +
-                                                                fadeOut(tween(320))
+                                                            slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it / 3 } +
+                                                                fadeOut(tween(160))
                                                         )
                                                 // Depth: old art sinks back, new art rises up from behind.
                                                 AlbumArtTransform.DEPTH ->
-                                                    (scaleIn(tween(560, easing = FastOutSlowInEasing), initialScale = 0.86f) +
-                                                        slideInVertically(tween(560, easing = FastOutSlowInEasing)) { it / 10 } +
-                                                        fadeIn(tween(480)))
+                                                    (scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 0.9f) +
+                                                        slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it / 10 } +
+                                                        fadeIn(tween(220)))
                                                         .togetherWith(
-                                                            scaleOut(tween(480, easing = FastOutSlowInEasing), targetScale = 0.92f) +
-                                                                fadeOut(tween(360))
+                                                            scaleOut(tween(220, easing = FastOutSlowInEasing), targetScale = 0.94f) +
+                                                                fadeOut(tween(160))
                                                         )
                                                 // Pop: new art springs in with a small, soft bounce.
                                                 AlbumArtTransform.POP ->
                                                     (scaleIn(
-                                                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
-                                                        initialScale = 0.82f
-                                                    ) + fadeIn(tween(260)))
-                                                        .togetherWith(fadeOut(tween(220)))
+                                                        spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+                                                        initialScale = 0.86f
+                                                    ) + fadeIn(tween(140)))
+                                                        .togetherWith(fadeOut(tween(120)))
                                                 // None: switch instantly.
                                                 AlbumArtTransform.NONE ->
                                                     EnterTransition.None.togetherWith(ExitTransition.None)
@@ -864,7 +892,7 @@ fun NowPlayingScreen(
                                                 .memoryCachePolicy(CachePolicy.ENABLED)
                                                 .size(600, 600) // Lower size for foreground too, enough for most screens
                                                 .precision(Precision.INEXACT)
-                                                .crossfade(true)
+                                                .crossfade(false)
                                                 .error(ImageUtils.getDefaultAlbumArtRes())
                                                 .fallback(ImageUtils.getDefaultAlbumArtRes())
                                                 .build(),
