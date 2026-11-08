@@ -22,6 +22,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Source
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Check
@@ -318,7 +319,7 @@ fun KaraokeLyricsView(
                     .align(Alignment.TopCenter)
                     .padding(top = 16.dp)
             ) {
-                // Compact glass pills (36dp): offset stepper | SOURCES | TRANSLATE
+                // Compact glass controls (34dp): offset stepper | sources icon | translate icon
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -335,7 +336,7 @@ fun KaraokeLyricsView(
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.height(36.dp).padding(horizontal = 2.dp)
+                            modifier = Modifier.height(34.dp).padding(horizontal = 2.dp)
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -406,11 +407,11 @@ fun KaraokeLyricsView(
                     }
 
                     if (onShowAllLyrics != null) {
-                        LyricsOptionPill(text = "SOURCES", highlighted = false) { onShowAllLyrics.invoke() }
+                        LyricsOptionPill(icon = Icons.Rounded.Source, label = "Lyrics sources", highlighted = false) { onShowAllLyrics.invoke() }
                     }
 
                     if (onSetTranslation != null) {
-                        LyricsOptionPill(text = "TRANSLATE", highlighted = translateEnabled) {
+                        LyricsOptionPill(icon = Icons.Rounded.Translate, label = "Translate lyrics", highlighted = translateEnabled) {
                             if (onShowTranslate != null) onShowTranslate() else showTranslateDialog = true
                             lastInteractionTime = System.currentTimeMillis()
                         }
@@ -545,28 +546,26 @@ private fun TranslationText(text: String, textAlign: TextAlign, modifier: Modifi
     )
 }
 
-/** Small glass pill used by the lyrics option row (SOURCES / TRANSLATE). */
+/** Small round glass button used by the lyrics option row (sources / translate): icon only, label kept for accessibility. */
 @Composable
-private fun LyricsOptionPill(text: String, highlighted: Boolean, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(18.dp)
+private fun LyricsOptionPill(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, highlighted: Boolean, onClick: () -> Unit) {
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .height(36.dp)
-            .clip(shape)
+            .size(34.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
             .background(if (highlighted) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.10f))
-            .border(BorderStroke(0.8.dp, Color.White.copy(alpha = if (highlighted) 0.22f else 0.10f)), shape)
+            .border(
+                BorderStroke(0.8.dp, Color.White.copy(alpha = if (highlighted) 0.30f else 0.10f)),
+                androidx.compose.foundation.shape.CircleShape
+            )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp)
     ) {
-        Text(
-            text = text,
-            color = Color.White,
-            fontSize = 11.sp,
-            letterSpacing = 0.6.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            softWrap = false
+        Icon(
+            imageVector = icon,
+            contentDescription = label,
+            tint = Color.White.copy(alpha = if (highlighted) 1f else 0.9f),
+            modifier = Modifier.size(17.dp)
         )
     }
 }

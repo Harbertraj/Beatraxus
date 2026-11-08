@@ -2414,6 +2414,40 @@ private fun FullCoverArtBackground(
             animationSpec = tween(350),
             label = "fullCoverLayerAlpha"
         )
+        // The cover on show only changes once the next one is READY (aspect known, HD resolved, picture decoded). Switching
+        // at once started the song-change animation over an empty box and the picture popped in a moment later (the
+        // "late album art"). While it prepares, the old cover stays; a hidden copy of the next one, laid out exactly like the
+        // final one, does the loading so the real layer finds everything in the caches and shows on its first frame.
+        val wanted = Triple(songKey, artUri, audioUri)
+        var onShow by remember { mutableStateOf(wanted) }
+        if (onShow != wanted) {
+            key(wanted) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(artHeight)
+                        .alpha(0f)
+                ) {
+                    FullCoverLayer(
+                        uri = artUri,
+                        songId = songKey,
+                        audioUri = audioUri,
+                        hdEnabled = hdCover,
+                        isBlurred = isBlurred,
+                        strongBlur = strongBlur,
+                        blurRadius = blurRadius,
+                        blurDim = blurDim,
+                        reachBottom = reachBadge,
+                        onReady = { onShow = wanted }
+                    )
+                }
+                // A cover that never becomes ready (slow network art, decode failure) must not freeze the screen.
+                LaunchedEffect(wanted) {
+                    delay(FULL_COVER_READY_TIMEOUT_MS)
+                    onShow = wanted
+                }
+            }
+        }
         Box(
             Modifier
                 .fillMaxWidth()
@@ -2421,7 +2455,7 @@ private fun FullCoverArtBackground(
                 .alpha(coverLayerAlpha)
         ) {
             AnimatedContent(
-                targetState = Triple(songKey, artUri, audioUri),
+                targetState = onShow,
                 transitionSpec = { fullCoverTransition(transform, direction) },
                 label = "fullCoverArt",
                 modifier = Modifier.fillMaxSize()
@@ -2445,6 +2479,9 @@ private fun FullCoverArtBackground(
         }
     }
 }
+
+/** Longest the previous cover stays on screen while the next one prepares. */
+private const val FULL_COVER_READY_TIMEOUT_MS = 1200L
 
 /**
  * Song-change animation for the Full Cover Art cover (the whole full-width cover moves, not a

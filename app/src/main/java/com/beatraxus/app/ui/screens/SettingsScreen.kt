@@ -161,32 +161,33 @@ private val SecondaryText = Color(0xFFAAB3BC)
 private val BgColor = Color(0xFF0A0A0C)
 private val CardSurface = Color(0xFF15161A)
 
+/** Back-and-forth ramp 0..1..0 with the given period: what a linear Reverse-repeat animation produced. */
+private fun pingPong(seconds: Float, period: Float, startAtOne: Boolean): Float {
+    val p = ((seconds / period) % 2f + 2f) % 2f
+    val v = if (p <= 1f) p else 2f - p
+    return if (startAtOne) 1f - v else v
+}
+
 @Composable
 fun AnimatedMeshBackground() {
-    val transition = rememberInfiniteTransition(label = "mesh")
-
-    val x1 by transition.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(12000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "x1"
-    )
-    val y1 by transition.animateFloat(
-        initialValue = 0f, targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(15000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "y1"
-    )
-    val x2 by transition.animateFloat(
-        initialValue = 1f, targetValue = 0f,
-        animationSpec = infiniteRepeatable(tween(18000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "x2"
-    )
-    val y2 by transition.animateFloat(
-        initialValue = 1f, targetValue = 0f,
-        animationSpec = infiniteRepeatable(tween(11000, easing = LinearEasing), RepeatMode.Reverse),
-        label = "y2"
-    )
-
+    // Driven by the app-wide flow clock, not by a private infinite transition: the glow keeps drifting where it was when
+    // you leave and come back, and the loop stops while the screen is sliding in / out (see rememberScreenSettled).
+    var now by remember { mutableStateOf(com.beatraxus.app.ui.components.FluidFlowState.seconds()) }
+    val settled = com.beatraxus.app.ui.components.rememberScreenSettled()
+    LaunchedEffect(settled) {
+        if (!settled) return@LaunchedEffect
+        while (true) {
+            androidx.compose.runtime.withFrameNanos { }
+            now = com.beatraxus.app.ui.components.FluidFlowState.seconds()
+        }
+    }
     Canvas(modifier = Modifier.fillMaxSize()) {
+        // Read in the draw phase: a frame redraws the canvas without recomposing anything.
+        val t = now
+        val x1 = pingPong(t, 12f, false)
+        val y1 = pingPong(t, 15f, false)
+        val x2 = pingPong(t, 18f, true)
+        val y2 = pingPong(t, 11f, true)
         drawRect(Color(0xFF060608))
 
         drawCircle(
@@ -403,7 +404,8 @@ fun SettingsScreen(
         }
 
         Scaffold(
-            modifier = Modifier.blur(if (uiState.isFullScanning) 24.dp else 0.dp),
+            // Only while scanning: a 0 dp blur still wraps the whole screen in an extra layer.
+            modifier = if (uiState.isFullScanning) Modifier.blur(24.dp) else Modifier,
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.systemBars,
             topBar = {

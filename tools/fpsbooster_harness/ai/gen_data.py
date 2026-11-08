@@ -38,12 +38,16 @@ import scenarios as S  # noqa: E402
 DATA = HERE.parent / "data"
 TRAIN_IMAGES = ["lena.jpg", "baboon.jpg", "messi5.jpg", "starry_night.jpg", "graf1.png", "aloeL.jpg", "board.jpg",
                 "stuff.jpg", "home.jpg"]
-TRAIN_VIDEOS = ["Megamind.avi", "big_buck_bunny.mp4", "768x576.avi", "david.webm"]
+TRAIN_VIDEOS = ["Megamind.avi", "big_buck_bunny.mp4", "768x576.avi", "david.webm",
+                # offline stand-ins rendered by make_sample_clip.py --pool train (photos disjoint from the evaluation clip)
+                "train_clip_a.mp4", "train_clip_b.mp4"]
 PRESETS = ["performance", "balanced", "quality"]
 PRESET_P = [0.3, 0.4, 0.3]
 PHASE_POOL = [0.2, 0.25, 0.4, 0.5, 0.6, 0.75, 0.8]
 SAMPLE_CONTESTED = 5000     # per record, pixels where the candidates disagree (where the decision matters)
 SAMPLE_RANDOM = 1500        # per record, any valid pixel
+ROT_STD = 0.25              # deg / frame, scene camera roll (std of a normal draw; used by half of the scenes)
+ZOOM_STD = 0.004            # relative zoom per frame (std; half of the scenes). The regression gate zooms 1.2 % / frame: widen with --zoom-std
 CONTESTED_SPREAD = 0.02     # max colour difference between a candidate and the nearest frame that counts as "contested"
 
 
@@ -107,8 +111,8 @@ class RandomScene:
         speed = float(rng.choice([0.004, 0.01, 0.02, 0.04, 0.07, 0.11]))      # fraction of the width per frame
         ang = rng.uniform(0, 2 * np.pi)
         self.vbg = speed * w * np.array([np.cos(ang), np.sin(ang)])
-        self.rot = float(rng.normal(0, 0.25)) if rng.random() < 0.5 else 0.0
-        self.zoom = float(1.0 + rng.normal(0, 0.004)) if rng.random() < 0.5 else 1.0
+        self.rot = float(rng.normal(0, ROT_STD)) if rng.random() < 0.5 else 0.0
+        self.zoom = float(1.0 + rng.normal(0, ZOOM_STD)) if rng.random() < 0.5 else 1.0
         margin = int(np.abs(self.vbg).max() * 2 + 48)
         self.margin = margin
         self.canvas = S.make_canvas(str(rng.choice(TRAIN_IMAGES)), int((w + 2 * margin) * 1.2), int((h + 2 * margin) * 1.2),
@@ -221,7 +225,10 @@ def main() -> int:
     ap.add_argument("--shard", type=int, default=20, help="pairs per shard file")
     ap.add_argument("--sizes", default="960x540:6,1280x720:2,1920x1080:1,640x360:1",
                     help="synthetic frame sizes with weights, e.g. 960x540:6,1280x720:2")
+    ap.add_argument("--rot-std", type=float, default=ROT_STD, help="std of the camera roll (deg / frame) in synthetic scenes")
+    ap.add_argument("--zoom-std", type=float, default=ZOOM_STD, help="std of the camera zoom per frame in synthetic scenes")
     args = ap.parse_args()
+    globals()["ROT_STD"], globals()["ZOOM_STD"] = args.rot_std, args.zoom_std   # read by RandomScene at scene creation
 
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)

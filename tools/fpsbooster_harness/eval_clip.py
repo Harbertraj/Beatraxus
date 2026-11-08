@@ -102,10 +102,11 @@ def main() -> int:
 
     res: dict[str, dict[int, tuple[float, float]]] = {}
     tears: dict[str, dict[int, float]] = {}
+    edges: dict[str, dict[int, float]] = {}
     outs: dict[str, dict[int, np.ndarray]] = {}
     for en in args.engines.split(","):
         eng = make_engine(en)
-        r, o, tr = {}, {}, {}
+        r, o, tr, ed = {}, {}, {}, {}
         for k in triples:
             eng.reset()
             eng.push(fr[k - 1])
@@ -117,19 +118,20 @@ def main() -> int:
             else:
                 r[k] = (M.psnr(out, fr[k]), M.ssim(out, fr[k]))
                 tr[k] = M.tear(out, fr[k])
-        res[eng.name], outs[eng.name], tears[eng.name] = r, o, tr
+                ed[k] = M.edge_psnr(out, fr[k], fr[k - 1], fr[k + 1])
+        res[eng.name], outs[eng.name], tears[eng.name], edges[eng.name] = r, o, tr, ed
         print(f"[{eng.name}] done", file=sys.stderr)
 
     names = list(res)
     ok = [k for k in triples if k not in cut_k]
     tiers = [("all non-cut", ok), ("fast (p90 motion > 25 px)", [k for k in ok if mot[k] > 25]),
              ("very fast (> 50 px)", [k for k in ok if mot[k] > 50]), ("moderate (<= 25 px)", [k for k in ok if mot[k] <= 25])]
-    print(f"{'subset':28s} {'n':>3s} " + "".join(f"| {n[:34]:<34s}" for n in names))
+    print(f"{'subset':28s} {'n':>3s} " + "".join(f"| {n[:34]:<44s}" for n in names))
     for label, ks in tiers:
         if not ks:
             continue
         print(f"{label:28s} {len(ks):3d} " + "".join(
-            f"| {np.mean([res[n][k][0] for k in ks]):5.2f} dB  ssim {np.mean([res[n][k][1] for k in ks]):.3f} tear {np.mean([tears[n][k] for k in ks]):.2f} "
+            f"| {np.mean([res[n][k][0] for k in ks]):5.2f} dB  ssim {np.mean([res[n][k][1] for k in ks]):.3f} tear {np.mean([tears[n][k] for k in ks]):.2f} edge {np.mean([edges[n][k] for k in ks]):5.2f} "
             for n in names))
     if cut_k:
         print(f"{'shot cuts (clean A/B)':28s} {len(cut_k):3d} " + "".join(

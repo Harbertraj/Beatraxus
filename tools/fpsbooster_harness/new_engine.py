@@ -71,6 +71,8 @@ def interp_source(*, ai: bool = False, fuse: bool = False, dump: bool = False, w
     src = _src("flow_interp.frag")
     head, rest = src.split("\n", 1)
     defs = f"#define AI_FUSION {int(ai)}\n#define FUSE_PASS {int(fuse)}\n#define AI_DUMP {int(dump)}\n"
+    if os.environ.get("FPSB_EDGE") in ("0", "1"):      # harness A/B of the edge-aware vector selection (shader default: on)
+        defs += f"#define EDGE_AWARE {os.environ['FPSB_EDGE']}\n"
     if fuse:
         rest = rest.replace("// @AI_FUSION_WEIGHTS@", weights if weights is not None else AI_WEIGHTS.read_text())
     return head + "\n" + defs + rest

@@ -23,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -42,6 +43,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Constraints
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -249,16 +252,37 @@ internal const val PHASE_SMOOTH_SECONDS = 6f
 internal const val PHASE_MAX_SPEED = 0.05f
 private const val APPEAR_MS = 800
 
+/**
+ * The flow lives OUTSIDE any composable. Closing Now Playing, opening Studio / DSP or any other screen, and coming back
+ * used to rebuild the background from second 0 (new clock, new phases, picture fading in from the fallback). Now the clock
+ * is the device's monotonic time, so the motion carries on exactly where it would be had the screen stayed open, and the
+ * phase followers, the picture on show and its fade are kept for the next time.
+ */
+internal object FluidFlowState {
+    private val originNanos = android.os.SystemClock.elapsedRealtimeNanos()
+
+    /** Seconds of flow since the app process started; keeps advancing while no background is on screen. */
+    fun seconds(): Float = ((android.os.SystemClock.elapsedRealtimeNanos() - originNanos) / 1_000_000_000.0).toFloat()
+
+    /** Start-phase followers, shared by every background (Now Playing and the mini player flow as one). */
+    val dampers: List<SmoothDamper> = List(PHASE_COUNT) { SmoothDamper(0f) }
+    var phasesSeeded = false
+    var lastFrameSeconds = 0f
+
+    /** Last picture that was fully on screen (null before the first one), so a returning screen shows it at once. */
+    var shownBitmap: Bitmap? = null
+}
+
 private val textureCache = LinkedHashMap<String, Bitmap>()
 
-private suspend fun loadTexture(context: Context, url: String, preBlur: Boolean = false): Bitmap? = withContext(Dispatchers.IO) {
+private suspend fun loadTexture(context: Context, url: String, preBlur: Boolean = false, model: Any = url): Bitmap? = withContext(Dispatchers.IO) {
     val cacheKey = if (preBlur) "$url-preblurred" else url
     synchronized(textureCache) {
         textureCache.remove(cacheKey)?.also { textureCache[cacheKey] = it }
     }?.let { return@withContext it }
 
     val request = ImageRequest.Builder(context)
-        .data(url)
+        .data(model)
         .size(TEXTURE_PX)
         .allowHardware(false)
         .build()
@@ -408,6 +432,22 @@ fun isFluidSupported(): Boolean {
 }
 
 /**
+ * False while this screen's navigation entry is animating in or out (it is only STARTED then) or the app is not in the
+ * foreground; true once it is fully RESUMED. The full-screen shader / gradient loops stop drawing in between: a slide
+ * transition already needs every millisecond of the frame, and a blurred full-screen shader running behind it is what
+ * made opening Settings or Studio DSP stutter. Motion is driven by [FluidFlowState.seconds] (absolute time), so it
+ * resumes in the right place rather than from the start.
+ */
+@Composable
+internal fun rememberScreenSettled(): Boolean {
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val settled by produceState(lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED), lifecycle) {
+        lifecycle.currentStateFlow.collect { value = it.isAtLeast(Lifecycle.State.RESUMED) }
+    }
+    return settled
+}
+
+/**
  * Moving blurred "fluid" background built from album art.
  * [artworkUrl]: any Coil-loadable model (http(s) url, file://, content://). null -> [fallback] is shown.
  * [seedKey]: any stable per-track string (id or "title|artist"); changes the motion pattern per track.
@@ -437,15 +477,20 @@ fun FluidArtworkBackground(
 
     val context = LocalContext.current
 
-    var current by remember { mutableStateOf<Bitmap?>(null) }
+    // A returning screen starts from the picture that was last shown (fully faded in) instead of from nothing.
+    var current by remember { mutableStateOf<Bitmap?>(FluidFlowState.shownBitmap) }
     var previous by remember { mutableStateOf<Bitmap?>(null) }
     val crossfade = remember { Animatable(1f) }
-    val appear = remember { Animatable(0f) }
+    val appear = remember { Animatable(if (FluidFlowState.shownBitmap != null) 1f else 0f) }
     val seed = remember(seedKey) { seedKey.hashCode() }
 
     // Start phases of the moving copies. On a song change they drift (shortest way round, speed limited) to the new
     // song's values while the colours crossfade, so the motion never speeds up or jumps. No audio input is used.
-    val dampers = remember { List(PHASE_COUNT) { SmoothDamper(startPhase(seed, it)) } }
+    val dampers = FluidFlowState.dampers
+    if (!FluidFlowState.phasesSeeded) {
+        FluidFlowState.phasesSeeded = true
+        dampers.forEachIndexed { i, d -> d.value = startPhase(seed, i) }
+    }
     val currentSeed by rememberUpdatedState(seed)
     val phaseOf: (Int) -> Float = { dampers[it].value }
 
@@ -457,9 +502,16 @@ fun FluidArtworkBackground(
         }
     }
 
-    LaunchedEffect(artworkUrl, agslRenderer == null) {
-        val url = artworkUrl?.takeIf { it.isNotBlank() } ?: return@LaunchedEffect
-        val bitmap = loadTexture(context, url, preBlur = (agslRenderer == null)) ?: return@LaunchedEffect
+    // A song without art (or whose art cannot be loaded) animates the time-of-day default album art (morning / afternoon /
+    // evening / night, the same image the covers show) instead of leaving the static fallback.
+    val defaultArtRes = com.beatraxus.app.utils.ImageUtils.getDefaultAlbumArtRes()
+    LaunchedEffect(artworkUrl, defaultArtRes, agslRenderer == null) {
+        val preBlur = agslRenderer == null
+        val url = artworkUrl?.takeIf { it.isNotBlank() }
+        val bitmap = (url?.let { loadTexture(context, it, preBlur) }
+            ?: loadTexture(context, "res:$defaultArtRes", preBlur, model = defaultArtRes)) ?: return@LaunchedEffect
+        // Same picture as the one on show (returning to the screen): nothing to fade.
+        if (bitmap === current) return@LaunchedEffect
         val showing = current
         val inFlight = previous
         val fadeNow = crossfade.value
@@ -481,31 +533,34 @@ fun FluidArtworkBackground(
         } else {
             current = bitmap
         }
+        FluidFlowState.shownBitmap = bitmap
     }
 
     LaunchedEffect(current != null) {
         if (current != null) appear.animateTo(1f, tween(APPEAR_MS))
     }
 
-    var seconds by remember { mutableFloatStateOf(0f) }
+    var seconds by remember { mutableFloatStateOf(FluidFlowState.seconds()) }
     var cachedSigma by remember { mutableFloatStateOf(0f) }
     var cachedRenderEffect by remember { mutableStateOf<androidx.compose.ui.graphics.RenderEffect?>(null) }
-    val shouldPauseLoop = extraBlur && !lyricsRotatingBackgroundEnabled
+    val screenSettled = rememberScreenSettled()
+    val shouldPauseLoop = (extraBlur && !lyricsRotatingBackgroundEnabled) || !screenSettled
     LaunchedEffect(!shouldPauseLoop) {
         if (shouldPauseLoop) return@LaunchedEffect
-        var last = 0L
         while (true) {
-            val dt = withFrameNanos { now ->
-                val step = if (last != 0L) ((now - last) / 1_000_000_000f).coerceIn(0f, 0.1f) else 0f
-                last = now
-                step
+            withFrameNanos { }
+            val now = FluidFlowState.seconds()
+            // The followers are shared: advance them once per frame in total, however many backgrounds are on screen.
+            val stepDt = (now - FluidFlowState.lastFrameSeconds).coerceIn(0f, 0.1f)
+            if (stepDt > 0f) {
+                FluidFlowState.lastFrameSeconds = now
+                val seedNow = currentSeed
+                dampers.forEachIndexed { index, damper ->
+                    val target = damper.value + shortestAngle(startPhase(seedNow, index) - damper.value)
+                    damper.step(target, stepDt, PHASE_SMOOTH_SECONDS, PHASE_MAX_SPEED)
+                }
             }
-            val seedNow = currentSeed
-            dampers.forEachIndexed { index, damper ->
-                val target = damper.value + shortestAngle(startPhase(seedNow, index) - damper.value)
-                damper.step(target, dt, PHASE_SMOOTH_SECONDS, PHASE_MAX_SPEED)
-            }
-            seconds += dt
+            seconds = now
         }
     }
 

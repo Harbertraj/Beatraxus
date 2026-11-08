@@ -39,6 +39,12 @@
 #ifndef AI_DUMP
 #define AI_DUMP 0
 #endif
+// EDGE_AWARE 1 (default): at motion boundaries the motion vector of each output pixel is chosen among the vectors of
+// the 4 surrounding flow blocks by how well each one makes the two real frames agree AT THAT PIXEL (see flowRefine).
+// 0 reproduces the previous behaviour exactly (harness A/B only).
+#ifndef EDGE_AWARE
+#define EDGE_AWARE 1
+#endif
 precision highp float;
 precision highp int;
 precision highp sampler2D;
@@ -96,17 +102,7 @@ const float AI_MIN_WEIGHT = 0.02;     // a candidate with less weight than this 
 // matches neither (smeared / warped edges). Here an occluded or badly matched neighbour barely contributes to
 // the vector; cost (.b) and inconsistency (.a) stay plain bilinear so an untrusted neighbour still lowers the
 // confidence of the result.
-vec4 flowAt(sampler2D s, vec2 uv) {
-  vec2 sz = vec2(textureSize(s, 0));
-  vec2 g = uv * uFlowUv * sz - 0.5;
-  vec2 gi = floor(g);
-  vec2 f = g - gi;
-  ivec2 i0 = ivec2(gi);
-  ivec2 hi = ivec2(sz) - 1;
-  vec4 t00 = texelFetch(s, clamp(i0, ivec2(0), hi), 0);
-  vec4 t10 = texelFetch(s, clamp(i0 + ivec2(1, 0), ivec2(0), hi), 0);
-  vec4 t01 = texelFetch(s, clamp(i0 + ivec2(0, 1), ivec2(0), hi), 0);
-  vec4 t11 = texelFetch(s, clamp(i0 + ivec2(1, 1), ivec2(0), hi), 0);
+vec4 blendBlocks(vec4 t00, vec4 t10, vec4 t01, vec4 t11, vec2 f) {
   float w00 = (1.0 - f.x) * (1.0 - f.y);
   float w10 = f.x * (1.0 - f.y);
   float w01 = (1.0 - f.x) * f.y;
@@ -118,6 +114,20 @@ vec4 flowAt(sampler2D s, vec2 uv) {
   vec2 v = (t00.xy * k00 + t10.xy * k10 + t01.xy * k01 + t11.xy * k11) / (k00 + k10 + k01 + k11);
   vec4 plain = t00 * w00 + t10 * w10 + t01 * w01 + t11 * w11;
   return vec4(v, plain.z, plain.w);
+}
+
+vec4 flowAt(sampler2D s, vec2 uv) {
+  vec2 sz = vec2(textureSize(s, 0));
+  vec2 g = uv * uFlowUv * sz - 0.5;
+  vec2 gi = floor(g);
+  vec2 f = g - gi;
+  ivec2 i0 = ivec2(gi);
+  ivec2 hi = ivec2(sz) - 1;
+  vec4 t00 = texelFetch(s, clamp(i0, ivec2(0), hi), 0);
+  vec4 t10 = texelFetch(s, clamp(i0 + ivec2(1, 0), ivec2(0), hi), 0);
+  vec4 t01 = texelFetch(s, clamp(i0 + ivec2(0, 1), ivec2(0), hi), 0);
+  vec4 t11 = texelFetch(s, clamp(i0 + ivec2(1, 1), ivec2(0), hi), 0);
+  return blendBlocks(t00, t10, t01, t11, f);
 }
 
 // Largest difference (px) between the motion vectors of the 4 blocks around uv: large right at a motion boundary
@@ -163,6 +173,68 @@ vec3 sampleSharp(sampler2D s, vec2 uv) {
 vec4 fw(vec2 uv) { return flowAt(uFw, uv); }
 vec4 bw(vec2 uv) { return flowAt(uBw, uv); }
 
+#if EDGE_AWARE
+// ---- Edge-aware vector selection ------------------------------------------------------------------------------------
+// The flow lives on a 4 px grid of the (smaller) motion-search image, so right at an object edge the 4 blocks around a
+// pixel hold the vectors of two different objects, and any interpolation of them (even the trust-weighted one in flowAt)
+// puts the boundary a few pixels away from the real image edge: the foreground drags a halo of background along or
+// the other way round. Where the 4 blocks disagree (a motion boundary) every output pixel instead scores each block's
+// vector with the one thing that is known exactly at full resolution: do the two real frames show the same colour
+// under that vector at THIS pixel? The vectors are weighted by that match (a soft arg-min), so the motion boundary snaps
+// to the image edge. Inside a moving surface the 4 vectors agree, the branch is not taken and the cost is 4 fetches.
+// Cost at a boundary pixel: 2 extra fetches per block, 8 in total, per field. Boundary pixels are a small share of
+// the picture and neighbouring pixels take the same branch.
+const float EDGE_MIN = 0.6;      // px (scaled by speed): vector spread between the 4 blocks around which a pixel starts to count as a boundary (ramp 0.5x..1.5x)
+const float EDGE_SIGMA = 0.045;  // colour distance (0..1 per channel, RGB length) at which a vector's weight has fallen to 60 %
+
+// kL: where the flow is looked up (uv + kL * v0): -t for the forward field, -(1-t) for the backward one.
+// kA / kB: where frame A / frame B are read under a vector v (uv + kA * v, uv + kB * v).
+vec4 flowRefine(sampler2D s, vec2 uv, vec2 v0, float kL, float kA, float kB) {
+  vec2 inv = 1.0 / uWork;
+  vec2 p = uv + kL * v0 * inv;
+  vec2 sz = vec2(textureSize(s, 0));
+  vec2 g = p * uFlowUv * sz - 0.5;
+  vec2 gi = floor(g);
+  vec2 f = g - gi;
+  ivec2 i0 = ivec2(gi);
+  ivec2 hi = ivec2(sz) - 1;
+  vec4 t00 = texelFetch(s, clamp(i0, ivec2(0), hi), 0);
+  vec4 t10 = texelFetch(s, clamp(i0 + ivec2(1, 0), ivec2(0), hi), 0);
+  vec4 t01 = texelFetch(s, clamp(i0 + ivec2(0, 1), ivec2(0), hi), 0);
+  vec4 t11 = texelFetch(s, clamp(i0 + ivec2(1, 1), ivec2(0), hi), 0);
+  float spread = max(max(max(length(t00.xy - t10.xy), length(t00.xy - t01.xy)), max(length(t00.xy - t11.xy), length(t10.xy - t01.xy))),
+                     max(length(t10.xy - t11.xy), length(t01.xy - t11.xy)));
+  vec4 plain = blendBlocks(t00, t10, t01, t11, f);   // = flowAt(s, p) without fetching the 4 blocks twice
+  // Smooth ramp, not a hard threshold: a pixel whose block spread hovers around the limit (noise, rotation, a slowly
+  // changing phase t) must not pop between two different vectors from one generated frame to the next.
+  float lim = EDGE_MIN * (1.0 + 0.02 * length(plain.xy));
+  float amt = smoothstep(0.5 * lim, 1.5 * lim, spread);
+  if (amt <= 0.0) return plain;
+
+  // Spatial weight of each block: sqrt of its bilinear weight. It must fall to exactly 0 as the block leaves the 4-block
+  // neighbourhood (a constant "prior" added here made the chosen vector jump at every flow-cell border), and sqrt keeps
+  // the farther blocks competitive so the photometric match, not distance, decides at a boundary.
+  vec4 w4 = sqrt(vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y));
+  vec4 blk[4];
+  blk[0] = t00; blk[1] = t10; blk[2] = t01; blk[3] = t11;
+  vec4 acc = vec4(0.0);
+  float wsum = 0.0;
+  for (int i = 0; i < 4; i++) {
+    vec2 v = blk[i].xy;
+    float e = length(texture(uA, uv + kA * v * inv).rgb - texture(uB, uv + kB * v * inv).rgb);
+    float k = w4[i] * (0.05 + 1.0 - smoothstep(uConsLo, uConsHi, blk[i].a)) * (0.02 + exp(-(e * e) / (2.0 * EDGE_SIGMA * EDGE_SIGMA)));
+    acc += k * blk[i];
+    wsum += k;
+  }
+  return mix(plain, acc / wsum, amt);
+}
+vec4 fwR(vec2 uv, vec2 f0, float t) { return flowRefine(uFw, uv, f0, -t, -t, 1.0 - t); }
+vec4 bwR(vec2 uv, vec2 b0, float t) { return flowRefine(uBw, uv, b0, -(1.0 - t), t, -(1.0 - t)); }
+#else
+vec4 fwR(vec2 uv, vec2 f0, float t) { return fw(uv - t * f0 / uWork); }
+vec4 bwR(vec2 uv, vec2 b0, float t) { return bw(uv - (1.0 - t) * b0 / uWork); }
+#endif
+
 float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
 // Final colour grade shared by every path.
@@ -207,11 +279,11 @@ void main() {
     vec3 dab = abs(pa - pb);
     bool isStatic = max(dab.r, max(dab.g, dab.b)) < STATIC_DIFF && dot(f0.xy, f0.xy) < STATIC_FLOW2;
     if (!isStatic) {
-      vec4 f = fw(vUv - uT * f0.xy * inv);
+      vec4 f = fwR(vUv, f0.xy, uT);
       vec3 fa = texture(uA, vUv - uT * f.xy * inv).rgb;
       vec3 fb = texture(uB, vUv + (1.0 - uT) * f.xy * inv).rgb;
       vec4 b0 = bw(vUv);
-      vec4 b = bw(vUv - (1.0 - uT) * b0.xy * inv);
+      vec4 b = bwR(vUv, b0.xy, uT);
       vec3 ba = texture(uA, vUv + uT * b.xy * inv).rgb;
       vec3 bb = texture(uB, vUv - (1.0 - uT) * b.xy * inv).rgb;
       vec4 g4 = texelFetch(uGlobal, ivec2(0), 0);
@@ -307,9 +379,9 @@ void main() {
     } else {
 #if AI_FUSION
       // --- learned fusion: blend the candidates the fusion map asks for -------------------------------------------
-      vec4 f = fw(vUv - uT * f0.xy * inv);
+      vec4 f = fwR(vUv, f0.xy, uT);
       vec4 b0 = bw(vUv);
-      vec4 b = bw(vUv - (1.0 - uT) * b0.xy * inv);
+      vec4 b = bwR(vUv, b0.xy, uT);
       vec4 g4 = texelFetch(uGlobal, ivec2(0), 0);
       vec4 q0 = texture(uFuse0, vUv);
       vec4 q1 = texture(uFuse1, vUv);
@@ -358,12 +430,12 @@ void main() {
       rgb = acc / max(wsum, 1e-4);
 #else
       // --- forward-field warp: refine the vector where the content was at time t ---
-      vec4 f = fw(vUv - uT * f0.xy * inv);
+      vec4 f = fwR(vUv, f0.xy, uT);
       vec3 fa = texture(uA, vUv - uT * f.xy * inv).rgb;
       vec3 fb = texture(uB, vUv + (1.0 - uT) * f.xy * inv).rgb;
       // --- backward-field warp ---
       vec4 b0 = bw(vUv);
-      vec4 b = bw(vUv - (1.0 - uT) * b0.xy * inv);
+      vec4 b = bwR(vUv, b0.xy, uT);
       vec3 ba = texture(uA, vUv + uT * b.xy * inv).rgb;
       vec3 bb = texture(uB, vUv - (1.0 - uT) * b.xy * inv).rgb;
 

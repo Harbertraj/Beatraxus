@@ -7,3 +7,26 @@ HSPLcom/beatraxus/app/MainActivity;->onStart()V
 HSPLcom/beatraxus/app/MainActivity;->onResume()V
 Lcom/beatraxus/app/perf/RefreshRateManager;
 HSPLcom/beatraxus/app/perf/RefreshRateManager;->applyTo(Landroid/view/Window;Landroid/content/Context;)V
+
+# --- UI layer ---------------------------------------------------------------------------------------------------------
+# The profile above only covered start-up, so the first time Settings, Now Playing, Studio DSP, the library or the lyrics view
+# opened, all of their code (hundreds of composables) ran interpreted / JIT-compiling WHILE the screen was sliding in, which is
+# what showed as a stutter on the first open. These wildcard rules (supported by the baseline-profile compiler) have the
+# installer pre-compile that code. HSP = hot, startup and post-startup. They are broad on purpose: a hand-written profile cannot
+# know the exact methods, and a device-recorded one (a Macrobenchmark BaselineProfileRule run) should replace them when available.
+Lcom/beatraxus/app/ui/**;
+HSPLcom/beatraxus/app/ui/**;->**(**)**
+Lcom/beatraxus/app/theme/**;
+HSPLcom/beatraxus/app/theme/**;->**(**)**
+Lcom/beatraxus/app/viewmodel/**;
+HSPLcom/beatraxus/app/viewmodel/**;->**(**)**
+Lcom/beatraxus/app/model/**;
+HSPLcom/beatraxus/app/model/**;->**(**)**
+Lcom/beatraxus/app/repository/**;
+HSPLcom/beatraxus/app/repository/**;->**(**)**
+Lcom/beatraxus/app/utils/**;
+HSPLcom/beatraxus/app/utils/**;->**(**)**
+Lcom/beatraxus/app/util/**;
+HSPLcom/beatraxus/app/util/**;->**(**)**
+Lcom/beatraxus/app/MainActivityKt;
+HSPLcom/beatraxus/app/MainActivityKt;->**(**)**

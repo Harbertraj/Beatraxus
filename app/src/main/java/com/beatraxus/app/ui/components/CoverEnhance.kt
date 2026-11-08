@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -369,10 +372,17 @@ internal fun FullCoverLayer(
     blurRadius: Dp,
     blurDim: Float,
     /** Unused (kept so existing callers still compile). */
-    reachBottom: Boolean = false
+    reachBottom: Boolean = false,
+    /**
+     * Called once everything needed to show this cover without a blank moment is in place: aspect ratio known, HD source
+     * resolved and the picture decoded (an image error also counts, so a broken cover never blocks). The song-change
+     * animation uses it to wait for the next cover instead of fading in an empty box.
+     */
+    onReady: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
+    var imageLoadedFor by remember { mutableStateOf<Any?>(null) }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val wPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
@@ -401,6 +411,7 @@ internal fun FullCoverLayer(
         // Source: original embedded picture when HD is on (falls back to the library cache art).
         // The HD file is prepared ahead of time (prefetch) and already enhanced, so when it exists it is
         // used from the very first frame: no "plain cover first, HD a moment later" swap.
+        var hdDone by remember(uri, songId, audioUri, hdEnabled) { mutableStateOf(!hdEnabled) }
         val hdSource by produceState<Any?>(
             if (hdEnabled) cachedHdCover(context, songId.toString()) else null,
             uri, songId, audioUri, hdEnabled
@@ -410,8 +421,11 @@ internal fun FullCoverLayer(
             } else if (value == null) {
                 value = resolveHdCover(context, songId.toString(), audioUri, uri)
             }
+            hdDone = true
         }
         val displayUri = hdSource ?: uri
+        val ready = analysis != null && hdDone && imageLoadedFor == displayUri
+        LaunchedEffect(ready) { if (ready) onReady?.invoke() }
 
         // ---- layout decision --------------------------------------------------------------
         // Reference style: the cover is edge-to-edge in width, starts at the very top of the screen
@@ -504,6 +518,8 @@ internal fun FullCoverLayer(
                         contentDescription = null,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop, // box already has the cover's aspect
+                        onSuccess = { imageLoadedFor = displayUri },
+                        onError = { imageLoadedFor = displayUri },
                         filterQuality = FilterQuality.High
                     )
 
@@ -513,6 +529,8 @@ internal fun FullCoverLayer(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         alignment = BiasAlignment(0f, cropBias),
+                        onSuccess = { imageLoadedFor = displayUri },
+                        onError = { imageLoadedFor = displayUri },
                         filterQuality = FilterQuality.High
                     )
 
@@ -522,6 +540,8 @@ internal fun FullCoverLayer(
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Fit,
                         alignment = Alignment.TopCenter,
+                        onSuccess = { imageLoadedFor = displayUri },
+                        onError = { imageLoadedFor = displayUri },
                         filterQuality = FilterQuality.High
                     )
                 }

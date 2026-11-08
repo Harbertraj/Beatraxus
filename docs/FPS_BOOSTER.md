@@ -537,3 +537,63 @@ flow runs twice per source frame.
 - M is made at model size (640 / 960 / 1280 px long edge by quality) and upscaled, so frames near M are softer than the
   real ones. Higher quality = sharper M but slower RIFE.
 - The hold-back grows by RIFE latency + two estimates (measured by `EstimateLatency`, capped at 100 ms).
+
+## 16. Edge-aware vectors, retrained fusion weights, offline test clip
+
+Desktop harness only (Mesa llvmpipe): image quality and shader correctness, **nothing here was compiled with Gradle or run on a
+phone**, and GPU cost on a Mali is not measured.
+
+### 16.1 Edge-aware vector selection (`flow_interp.frag`, `EDGE_AWARE`, default on)
+The flow lives on a 4 px grid of the (smaller) motion-search image, so right at an object edge the 4 blocks around an output pixel
+hold the vectors of two different objects, and any interpolation of them puts the motion boundary a few pixels away from the real
+image edge. Where the 4 blocks disagree (`flowRefine`), each block's vector is now scored with what is known exactly at full
+resolution - do the two real frames show the same colour under that vector at this pixel? - and the vectors are weighted by that
+match (soft arg-min, `EDGE_SIGMA`). Used by the hand-tuned path, the fusion pass and the AI composite (`fwR` / `bwR`).
+- Inside a moving surface the blocks agree and nothing extra runs (the 4 flow texels are fetched once, `blendBlocks`).
+  At a boundary pixel: 8 extra texture fetches per field. Not measured on a phone.
+- The block weight is the **square root of its bilinear weight**. A first version added a constant prior; `check_orientation.py`
+  caught it: the chosen vector jumped at every flow-cell border near an object edge (up to 69 LSB). It also ramps in
+  smoothly (0.5x..1.5x `EDGE_MIN`) rather than switching on at a threshold.
+- `EDGE_AWARE 0` reproduces the previous shader exactly (harness: `FPSB_EDGE=0`).
+- The constants were swept (`EDGE_MIN` 0.3-1.2, `EDGE_SIGMA` 0.02-0.1, prior 0.05-0.6): all within +-0.1 dB, so the values are not critical.
+
+### 16.2 Retrained `ai_fusion.glsl`
+Same 22 -> 16 -> 10 -> 6 network and the same shader contract (604 parameters, no cost change). Retrained with the numpy backend on
+5.0 M + 3.9 M samples (8.9 M) from `ai/gen_data.py`, now including film-like clips (16.3) and synthetic scenes with a **wider zoom / roll
+range** (`--zoom-std 0.009 --rot-std 0.5`). That range matters: a first retrain without it lost 3.2 dB on the gate's zoom + rotation scene
+(46.6 -> 43.4, barely above its floor); with it the same scene is 47.1.
+Training photos and the evaluation clip's photos are disjoint (`make_sample_clip.py --pool train|eval`).
+
+### 16.3 Offline test material
+`fetch_data.sh` needs raw.githubusercontent.com. Without network:
+- `setup_local_data.py` fills `data/` from scikit-image's bundled photographs under the harness' file names (never overwrites).
+- `make_sample_clip.py` renders a **film-like clip from those photographs** (handheld drift + 0.4-3.5 Hz shake + roll, subjects with
+  feathered edges crossing each other, 180 degree shutter blur, grain, shot cuts, H.264 CRF 20) and `eval_clip.py` scores it
+  exactly like a real file. It is a stress test with real photographic texture, **not camera footage**.
+- `eval_edges.py`: object-boundary benchmark (static background, 1-4 independent subjects, exact truth). New metrics in `metrics.py`:
+  `edge_psnr` (PSNR on moving edges) and, in `eval_edges.py`, `flick` (frame-to-frame instability across phases).
+
+### 16.4 Results
+Boundary benchmark (30 scenes x 4 phases, 960x540, balanced):
+
+| | edge dB | all dB | tear | flicker (lower = steadier) |
+|---|---|---|---|---|
+| hand-tuned, before | 15.05 | 25.75 | 0.17 | 4.161 |
+| hand-tuned, after | 15.24 | 25.92 | 0.17 | 4.110 |
+| AI fusion, before | 17.22 | 27.79 | 0.11 | 3.713 |
+| AI fusion, after | 17.55 | 28.11 | 0.12 | 3.576 |
+
+Held-out film-like clip (288 frames, 276 non-cut triples, 960x540, balanced): hand-tuned 26.84 -> 26.87 dB, AI 27.12 -> 27.23 dB
+(SSIM 0.779 -> 0.781); cross-fade 22.6, frame repeat 20.1. Shot cuts stay clean (99 dB). The gain on this clip is small.
+Regression gate (`check_regression.py`, 36 checks) passes. Fast interior pans improve most (AI: 90 px/f 55.1 -> 60.8, 140 px/f 61.2 -> 69.8,
+200 px/f 62.2 -> 70.4, 60,30 px/f 53.3 -> 60.4 dB); no gate row got worse. The gate's floors were calibrated on the original OpenCV
+photographs; run on the stand-in photographs the comparison is old vs new, not absolute.
+`check_orientation.py`: 96/96 (its LSB bound is now 8, was 2: the soft arg-min amplifies the software rasteriser's quantised bilinear
+weights to 3-4 LSB on one or two rim pixels; the pixel-fraction bound is unchanged and a transposed mapping still fails at 255 LSB).
+
+### 16.5 Known limits (not fixed)
+- Small subjects moving farther per frame than their own size (a 50 px object at 100-160 px/frame) are lost by the flow search; they
+  come out as two faint copies. Vector selection cannot fix a vector that was never found.
+- Whip pans (about 90+ px/frame with motion blur) are flagged by the cut detector, so the engine shows the nearest real frame; a
+  cross-fade scores about 2 dB better on those 6 of 276 frames. Telling a whip from a cut (e.g. by colour histogram) is the next step.
+- Not verified: Kotlin compile, shader compile on real GPUs, GPU cost of the extra boundary fetches, battery / thermal.

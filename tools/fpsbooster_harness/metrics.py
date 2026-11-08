@@ -51,3 +51,21 @@ def tear(out: np.ndarray, ref: np.ndarray, dil: int = 9, floor: float = 0.01) ->
         return np.hypot(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3)) / 8.0
     near = cv2.dilate(grad(ref), np.ones((dil, dil), np.uint8))
     return float(np.maximum(0.0, grad(out) - near - floor).mean() * 1000.0)
+
+
+def edge_psnr(out: np.ndarray, ref: np.ndarray, a: np.ndarray, b: np.ndarray, pct: float = 85.0, dil: int = 5, move: float = 0.04) -> float:
+    """PSNR (dB) restricted to MOVING EDGES: pixels within `dil` px of a strong edge of the real frame `ref` (gradient above its
+    `pct` percentile) where the two source frames `a`, `b` differ (smoothed luma difference above `move`, 0..1). This is the
+    region where a motion-compensated frame shows halos, doubled or smeared object boundaries; whole-frame PSNR is dominated by
+    the (much larger) flat and static areas and barely moves when only the boundaries improve. Returns 99 for an empty mask."""
+    def luma(img: np.ndarray) -> np.ndarray:
+        return cv2.cvtColor(img, cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    g = luma(ref)
+    grad = np.hypot(cv2.Sobel(g, cv2.CV_32F, 1, 0, ksize=3), cv2.Sobel(g, cv2.CV_32F, 0, 1, ksize=3))
+    edge = cv2.dilate((grad > np.percentile(grad, pct)).astype(np.uint8), np.ones((dil, dil), np.uint8)) > 0
+    moving = cv2.GaussianBlur(np.abs(luma(a) - luma(b)), (0, 0), 2.0) > move
+    m = edge & moving
+    if m.sum() < 50:
+        return 99.0
+    mse = float(np.mean((out.astype(np.float64)[m] - ref.astype(np.float64)[m]) ** 2))
+    return 99.0 if mse <= 1e-12 else 10.0 * np.log10(255.0 * 255.0 / mse)
