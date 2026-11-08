@@ -199,19 +199,19 @@ data class AppearanceConfig(
     val nowPlayingBlurIntensity: Float = 210f,
     val nowPlayingBlurDarkness: Float = 0.3f,
     val albumArtTransform: AlbumArtTransform = AlbumArtTransform.SOFT_FADE,
-    /** Full-screen cover art on the Now Playing screen (off by default). */
-    val nowPlayingFullCoverArt: Boolean = false,
+    /** Full-screen cover art on the Now Playing screen (on by default). */
+    val nowPlayingFullCoverArt: Boolean = true,
     /** Full Cover Art: load the original embedded cover, sharpen/upscale it (on by default). */
     val nowPlayingHdCover: Boolean = true,
     /** Full Cover Art: hide the "Now Playing" title, info icon and close arrow on the main player (not on queue / lyrics). */
-    val nowPlayingHideTopBar: Boolean = false,
+    val nowPlayingHideTopBar: Boolean = true,
     /** Animated (moving, blurred cover-art) Now Playing background. With Full Cover Art on it replaces the bottom backdrop; off, it fills the whole screen. */
-    val nowPlayingAnimatedBackground: Boolean = false,
+    val nowPlayingAnimatedBackground: Boolean = true,
     /** Also apply the animated background to the Now Playing bar (mini player). Only used while [nowPlayingAnimatedBackground] is on. */
-    val miniPlayerAnimatedBackground: Boolean = false,
+    val miniPlayerAnimatedBackground: Boolean = true,
     val qualityBadgeStyle: QualityBadgeStyle = QualityBadgeStyle.GLASSMORPHIC,
 
-    val seekbarStyle: SeekbarStyle = SeekbarStyle.WAVY_GLASS,
+    val seekbarStyle: SeekbarStyle = SeekbarStyle.BEATRAXUS_MATRIX,
 
     // Main Screen Background
     val mainBackgroundMode: NowPlayingBackgroundMode = if (DeviceUtils.isClassicDevice()) NowPlayingBackgroundMode.BLACK else NowPlayingBackgroundMode.BLUR,

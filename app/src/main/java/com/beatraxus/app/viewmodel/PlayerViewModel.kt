@@ -106,6 +106,7 @@ import com.beatraxus.app.repository.AutoEqRepository
 import com.beatraxus.app.repository.LyricsRepository
 import com.beatraxus.app.repository.LrcParser
 import com.beatraxus.app.repository.LyricsSource
+import com.beatraxus.app.repository.LyricsUpgradePolicy
 import com.beatraxus.app.repository.LyricsState
 import com.beatraxus.app.repository.TelegramChannelRepository
 import com.beatraxus.app.util.ArtistNameUtils
@@ -2023,9 +2024,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                             fetchOnlineInfo(pbState.currentSong)
                             loadLyrics(pbState.currentSong)
                             triggerStemSeparationIfNecessary(song = pbState.currentSong)
-                            // Ensure preloading is triggered on song change
+                            // Ensure preloading is triggered on song change: this song plus the next 3
                             service?.let { svc ->
-                                preloadUpcomingLyrics(svc.getUpcomingSongs().take(15))
+                                preloadLyricsWindow(pbState.currentSong, svc.getUpcomingSongs())
                             }
                         } else {
                             _uiState.update {
@@ -2048,7 +2049,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 svc.upcomingSongs.collect { songs ->
                     _uiState.update { it.copy(upcomingSongs = songs) }
                     if (songs.isNotEmpty()) {
-                        preloadUpcomingLyrics(songs.take(15))
+                        preloadLyricsWindow(_uiState.value.currentSong, songs)
                     }
                 }
             }
@@ -5708,19 +5709,45 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     private var lastPreloadKey: List<String> = emptyList()
 
     /**
-     * Preloads lyric sources for the next 10 songs. The window is only (re)started when it
-     * actually changes, and running work is never cancelled, so rapid playlist emissions can
-     * no longer keep restarting (and wasting) the provider requests.
+     * Preloads lyrics from every enabled source for the playing song and the next 3 songs, and applies the best
+     * result of each (Word-by-word > Line-synced > Plain). It starts right away, there is no fixed wait, only the
+     * splash screen is waited for. The window is only (re)started when it actually changes, so rapid playlist
+     * emissions cannot keep restarting (and wasting) the provider requests.
      */
-    private fun preloadUpcomingLyrics(songs: List<Song>) {
-        val targets = songs.take(10)
-        val key = targets.map { it.id }
+    private fun preloadLyricsWindow(current: Song?, upcoming: List<Song>) {
+        val key = LyricsUpgradePolicy.window(current?.id, upcoming.map { it.id })
         if (key.isEmpty() || key == lastPreloadKey) return
         lastPreloadKey = key
+        val next = upcoming.take(LyricsUpgradePolicy.PRELOAD_NEXT)
         preloadLyricsJob?.cancel()
         preloadLyricsJob = viewModelScope.launch {
-            awaitUiSettled(5000L)
-            lyricsRepository.preloadLyrics(targets)
+            awaitUiSettled(0L)
+            lyricsRepository.preloadWindow(current, next)
+        }
+    }
+
+    // A preload found better lyrics for the song that is playing (for example word-by-word instead of line-synced):
+    // switch the lyrics view over without touching the song or the playback position.
+    init {
+        viewModelScope.launch {
+            lyricsRepository.lyricsUpgrades.collect { songId ->
+                val state = _uiState.value
+                val song = state.currentSong ?: return@collect
+                if (song.id != songId || state.lyricsCurrentSongId != songId) return@collect
+                val better = lyricsRepository.getCachedResult(song) ?: return@collect
+                if (better.lines.isEmpty()) return@collect
+                // Same source already on screen (the normal load got there first): nothing to do.
+                if (state.lyrics.isNotEmpty() && state.lyricsProviderId == better.providerId) return@collect
+                _uiState.update {
+                    it.copy(
+                        lyrics = better.lines,
+                        lyricsCurrentIndex = -1,
+                        isLoadingLyrics = false,
+                        lyricsSource = better.source,
+                        lyricsProviderId = better.providerId
+                    )
+                }
+            }
         }
     }
 

@@ -96,6 +96,7 @@ object AddonManager {
             "archive_org" -> ArchiveOrgAddon(id, displayName, authType)
             "jamendo" -> JamendoAddon(id, displayName, authType)
             "stremio" -> StremioAddon(id, displayName, authType)
+            "ytxtube" -> YtxTubeAddon(id, displayName, authType)
             else -> null
         }
     }

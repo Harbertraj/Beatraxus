@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.LibraryMusic
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 
@@ -85,6 +86,16 @@ object AddonPresets {
             authType = "api_key",
             brandColor = Color(0xFFE5484D),
             icon = Icons.Default.MusicNote
+        ),
+        AddonPreset(
+            id = "preset_ytxtube",
+            displayName = "YTXTube",
+            blurb = "Ad-free YouTube & YouTube Music — opens the YTXTube app (install it separately)",
+            mediaType = "video",
+            protocol = "ytxtube",
+            authType = "none",
+            brandColor = Color(0xFFE50914),
+            icon = Icons.Default.PlayCircle
         )
     )
 }

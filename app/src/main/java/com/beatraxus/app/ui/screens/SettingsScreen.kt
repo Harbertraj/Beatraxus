@@ -1438,7 +1438,7 @@ fun NowPlayingAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerV
     val appearance = uiState.appearance
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Full Cover Art (off by default). The album-art animation below also animates the full cover.
+        // Full Cover Art (on by default). The album-art animation below also animates the full cover.
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,

@@ -707,32 +707,35 @@ fun MainScreen(
     val saturationByScan = 1f
     val alphaByScan = 1f
 
-    val drawerProgress by animateFloatAsState(
+    // These are State objects, NOT `by` delegates: reading `.value` in the composable body would recompose this whole
+    // screen on every animation frame (the drawer lag). They are read only inside graphicsLayer / draw lambdas, which
+    // run in the layer and draw phases and never trigger a recomposition.
+    val drawerProgressState = animateFloatAsState(
         targetValue = if (showDrawer) 1f else 0f,
         // A touch of give at the end makes the card settle instead of stopping dead.
         animationSpec = spring(
-            dampingRatio = 0.9f,
-            stiffness = 260f
+            dampingRatio = 0.92f,
+            stiffness = 340f
         ),
         label = "drawerProgress"
     )
     // The glass layers behind the page trail it with softer springs, so the stack fans out
     // with parallax instead of moving as one rigid block.
-    val deckProgress1 by animateFloatAsState(
+    val deckProgress1State = animateFloatAsState(
         targetValue = if (showDrawer) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 190f),
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 240f),
         label = "deckProgress1"
     )
-    val deckProgress2 by animateFloatAsState(
+    val deckProgress2State = animateFloatAsState(
         targetValue = if (showDrawer) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.88f, stiffness = 140f),
+        animationSpec = spring(dampingRatio = 0.88f, stiffness = 180f),
         label = "deckProgress2"
     )
     // Menu items appear a beat after the page starts sliding and leave first on close.
-    val menuProgress by animateFloatAsState(
+    val menuProgressState = animateFloatAsState(
         targetValue = if (showDrawer) 1f else 0f,
         animationSpec = if (showDrawer) {
-            tween(durationMillis = 380, delayMillis = 90, easing = FastOutSlowInEasing)
+            tween(durationMillis = 340, delayMillis = 60, easing = FastOutSlowInEasing)
         } else {
             tween(durationMillis = 160, easing = FastOutLinearInEasing)
         },
@@ -740,7 +743,33 @@ fun MainScreen(
     )
 
     val contentRotation = 0f // Removed rotation for uniform spacing
-    val contentCornerRadius = (38f * drawerProgress).dp
+
+    // Booleans that flip only when the drawer starts or finishes moving (twice per open/close), so reading them in
+    // composition costs two recompositions in total instead of one per frame.
+    val drawerMenuVisible by remember { derivedStateOf { drawerProgressState.value > 0f || menuProgressState.value > 0.001f } }
+    val drawerDeckVisible by remember {
+        derivedStateOf { drawerProgressState.value > 0f || deckProgress1State.value > 0.001f || deckProgress2State.value > 0.001f }
+    }
+    val drawerOpenAny by remember { derivedStateOf { drawerProgressState.value > 0f } }
+    val drawerFullyClosed by remember { derivedStateOf { drawerProgressState.value == 0f } }
+    val menuProgressProvider: () -> Float = remember { { menuProgressState.value } }
+
+    // The page and the glass cards round their corners as the drawer opens. A Shape reads the progress when it is
+    // drawn, so the radius animates without any recomposition.
+    val drawerCornerShape = remember {
+        object : androidx.compose.ui.graphics.Shape {
+            override fun createOutline(
+                size: Size,
+                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                density: androidx.compose.ui.unit.Density
+            ): androidx.compose.ui.graphics.Outline {
+                val r = with(density) { 38.dp.toPx() } * drawerProgressState.value.coerceAtLeast(0f)
+                return androidx.compose.ui.graphics.Outline.Rounded(
+                    androidx.compose.ui.geometry.RoundRect(0f, 0f, size.width, size.height, androidx.compose.ui.geometry.CornerRadius(r, r))
+                )
+            }
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
         // 1. Static Full-Screen Background - This will be revealed behind the drawer
@@ -755,7 +784,7 @@ fun MainScreen(
         )
 
         // Slide drawer (Reveals the background behind it)
-        if (drawerProgress > 0f || menuProgress > 0.001f) {
+        if (drawerMenuVisible) {
             Box(
                 Modifier
                     .width(180.dp)
@@ -763,10 +792,11 @@ fun MainScreen(
                     .align(Alignment.TopStart)
                     .zIndex(10f)
                     .graphicsLayer {
-                        translationX = -with(density) { 60.dp.toPx() } * (1f - drawerProgress)
-                        alpha = (drawerProgress * 1.5f).coerceIn(0f, 1f)
+                        val open = drawerProgressState.value
+                        translationX = -with(density) { 60.dp.toPx() } * (1f - open)
+                        alpha = (open * 1.5f).coerceIn(0f, 1f)
                         // the menu grows out of the left edge while the page tilts away
-                        val grow = 0.94f + 0.06f * drawerProgress.coerceIn(0f, 1f)
+                        val grow = 0.94f + 0.06f * open.coerceIn(0f, 1f)
                         scaleX = grow
                         scaleY = grow
                         transformOrigin = TransformOrigin(0f, 0.5f)
@@ -778,7 +808,7 @@ fun MainScreen(
                     libraryMode = uiState.libraryMode,
                     playbackMode = uiState.playbackMode,
                     accentColor = viewAccentColor,
-                    drawerProgress = menuProgress,
+                    drawerProgress = menuProgressProvider,
                     isPlaying = uiState.isPlaying,
                     onSelectView = { view ->
                         viewModel.setLibraryView(view)
@@ -814,15 +844,15 @@ fun MainScreen(
         }
 
         // Two translucent black cards peek out behind the page without library tint.
-        if (drawerProgress > 0f || deckProgress1 > 0.001f || deckProgress2 > 0.001f) {
-            val deckShape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
+        if (drawerDeckVisible) {
+            val deckShape = drawerCornerShape
             for (depth in 1..2) {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .zIndex(1f)
                         .graphicsLayer {
-                            val p = (if (depth == 1) deckProgress1 else deckProgress2).coerceAtLeast(0f)
+                            val p = (if (depth == 1) deckProgress1State.value else deckProgress2State.value).coerceAtLeast(0f)
                             translationX = p * with(density) { (200 - 11 * depth).dp.toPx() }
                             val targetScale = if (size.height > 0f) {
                                 (1f - (2f * headerTopPaddingPx / size.height)).coerceIn(0.5f, 1f)
@@ -891,6 +921,7 @@ fun MainScreen(
                 .fillMaxSize()
                 .zIndex(2f) // Main content is on top
                 .graphicsLayer {
+                    val drawerProgress = drawerProgressState.value
                     translationX = drawerProgress * with(density) { 200.dp.toPx() }
 
                     val targetScale = if (size.height > 0f) {
@@ -907,7 +938,7 @@ fun MainScreen(
                     rotationY = -12f * drawerProgress
                     cameraDistance = 16f * density.density
                     transformOrigin = TransformOrigin(0f, 0.5f)
-                    shape = RoundedCornerShape(contentCornerRadius.coerceAtLeast(0.dp))
+                    shape = drawerCornerShape
                     clip = true
                     // the page floats above the glass stack, casting an accent-coloured glow onto it
                     shadowElevation = with(density) { 28.dp.toPx() } * drawerProgress
@@ -916,9 +947,9 @@ fun MainScreen(
                 }
                 .drawWithContent {
                     drawContent()
-                    val p = drawerProgress.coerceIn(0f, 1f)
+                    val p = drawerProgressState.value.coerceIn(0f, 1f)
                     if (p > 0.01f) {
-                        val r = contentCornerRadius.coerceAtLeast(0.dp).toPx()
+                        val r = 38.dp.toPx() * p
                         // soft reflection across the top of the page, like light on a glass card
                         drawRect(
                             brush = Brush.verticalGradient(
@@ -957,7 +988,7 @@ fun MainScreen(
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(BgDeep.copy(alpha = (drawerProgress * 4f).coerceIn(0f, 1f)))
+                    .drawBehind { drawRect(BgDeep.copy(alpha = (drawerProgressState.value * 4f).coerceIn(0f, 1f))) }
             )
 
             Box(
@@ -3996,12 +4027,12 @@ items(artistSongs, key = { it.id }) { song ->
 
             // Depth shading when side menu is open: the page stays vivid next to the menu and
             // falls into shadow toward the far edge, with an accent glow bleeding in from the right.
-            if (drawerProgress > 0f) {
+            if (drawerOpenAny) {
                 Box(
                     Modifier
                         .fillMaxSize()
                         .drawBehind {
-                            val p = drawerProgress.coerceIn(0f, 1f)
+                            val p = drawerProgressState.value.coerceIn(0f, 1f)
                             drawRect(
                                 Brush.horizontalGradient(
                                     listOf(
@@ -4033,7 +4064,7 @@ items(artistSongs, key = { it.id }) { song ->
                         .padding(end = 10.dp)
                         .width(4.dp)
                         .height(56.dp)
-                        .graphicsLayer { alpha = drawerProgress.coerceIn(0f, 1f) * 0.9f }
+                        .graphicsLayer { alpha = drawerProgressState.value.coerceIn(0f, 1f) * 0.9f }
                         .clip(RoundedCornerShape(50))
                         .background(
                             Brush.verticalGradient(
@@ -4308,7 +4339,7 @@ items(artistSongs, key = { it.id }) { song ->
         }
 
         // Floating Add button on Playlists view to create new playlists
-        if (uiState.currentView == LibraryView.PLAYLISTS && drawerProgress == 0f && !showFullPlayer) {
+        if (uiState.currentView == LibraryView.PLAYLISTS && drawerFullyClosed && !showFullPlayer) {
             val isMiniPlayerVisible = uiState.currentSong != null
             val bottomPadding by animateDpAsState(
                 targetValue = if (isMiniPlayerVisible) 80.dp else 16.dp,
@@ -6452,7 +6483,7 @@ fun SlideDrawerMenu(
     libraryMode: LibraryMode,
     playbackMode: com.beatraxus.app.model.PlaybackMode,
     accentColor: Color,
-    drawerProgress: Float = 1f,
+    drawerProgress: () -> Float = { 1f },
     isPlaying: Boolean = false,
     onSelectView: (LibraryView) -> Unit,
     onSetLibraryMode: (LibraryMode) -> Unit,
@@ -6517,7 +6548,7 @@ fun SlideDrawerMenu(
             .fillMaxHeight()
             .fillMaxWidth()
             .graphicsLayer {
-                alpha = drawerProgress.coerceIn(0f, 1f)
+                alpha = drawerProgress().coerceIn(0f, 1f)
             }
     ) {
         Column(
@@ -6619,17 +6650,17 @@ fun SlideDrawerMenu(
                             modifier = Modifier
                                 .padding(16.dp)
                                 .graphicsLayer {
-                                    alpha = drawerProgress.coerceIn(0f, 1f)
-                                    translationY = 20f * (1f - drawerProgress)
+                                    alpha = drawerProgress().coerceIn(0f, 1f)
+                                    translationY = 20f * (1f - drawerProgress())
                                 },
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Box(
                                 modifier = Modifier
                                     .graphicsLayer {
-                                        scaleX = 0.8f + (0.2f * drawerProgress)
-                                        scaleY = 0.8f + (0.2f * drawerProgress)
-                                        alpha = drawerProgress
+                                        scaleX = 0.8f + (0.2f * drawerProgress())
+                                        scaleY = 0.8f + (0.2f * drawerProgress())
+                                        alpha = drawerProgress()
                                     }
                                     .size(52.dp)
                                     .background(
@@ -6659,8 +6690,8 @@ fun SlideDrawerMenu(
                                 textAlign = TextAlign.Center,
                                 lineHeight = 26.sp,
                                 modifier = Modifier.graphicsLayer {
-                                    alpha = drawerProgress.coerceIn(0f, 1f)
-                                    translationX = -10f * (1f - drawerProgress)
+                                    alpha = drawerProgress().coerceIn(0f, 1f)
+                                    translationX = -10f * (1f - drawerProgress())
                                 }
                             )
                             Spacer(Modifier.height(8.dp))
@@ -6682,8 +6713,8 @@ fun SlideDrawerMenu(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .graphicsLayer {
-                                        alpha = drawerProgress.coerceIn(0f, 1f)
-                                        translationX = -7f * (1f - drawerProgress)
+                                        alpha = drawerProgress().coerceIn(0f, 1f)
+                                        translationX = -7f * (1f - drawerProgress())
                                     }
                             )
                             Spacer(Modifier.height(8.dp))
@@ -6693,8 +6724,8 @@ fun SlideDrawerMenu(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .graphicsLayer {
-                                        alpha = drawerProgress.coerceIn(0f, 1f)
-                                        translationX = -5f * (1f - drawerProgress)
+                                        alpha = drawerProgress().coerceIn(0f, 1f)
+                                        translationX = -5f * (1f - drawerProgress())
                                     }
                             )
                         }
@@ -6707,7 +6738,7 @@ fun SlideDrawerMenu(
                 modifier = Modifier
                     .weight(1f)
                     .graphicsLayer {
-                        alpha = drawerProgress.coerceIn(0f, 1f)
+                        alpha = drawerProgress().coerceIn(0f, 1f)
                     },
                 contentPadding = PaddingValues(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -6802,8 +6833,8 @@ fun SlideDrawerMenu(
                     .navigationBarsPadding()
                     .padding(12.dp)
                     .graphicsLayer {
-                        alpha = drawerProgress.coerceIn(0f, 1f)
-                        translationY = 10f * (1f - drawerProgress)
+                        alpha = drawerProgress().coerceIn(0f, 1f)
+                        translationY = 10f * (1f - drawerProgress())
                     },
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {

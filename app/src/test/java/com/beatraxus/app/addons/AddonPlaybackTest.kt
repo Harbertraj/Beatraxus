@@ -128,4 +128,13 @@ class AddonPlaybackTest {
         assertTrue(presets.contains("authType = \"api_key\""))
         assertTrue(presets.contains("id = \"preset_archive\"")) // untouched
     }
+    @Test fun ytxtubeIsRegisteredInAllThreePlaces() {
+        val valid = Regex("""validProtocols = listOf\((.*?)\)""").find(source("AddonInstaller.kt"))!!.groupValues[1]
+        assertTrue(valid.contains("\"ytxtube\""))
+        assertTrue(source("AddonManager.kt").contains("\"ytxtube\" -> YtxTubeAddon(id, displayName, authType)"))
+        val presets = source("AddonPresets.kt")
+        assertTrue(presets.contains("id = \"preset_ytxtube\""))
+        assertTrue(presets.contains("protocol = \"ytxtube\""))
+        assertTrue(presets.contains("authType = \"none\""))
+    }
 }

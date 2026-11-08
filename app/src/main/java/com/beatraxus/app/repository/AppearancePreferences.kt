@@ -39,11 +39,12 @@ class AppearancePreferences(context: Context) {
             nowPlayingSolidColorDarkness = preferences[SOLID_COLOR_DARKNESS] ?: 0.4f,
             nowPlayingBlurIntensity = preferences[BLUR_INTENSITY] ?: 210f,
             nowPlayingBlurDarkness = preferences[BLUR_DARKNESS] ?: 0.3f,
-            nowPlayingFullCoverArt = preferences[NOW_PLAYING_FULL_COVER_ART] ?: false,
+            nowPlayingFullCoverArt = preferences[NOW_PLAYING_FULL_COVER_ART] ?: true,
             nowPlayingHdCover = preferences[NOW_PLAYING_HD_COVER] ?: true,
-            nowPlayingHideTopBar = preferences[NOW_PLAYING_HIDE_TOP_BAR] ?: false,
-            nowPlayingAnimatedBackground = preferences[NOW_PLAYING_ANIMATED_BG] ?: false,
-            miniPlayerAnimatedBackground = preferences[MINI_PLAYER_ANIMATED_BG] ?: false,
+            nowPlayingHideTopBar = preferences[NOW_PLAYING_HIDE_TOP_BAR] ?: true,
+            // On by default, except on classic (low-end) devices, which already default to plain backgrounds.
+            nowPlayingAnimatedBackground = preferences[NOW_PLAYING_ANIMATED_BG] ?: !isClassic,
+            miniPlayerAnimatedBackground = preferences[MINI_PLAYER_ANIMATED_BG] ?: !isClassic,
             // Animations removed in older versions fall back to the soft fade.
             albumArtTransform = runCatching {
                 AlbumArtTransform.valueOf(preferences[ALBUM_ART_TRANSFORM] ?: AlbumArtTransform.SOFT_FADE.name)
@@ -53,8 +54,8 @@ class AppearancePreferences(context: Context) {
             ),
             // Removed styles saved by older versions safely fall back to Beatraxus Pulse.
             seekbarStyle = runCatching {
-                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.WAVY_GLASS.name)
-            }.getOrDefault(SeekbarStyle.WAVY_GLASS),
+                SeekbarStyle.valueOf(preferences[SEEKBAR_STYLE] ?: SeekbarStyle.BEATRAXUS_MATRIX.name)
+            }.getOrDefault(SeekbarStyle.BEATRAXUS_MATRIX),
 
             // Home Screen Sections
             showGreetingHeader = preferences[SHOW_GREETING_HEADER] ?: true,

@@ -1,0 +1,7 @@
+{
+  "id": "preset_ytxtube",
+  "displayName": "YTXTube",
+  "mediaType": "video",
+  "protocol": "ytxtube",
+  "authType": "none"
+}

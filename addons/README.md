@@ -11,6 +11,7 @@ Ready-to-install add-on packages. In the app: **Add-ons → Add an add-on → In
 | `stremio-catalog.zip` | Stremio add-on protocol | paste a manifest URL (direct-link streams only) |
 | `internet-archive.zip` | Internet Archive | none |
 | `jamendo.zip` | Jamendo (official API v3.0) | free Jamendo client ID — see [JAMENDO.md](JAMENDO.md) |
+| `ytxtube.zip` | Launches the [YTXTube](https://github.com/Koustubh12345/YTXTube) app | none — install the YTXTube APK separately (see [YTXTUBE.md](YTXTUBE.md)) |
 
 Plex is intentionally not included: its add-on can't sign in yet.
 

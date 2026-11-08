@@ -20,7 +20,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
@@ -530,10 +534,18 @@ class LyricsRepository(
         )
     }
 
-    /** How many upcoming songs get their lyric-source results preloaded. */
-    private val PRELOAD_COUNT = 10
+    /** How many songs after the playing one get their lyric-source results preloaded (the playing song is added too). */
+    private val PRELOAD_COUNT = LyricsUpgradePolicy.PRELOAD_NEXT
     private val preloadSemaphore = Semaphore(3)
     private val preloadInFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    // Emits a song id when a preload found better lyrics for it than it had and applied them, so a screen that is
+    // already showing that song can switch over.
+    private val _lyricsUpgrades = MutableSharedFlow<String>(extraBufferCapacity = 8, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+    val lyricsUpgrades: SharedFlow<String> = _lyricsUpgrades.asSharedFlow()
+
+    /** The lyrics currently cached for [song] (what playback would show), or null. */
+    fun getCachedResult(song: Song): LyricsLoadResult? = cache[song.id]
 
     /** Word-by-word first, then line-synced, then plain. */
     private fun typeRank(type: LyricsType): Int = when (type) {
@@ -597,18 +609,26 @@ class LyricsRepository(
         candidates
     }
 
+    /** Kept for older callers: preloads [songs] without a playing song. */
+    suspend fun preloadLyrics(songs: List<Song>) = preloadWindow(null, songs)
+
     /**
-     * Preloads lyric results for the next [PRELOAD_COUNT] songs:
-     *  1. every enabled source is queried once and the per-source results are stored for the
+     * Preloads lyrics for the playing song and the next [PRELOAD_COUNT] songs, playing song first:
+     *  1. every enabled source is queried in full (no early exit) and the per-source results are stored for the
      *     sources popup (so it opens instantly), ordered Word -> Line -> Plain;
-     *  2. the best result (same Word > Line > Plain rule in runProviders) is cached for playback,
-     *     unless the song already has synced/word lyrics.
+     *  2. the best result is applied for playback when it is strictly better than what the song already has
+     *     (Word > Line > Plain, see [LyricsUpgradePolicy]); lyrics the user picked by hand are never replaced.
+     *     A screen showing the song is told through [lyricsUpgrades].
      */
-    suspend fun preloadLyrics(songs: List<Song>) = withContext(Dispatchers.IO) {
+    suspend fun preloadWindow(current: Song?, upcoming: List<Song>) = withContext(Dispatchers.IO) {
         checkConfigChange()
         val semaphore = preloadSemaphore // gentle on the providers: 3 songs in flight at once (shared across calls)
 
-        songs.take(PRELOAD_COUNT).map { song ->
+        val targets = LinkedHashMap<String, Song>()
+        if (current != null) targets[current.id] = current
+        upcoming.take(PRELOAD_COUNT).forEach { targets.putIfAbsent(it.id, it) }
+
+        targets.values.map { song ->
             async {
                 if (!isActive) return@async
 
@@ -632,16 +652,19 @@ class LyricsRepository(
                         candidatesCache[candidatesKey] = buildCandidates(song, runResult.allResults)
                     }
 
-                    // 2) best result for playback, only when the song has nothing better already
-                    val memCached = cache[song.id]
-                    val dbType = lyricsDao.getLyrics(song.id)?.let { determineType(it.lyrics) } ?: LyricsType.PLAIN
-                    val metaType = song.lyrics?.takeIf { it.isNotBlank() }?.let { determineType(it) } ?: LyricsType.PLAIN
-                    fun LyricsType.isTimedType() = this == LyricsType.WORD_BY_WORD || this == LyricsType.SYNCED
-                    val alreadyHasTimed = (memCached?.type?.isTimedType() == true) || dbType.isTimedType() || metaType.isTimedType()
-
+                    // 2) best result for playback, only when it beats what the song already has
                     val finalRes = runResult.bestResult
                     if (finalRes != null) {
-                        if (!alreadyHasTimed) {
+                        val memCached = cache[song.id]
+                        val dbEntity = lyricsDao.getLyrics(song.id)
+                        val existing = LyricsUpgradePolicy.bestType(
+                            memCached?.type,
+                            dbEntity?.let { determineType(it.lyrics) },
+                            song.lyrics?.takeIf { it.isNotBlank() }?.let { determineType(it) }
+                        )
+                        val userSaved = dbEntity?.providerId == LyricsUpgradePolicy.USER_SAVED
+
+                        if (LyricsUpgradePolicy.shouldApply(existing, userSaved, finalRes.type)) {
                             val providerId = runResult.providerId
                             val validation = runResult.bestValidation
                                 ?: LyricsValidator.validate(finalRes.content, song.durationMs, finalRes.type)
@@ -651,7 +674,7 @@ class LyricsRepository(
                                 source = LyricsSource.ONLINE,
                                 type = finalRes.type,
                                 rawContent = finalRes.content,
-                                syncOffset = 0L,
+                                syncOffset = dbEntity?.syncOffset ?: 0L,
                                 score = finalRes.score,
                                 providerId = providerId
                             )
@@ -666,6 +689,8 @@ class LyricsRepository(
                                 embeddedSource.saveLyrics(song.uri, finalRes.content)
                                 songDao.updateLyrics(song.id, finalRes.content)
                             }
+                            Log.d(TAG, "Applied ${finalRes.type} lyrics from $providerId for ${song.title}")
+                            _lyricsUpgrades.tryEmit(song.id)
                         }
                     } else if (!runResult.hasTransientError) {
                         notFoundCache[song.id] = System.currentTimeMillis()
