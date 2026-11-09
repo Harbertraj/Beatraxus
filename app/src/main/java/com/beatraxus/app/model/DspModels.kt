@@ -379,7 +379,9 @@ data class DspConfig(
     /** Separation engine: Fast (SCNet, 4 stems) or Max (HTDemucs 6-stem). Decides which stems the mixer reads. */
     val stemQuality: StemQuality = StemQuality.FAST,
     /** Max only: one "Other + Guitar + Piano" strip instead of three, so Max can be mixed like the 4-stem Fast engine. */
-    val stemCombineOther: Boolean = false
+    val stemCombineOther: Boolean = false,
+    /** On = every new song starts separating by itself. Off = only when the user taps "Separate this song". */
+    val stemAutoSeparate: Boolean = true
 ) {
     fun activeEffects(): List<String> = buildList {
         if (outputMode == OutputMode.HI_RES) add("MTK HiFi")

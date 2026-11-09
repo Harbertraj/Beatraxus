@@ -47,6 +47,21 @@ object StemSeparatorManager {
     private val _state = MutableStateFlow<StemSeparationState>(StemSeparationState.Idle)
     val state: StateFlow<StemSeparationState> = _state.asStateFlow()
 
+    /** Song waiting for the running separation to finish (same quality). Null = nothing queued. */
+    private val _queuedSongId = MutableStateFlow<String?>(null)
+    val queuedSongId: StateFlow<String?> = _queuedSongId.asStateFlow()
+
+    private class PendingRequest(
+        val context: Context,
+        val song: Song,
+        val quality: StemQuality,
+        val force: Boolean,
+        val positionProvider: (() -> Long)?,
+        val stillWanted: () -> Boolean
+    )
+
+    private var pending: PendingRequest? = null
+
     private val scope = CoroutineScope(Dispatchers.Default)
     private var activeJob: Job? = null
     private var activeEngine: StemEngine? = null
@@ -174,7 +189,9 @@ object StemSeparatorManager {
         quality: StemQuality,
         force: Boolean = false,
         /** Playback position right now; separation starts there (then wraps to the beginning). Null = from 0. */
-        positionProvider: (() -> Long)? = null
+        positionProvider: (() -> Long)? = null,
+        /** Checked when a queued request finally gets its turn; false drops it (e.g. the mixer was switched off). */
+        stillWanted: () -> Boolean = { true }
     ) {
         val songId = song.id
         val appContext = context.applicationContext
@@ -182,6 +199,8 @@ object StemSeparatorManager {
         if (StemCache.isStemsCached(appContext, songId, quality)) {
             StemCache.store(appContext).touch(songId, quality)
             _state.value = StemSeparationState.Ready(songId, quality)
+            // The newest request wins: a song the listener already moved past is not worth a queue place.
+            if (pending != null) { pending = null; _queuedSongId.value = null }
             return
         }
 
@@ -223,7 +242,18 @@ object StemSeparatorManager {
             return
         }
 
-        cancelSeparation()
+        // A different song of the same quality is running: let it finish (a half-done song is thrown away, so
+        // cancelling on every skip means no song is ever completed). This request waits and the newest one wins.
+        if (activeJob?.isActive == true && activeSongId != songId && activeQuality == quality) {
+            pending = PendingRequest(appContext, song, quality, force, positionProvider, stillWanted)
+            _queuedSongId.value = songId
+            Log.i(TAG, "Queued $songId (${quality.name}) behind $activeSongId")
+            return
+        }
+
+        pending = null
+        _queuedSongId.value = null
+        cancelActive()
         activeSongId = songId
         activeQuality = quality
         _state.value = StemSeparationState.Separating(songId, 0f, quality)
@@ -410,14 +440,33 @@ object StemSeparatorManager {
                         activeQuality = null
                     }
                 }
+                // Hand over to the song that was waiting (it was queued only if this run was left alone).
+                val next = synchronized(StemSeparatorManager) {
+                    val p = pending
+                    if (p != null && activeJob == null && !me.isCancelled) { pending = null; p } else null
+                }
+                if (next != null) {
+                    if (next.stillWanted()) {
+                        requestSeparation(next.context, next.song, next.quality, next.force, next.positionProvider, next.stillWanted)
+                    }
+                    synchronized(StemSeparatorManager) { if (pending == null) _queuedSongId.value = null }
+                }
             }
         }
         activeJob?.start()
         StemSeparationService.start(appContext)
     }
 
+    /** Stops the running separation and forgets any queued song (the user's Cancel / Clear cache). */
     @Synchronized
     fun cancelSeparation() {
+        pending = null
+        _queuedSongId.value = null
+        cancelActive()
+    }
+
+    @Synchronized
+    private fun cancelActive() {
         activeJob?.cancel()
         activeJob = null
         // release() waits for a running inference chunk: never block the caller (often the main thread) on it.

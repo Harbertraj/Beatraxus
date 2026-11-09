@@ -3909,11 +3909,11 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private var dspSaveJob: Job? = null
-    private fun applyDspConfig(transform: (DspConfig) -> DspConfig) {
+    private fun applyDspConfig(triggerStems: Boolean = true, transform: (DspConfig) -> DspConfig) {
         val updated = transform(_uiState.value.dsp.config)
         _uiState.update { it.copy(dsp = it.dsp.copy(config = updated, autoEqError = null)) }
         service?.updateDspConfig(updated)
-        triggerStemSeparationIfNecessary(config = updated)
+        if (triggerStems) triggerStemSeparationIfNecessary(config = updated)
 
         dspSaveJob?.cancel()
         dspSaveJob = viewModelScope.launch {
@@ -3924,16 +3924,27 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun triggerStemSeparationIfNecessary(
         song: com.beatraxus.app.model.Song? = _uiState.value.currentSong,
-        config: DspConfig = _uiState.value.dsp.config
+        config: DspConfig = _uiState.value.dsp.config,
+        fromSongChange: Boolean = false
     ) {
         val s = song ?: return
+        // "Auto-separate" off: a new song never starts by itself, only the user's own action does.
+        if (fromSongChange && !config.stemAutoSeparate) return
         // Start as soon as the mixer is ON (not only once the mix differs from Original): the separation then runs
         // while the user is still choosing, and the finished parts are usable immediately.
         if (config.stemMixerEnabled && !config.bypassAll && !config.bitPerfectEnabled) {
             if (StemEngines.isModelInstalled(getApplication(), config.stemQuality)) {
+                val q = config.stemQuality
                 StemSeparatorManager.requestSeparation(
-                    getApplication(), s, config.stemQuality,
-                    positionProvider = { service?.currentPositionMs ?: _progressMs.value }
+                    getApplication(), s, q,
+                    // A queued song may start while another one plays: then it is separated from the beginning.
+                    positionProvider = {
+                        if (_uiState.value.currentSong?.id == s.id) service?.currentPositionMs ?: _progressMs.value else 0L
+                    },
+                    stillWanted = {
+                        val c = _uiState.value.dsp.config
+                        c.stemMixerEnabled && !c.bypassAll && !c.bitPerfectEnabled && c.stemQuality == q
+                    }
                 )
             }
         }
@@ -3947,7 +3958,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
                 .map { Triple(it.currentSong?.id, it.dsp.config.stemMixerEnabled, it.dsp.config.stemQuality) }
                 .distinctUntilChanged()
                 .collect { (songId, enabled, _) ->
-                    if (songId != null && enabled) triggerStemSeparationIfNecessary()
+                    if (songId != null && enabled) triggerStemSeparationIfNecessary(fromSongChange = true)
                 }
         }
     }
@@ -4630,6 +4641,12 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
 
     /** Max only: one "Other + Guitar + Piano" strip instead of three. */
     fun setStemCombineOther(combine: Boolean) = applyDspConfig { it.copy(stemCombineOther = combine) }
+
+    /** Auto-separate every new song (default), or only when the user taps "Separate this song". */
+    fun setStemAutoSeparate(auto: Boolean) = applyDspConfig(triggerStems = auto) { it.copy(stemAutoSeparate = auto) }
+
+    /** The "Separate this song" button: starts (or queues) the song that is playing now. */
+    fun separateCurrentSongNow() = triggerStemSeparationIfNecessary()
 
     /** "Clear stem cache" in Settings: every stem of every song, Fast and Max. */
     fun clearStemCache() {

@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -55,14 +56,17 @@ class StemSeparationService : Service() {
         }
         if (watcher == null) {
             watcher = scope.launch {
-                StemSeparatorManager.state.collect { st ->
-                    if (st is StemSeparationState.Separating) {
-                        getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification(st))
-                    } else {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
+                StemSeparatorManager.state
+                    .combine(StemSeparatorManager.queuedSongId) { st, queued -> st to queued }
+                    .collect { (st, queued) ->
+                        if (st is StemSeparationState.Separating) {
+                            getSystemService(NotificationManager::class.java)?.notify(NOTIFICATION_ID, buildNotification(st))
+                        } else if (queued == null) {
+                            // Stay alive while another song is waiting its turn.
+                            stopForeground(STOP_FOREGROUND_REMOVE)
+                            stopSelf()
+                        }
                     }
-                }
             }
         }
         return START_NOT_STICKY

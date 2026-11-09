@@ -96,6 +96,7 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val downloaderState by StemModelDownloader.stateFor(quality).collectAsState()
     val isModelInstalled = remember(downloaderState, quality, context) { StemEngines.isModelInstalled(context, quality) }
     val sepState by StemSeparatorManager.state.collectAsState()
+    val queuedSongId by StemSeparatorManager.queuedSongId.collectAsState()
 
     val song = uiState.currentSong
     val songId = song?.id
@@ -107,12 +108,9 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
 
     // Start separating right after the model is installed (the player only reacts to song / mix changes).
     // It starts as soon as the mixer is ON, from where the song is now, so the first parts are ready sooner.
-    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, quality, config.bypassAll, config.bitPerfectEnabled) {
-        if (song != null && isModelInstalled && config.stemMixerEnabled && !config.bypassAll && !config.bitPerfectEnabled) {
-            StemSeparatorManager.requestSeparation(
-                context, song, quality,
-                positionProvider = { viewModel.progressMs.value }
-            )
+    LaunchedEffect(isModelInstalled, song?.id, config.stemMixerEnabled, quality, config.bypassAll, config.bitPerfectEnabled, config.stemAutoSeparate) {
+        if (song != null && isModelInstalled && config.stemMixerEnabled && config.stemAutoSeparate && !config.bypassAll && !config.bitPerfectEnabled) {
+            viewModel.separateCurrentSongNow()
         }
     }
 
@@ -229,6 +227,26 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 }
             }
 
+            // ── Auto-separate every song, or only the one you choose ──────────────────────────────────────
+            Row(
+                modifier = Modifier.fillMaxWidth().stemSubPanel(accent),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Auto-separate every song", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Off: only a song you choose is separated, so it can finish. On: the next song waits until the running one is done.",
+                        color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp
+                    )
+                }
+                PremiumSwitch(
+                    checked = config.stemAutoSeparate,
+                    onCheckedChange = { viewModel.setStemAutoSeparate(it) },
+                    accentColor = accent
+                )
+            }
+
             if (!isModelInstalled) {
                 Column(
                     modifier = Modifier.fillMaxWidth().stemSubPanel(amber),
@@ -335,7 +353,20 @@ fun PremiumStemMixerCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                             color = accent.copy(0.9f), fontSize = 10.sp, fontWeight = FontWeight.Bold
                         )
                     }
-                    else -> {}
+                    else -> {
+                        if (song != null && queuedSongId == song.id) {
+                            Text(
+                                "Waiting: the song being separated now finishes first, then this one starts.",
+                                color = Color.White.copy(0.6f), fontSize = 10.sp
+                            )
+                        } else if (song != null && !config.stemAutoSeparate) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                StemActionButton("Separate this song", Icons.Rounded.Tune, accent) {
+                                    viewModel.separateCurrentSongNow()
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

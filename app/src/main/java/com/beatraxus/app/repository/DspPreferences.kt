@@ -237,7 +237,8 @@ class DspPreferences(private val context: Context) {
             // New keys: missing (every install before Max) reads as Fast / not combined. The older stem keys keep
             // their names, so nobody loses a level, mute or solo; a 4-value gains string is widened by deserializeStemGains.
             stemQuality = StemQuality.fromStored(pref(STEM_QUALITY, StemQuality.FAST.name)),
-            stemCombineOther = pref(STEM_COMBINE_OTHER, false)
+            stemCombineOther = pref(STEM_COMBINE_OTHER, false),
+            stemAutoSeparate = pref(STEM_AUTO_SEPARATE, true)
         )
     }
 
@@ -387,6 +388,7 @@ class DspPreferences(private val context: Context) {
             set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
             set(STEM_QUALITY, config.stemQuality.name)
             set(STEM_COMBINE_OTHER, config.stemCombineOther)
+            set(STEM_AUTO_SEPARATE, config.stemAutoSeparate)
         }
     }
 
@@ -571,6 +573,7 @@ class DspPreferences(private val context: Context) {
                 set(STEM_SOLO_MASK, sanitizeStemMask(config.stemSoloMask))
                 set(STEM_QUALITY, config.stemQuality.name)
                 set(STEM_COMBINE_OTHER, config.stemCombineOther)
+                set(STEM_AUTO_SEPARATE, config.stemAutoSeparate)
             }
         }
     }
@@ -985,6 +988,7 @@ class DspPreferences(private val context: Context) {
         private val STEM_SOLO_MASK = intPreferencesKey("stem_solo_mask")
         private val STEM_QUALITY = stringPreferencesKey("stem_quality")
         private val STEM_COMBINE_OTHER = booleanPreferencesKey("stem_combine_other")
+        private val STEM_AUTO_SEPARATE = booleanPreferencesKey("stem_auto_separate")
         private val REVERB_ENABLED = booleanPreferencesKey("reverb_enabled")
         private val REVERB_AMOUNT = floatPreferencesKey("reverb_amount")
         private val REVERB_PRESET = stringPreferencesKey("reverb_preset")
