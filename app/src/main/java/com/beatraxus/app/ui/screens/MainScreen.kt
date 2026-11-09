@@ -754,6 +754,8 @@ fun MainScreen(
     val drawerOpenAny by remember { derivedStateOf { drawerProgressState.value > 0f } }
     val drawerFullyClosed by remember { derivedStateOf { drawerProgressState.value == 0f } }
     val menuProgressProvider: () -> Float = remember { { menuProgressState.value } }
+    // The Minimal theme slides the page over a plain dark drawer: no stacked glass cards, coloured glow or rim.
+    val minimalDrawerStyle = uiState.appearance.isMinimal
 
     // The page and the glass cards round their corners as the drawer opens. A Shape reads the progress when it is
     // drawn, so the radius animates without any recomposition.
@@ -804,7 +806,7 @@ fun MainScreen(
                     }
                     .clip(RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp))
             ) {
-                if (uiState.appearance.isMinimal && uiState.playbackMode == PlaybackMode.AUDIO) MinimalDrawerMenu(
+                if (uiState.appearance.isMinimal) MinimalDrawerMenu(
                     currentView = uiState.currentView,
                     libraryMode = uiState.libraryMode,
                     playbackMode = uiState.playbackMode,
@@ -867,7 +869,7 @@ fun MainScreen(
         }
 
         // Two translucent black cards peek out behind the page without library tint.
-        if (drawerDeckVisible) {
+        if (drawerDeckVisible && !minimalDrawerStyle) {
             val deckShape = drawerCornerShape
             for (depth in 1..2) {
                 Box(
@@ -965,13 +967,13 @@ fun MainScreen(
                     clip = true
                     // the page floats above the glass stack, casting an accent-coloured glow onto it
                     shadowElevation = with(density) { 28.dp.toPx() } * drawerProgress
-                    ambientShadowColor = viewAccentColor
-                    spotShadowColor = viewAccentColor
+                    ambientShadowColor = if (minimalDrawerStyle) Color.Black else viewAccentColor
+                    spotShadowColor = if (minimalDrawerStyle) Color.Black else viewAccentColor
                 }
                 .drawWithContent {
                     drawContent()
                     val p = drawerProgressState.value.coerceIn(0f, 1f)
-                    if (p > 0.01f) {
+                    if (p > 0.01f && !minimalDrawerStyle) {
                         val r = 38.dp.toPx() * p
                         // soft reflection across the top of the page, like light on a glass card
                         drawRect(
@@ -1056,8 +1058,9 @@ fun MainScreen(
                     val isMinimalLayout = uiState.appearance.isMinimal && uiState.playbackMode == PlaybackMode.AUDIO
                     val minimalPage = isMinimalLayout && uiState.currentView in minimalPageViews &&
                         !uiState.isSearchActive && !uiState.isMultiSelectMode
-                    val minimalHideHeader = isMinimalLayout &&
-                        (uiState.currentView == LibraryView.HOME || minimalPage)
+                    val isMinimalVideo = uiState.appearance.isMinimal && uiState.playbackMode == PlaybackMode.VIDEO
+                    val minimalHideHeader = (isMinimalLayout && (uiState.currentView == LibraryView.HOME || minimalPage)) ||
+                        (isMinimalVideo && uiState.currentView == LibraryView.HOME)
                     val minimalActions = MinimalActions(
                         onBack = { viewModel.setLibraryView(LibraryView.HOME) },
                         onSearch = { viewModel.setSearchActive(true) },
@@ -1825,7 +1828,9 @@ fun MainScreen(
                                         ) { (targetView, _) ->
                                             when (targetView) {
                                                 LibraryView.HOME -> {
-                                                    HomeScreen(viewModel, uiState, homeListState, onNavigateToSettings, onOpenDrawer = { showDrawer = true })
+                                                    CompositionLocalProvider(LocalVideoMinimal provides uiState.appearance.isMinimal) {
+                                                        HomeScreen(viewModel, uiState, homeListState, onNavigateToSettings, onOpenDrawer = { showDrawer = true })
+                                                    }
                                                 }
                                                 LibraryView.CLOUD -> {
                                                     val accounts = uiState.driveAccounts.isNotEmpty() ||
@@ -3401,38 +3406,30 @@ items(artistSongs, key = { it.id }) { song ->
                                 } // end Column
                             } // end mode AnimatedContent
 
-                                if (isMinimalLayout && !showFullPlayer && !uiState.isSearchActive && !uiState.isMultiSelectMode) {
-
+                                if ((isMinimalLayout || (isMinimalVideo && uiState.currentView in minimalVideoNavViews)) &&
+                                    !showFullPlayer && !uiState.isSearchActive && !uiState.isMultiSelectMode
+                                ) {
                                     MinimalBottomNav(
-
                                         currentView = uiState.currentView,
-
+                                        video = isMinimalVideo,
                                         modifier = Modifier
-
                                             .align(Alignment.BottomCenter)
-
                                             .zIndex(21f)
-
                                             .padding(bottom = paddingValues.calculateBottomPadding() + 10.dp)
-
                                             .padding(horizontal = 16.dp),
-
                                         onHome = { viewModel.setLibraryView(LibraryView.HOME) },
-
                                         onSearch = { viewModel.setSearchActive(true) },
-
                                         onLibrary = {
-
-                                            if (uiState.currentView == LibraryView.HOME || uiState.currentView == LibraryView.RADIO)
-
+                                            if (isMinimalVideo) {
+                                                viewModel.setLibraryView(LibraryView.VIDEO_ALL)
+                                            } else if (uiState.currentView == LibraryView.HOME || uiState.currentView == LibraryView.RADIO) {
                                                 viewModel.setLibraryView(LibraryView.ALL_SONGS)
-
+                                            }
                                         },
-
-                                        onRadio = { viewModel.setLibraryView(LibraryView.RADIO) }
-
+                                        onRadio = {
+                                            viewModel.setLibraryView(if (isMinimalVideo) LibraryView.VIDEO_FOLDERS else LibraryView.RADIO)
+                                        }
                                     )
-
                                 }
 
                                 // Unified Now Playing Bar (Adaptive for Audio & Video)
@@ -3441,7 +3438,7 @@ items(artistSongs, key = { it.id }) { song ->
                                         .align(Alignment.BottomCenter)
                                         .fillMaxWidth()
                                         .zIndex(20f)
-                                        .padding(bottom = paddingValues.calculateBottomPadding() + (if (isMinimalLayout && !uiState.isSearchActive) 78.dp else 12.dp))
+                                        .padding(bottom = paddingValues.calculateBottomPadding() + (if ((isMinimalLayout || (isMinimalVideo && uiState.currentView in minimalVideoNavViews)) && !uiState.isSearchActive) 78.dp else 12.dp))
                                         .padding(horizontal = 12.dp)
                                 ) {
                                     val isVisible = uiState.currentSong != null && !showFullPlayer
@@ -5179,7 +5176,8 @@ fun HomeScreen(
                 onConnectCloudVideo = { p ->
                     com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                     onNavigateToSettings()
-                }
+                },
+                onOpenDrawer = onOpenDrawer
             )
         } else if (uiState.appearance.isMinimal) {
             minimalHomeItems(

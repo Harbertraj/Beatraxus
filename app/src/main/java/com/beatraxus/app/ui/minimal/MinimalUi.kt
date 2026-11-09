@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
@@ -105,6 +106,12 @@ internal val MinGold = Color(0xFFFFC83D)
 internal val MinCyan = Color(0xFF22D3EE)
 internal val MinMint = Color(0xFF3DEB9A)
 private val MinCoral = Color(0xFFFF8A8A)
+
+/** Video screens that show the floating nav pill under the Minimal theme. */
+val minimalVideoNavViews: Set<LibraryView> = setOf(
+    LibraryView.HOME, LibraryView.VIDEO_ALL, LibraryView.VIDEO_FOLDERS,
+    LibraryView.VIDEO_RECENTLY_ADDED, LibraryView.VIDEO_RECENTLY_PLAYED
+)
 
 /** Library screens the Minimal layout draws itself (the rest keep their normal look). */
 val minimalPageViews: Set<LibraryView> = setOf(
@@ -851,10 +858,11 @@ fun MinimalBottomNav(
     onSearch: () -> Unit,
     onLibrary: () -> Unit,
     onRadio: () -> Unit,
+    video: Boolean = false,
 ) {
     val selected = when (currentView) {
         LibraryView.HOME -> 0
-        LibraryView.RADIO -> 3
+        LibraryView.RADIO, LibraryView.VIDEO_FOLDERS, LibraryView.VIDEO_FOLDER_DETAIL -> 3
         else -> 2
     }
     Row(
@@ -869,8 +877,8 @@ fun MinimalBottomNav(
     ) {
         NavItem(Icons.Rounded.Home, "Home", selected == 0, onHome)
         NavItem(Icons.Rounded.Search, "Search", false, onSearch)
-        NavItem(Icons.Rounded.LibraryMusic, "Library", selected == 2, onLibrary)
-        NavItem(Icons.Rounded.Radio, "Radio", selected == 3, onRadio)
+        NavItem(if (video) Icons.Rounded.VideoLibrary else Icons.Rounded.LibraryMusic, "Library", selected == 2, onLibrary)
+        NavItem(if (video) Icons.Rounded.Folder else Icons.Rounded.Radio, if (video) "Folders" else "Radio", selected == 3, onRadio)
     }
 }
 
@@ -918,8 +926,10 @@ fun MinimalDrawerMenu(
             .background(Brush.verticalGradient(listOf(Color(0xFF3A2064), Color(0xFF14102A), MinBg)))
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
+        val video = playbackMode == PlaybackMode.VIDEO
+        val pick: (LibraryView) -> Unit = { v -> onSelectView(v); onClose() }
         // Greeting card with the Device / Cloud / All switch.
         Column(
             Modifier
@@ -927,51 +937,68 @@ fun MinimalDrawerMenu(
                 .clip(RoundedCornerShape(24.dp))
                 .background(Brush.linearGradient(listOf(Color(0xFF6A2D7A), Color(0xFF3C2A74))))
                 .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(24.dp))
-                .padding(14.dp)
+                .padding(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    Modifier.size(50.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MinPink, MinViolet))),
+                    Modifier.size(36.dp).clip(CircleShape).background(Brush.linearGradient(listOf(MinPink, MinViolet))),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(Icons.Rounded.Headphones, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                    Icon(if (video) Icons.Rounded.Movie else Icons.Rounded.Headphones, null, tint = Color.White, modifier = Modifier.size(20.dp))
                 }
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text("Hello,", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
-                    Text("Audiophile", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(if (video) "Your" else "Hello,", color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp, maxLines = 1, softWrap = false)
+                    Text(
+                        if (video) "Cinema" else "Audiophile",
+                        color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
+            // Device / Cloud / All: three equal icon segments. The drawer is narrow, so labels would not fit.
             Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(22.dp)).background(Color.Black.copy(alpha = 0.25f)).padding(4.dp)
+                Modifier.fillMaxWidth().height(36.dp).clip(RoundedCornerShape(18.dp)).background(Color.Black.copy(alpha = 0.25f)).padding(3.dp)
             ) {
                 ModeSegment(Icons.Rounded.PhoneAndroid, "Device", libraryMode == LibraryMode.LOCAL) { onSetLibraryMode(LibraryMode.LOCAL) }
                 ModeSegment(Icons.Rounded.Cloud, "Cloud", libraryMode == LibraryMode.CLOUD) { onSetLibraryMode(LibraryMode.CLOUD) }
-                ModeSegment(Icons.Rounded.AllInclusive, "All", libraryMode == LibraryMode.COMBINED) { onSetLibraryMode(LibraryMode.COMBINED) }
+                ModeSegment(Icons.Rounded.AllInclusive, "All (Device + Cloud)", libraryMode == LibraryMode.COMBINED) { onSetLibraryMode(LibraryMode.COMBINED) }
             }
         }
 
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+          if (video) {
+            DrawerLabel("VIDEO LIBRARY")
+            DrawerRow(Icons.Rounded.Home, "Home", currentView == LibraryView.HOME) { pick(LibraryView.HOME) }
+            DrawerRow(Icons.Rounded.Movie, "All Videos", currentView == LibraryView.VIDEO_ALL) { pick(LibraryView.VIDEO_ALL) }
+            DrawerRow(Icons.Rounded.FolderOpen, "Folders", currentView == LibraryView.VIDEO_FOLDERS || currentView == LibraryView.VIDEO_FOLDER_DETAIL) { pick(LibraryView.VIDEO_FOLDERS) }
+            DrawerRow(Icons.Rounded.NewReleases, "Recently Added", currentView == LibraryView.VIDEO_RECENTLY_ADDED) { pick(LibraryView.VIDEO_RECENTLY_ADDED) }
+            DrawerRow(Icons.Rounded.History, "Recently Played", currentView == LibraryView.VIDEO_RECENTLY_PLAYED) { pick(LibraryView.VIDEO_RECENTLY_PLAYED) }
+            DrawerRow(Icons.AutoMirrored.Rounded.PlaylistPlay, "Video Playlists", currentView == LibraryView.PLAYLISTS) { pick(LibraryView.PLAYLISTS) }
+            DrawerRow(Icons.Rounded.LiveTv, "Live TV", currentView == LibraryView.LIVE_TV) { pick(LibraryView.LIVE_TV) }
+            DrawerRow(Icons.Rounded.Extension, "Add-ons", currentView == LibraryView.ADDONS) { pick(LibraryView.ADDONS) }
+          } else {
             DrawerLabel("LIBRARY")
-            DrawerRow(Icons.Rounded.MusicNote, "All Songs", currentView == LibraryView.ALL_SONGS) { onSelectView(LibraryView.ALL_SONGS) }
-            DrawerRow(Icons.Rounded.Album, "Albums", currentView == LibraryView.ALBUMS) { onSelectView(LibraryView.ALBUMS) }
-            DrawerRow(Icons.Rounded.Person, "Artists", currentView == LibraryView.ARTISTS) { onSelectView(LibraryView.ARTISTS) }
-            DrawerRow(Icons.Rounded.Folder, "Folders", currentView == LibraryView.FOLDERS) { onSelectView(LibraryView.FOLDERS) }
+            DrawerRow(Icons.Rounded.MusicNote, "All Songs", currentView == LibraryView.ALL_SONGS) { pick(LibraryView.ALL_SONGS) }
+            DrawerRow(Icons.Rounded.Album, "Albums", currentView == LibraryView.ALBUMS) { pick(LibraryView.ALBUMS) }
+            DrawerRow(Icons.Rounded.Person, "Artists", currentView == LibraryView.ARTISTS) { pick(LibraryView.ARTISTS) }
+            DrawerRow(Icons.Rounded.Folder, "Folders", currentView == LibraryView.FOLDERS) { pick(LibraryView.FOLDERS) }
             DrawerLabel("BROWSE")
-            DrawerRow(Icons.Rounded.CalendarToday, "Years", currentView == LibraryView.YEARS) { onSelectView(LibraryView.YEARS) }
-            DrawerRow(Icons.Rounded.GridView, "Genres", currentView == LibraryView.GENRES) { onSelectView(LibraryView.GENRES) }
-            DrawerRow(Icons.AutoMirrored.Rounded.PlaylistPlay, "Playlists", currentView == LibraryView.PLAYLISTS) { onSelectView(LibraryView.PLAYLISTS) }
-            DrawerRow(Icons.Rounded.FavoriteBorder, "Favorite Songs", currentView == LibraryView.FAVORITES) { onSelectView(LibraryView.FAVORITES) }
+            DrawerRow(Icons.Rounded.CalendarToday, "Years", currentView == LibraryView.YEARS) { pick(LibraryView.YEARS) }
+            DrawerRow(Icons.Rounded.GridView, "Genres", currentView == LibraryView.GENRES) { pick(LibraryView.GENRES) }
+            DrawerRow(Icons.AutoMirrored.Rounded.PlaylistPlay, "Playlists", currentView == LibraryView.PLAYLISTS) { pick(LibraryView.PLAYLISTS) }
+            DrawerRow(Icons.Rounded.FavoriteBorder, "Favorite Songs", currentView == LibraryView.FAVORITES) { pick(LibraryView.FAVORITES) }
             DrawerLabel("MORE")
-            DrawerRow(Icons.Rounded.AutoAwesome, "Smart Playlists", currentView == LibraryView.SMART_PLAYLISTS) { onSelectView(LibraryView.SMART_PLAYLISTS) }
-            DrawerRow(Icons.Rounded.NewReleases, "Recently Added", currentView == LibraryView.RECENTLY_ADDED) { onSelectView(LibraryView.RECENTLY_ADDED) }
-            DrawerRow(Icons.Rounded.History, "Recently Played", currentView == LibraryView.RECENTLY_PLAYED) { onSelectView(LibraryView.RECENTLY_PLAYED) }
-            DrawerRow(Icons.Rounded.Radio, "Radio", currentView == LibraryView.RADIO) { onSelectView(LibraryView.RADIO) }
-            DrawerRow(Icons.Rounded.Storage, "SMB / NAS", currentView == LibraryView.SMB_NAS) { onSelectView(LibraryView.SMB_NAS) }
-            DrawerRow(Icons.Rounded.Dns, "FTP / SFTP", currentView == LibraryView.FTP_SFTP) { onSelectView(LibraryView.FTP_SFTP) }
-            DrawerRow(Icons.Rounded.Extension, "Add-ons", currentView == LibraryView.ADDONS) { onSelectView(LibraryView.ADDONS) }
+            DrawerRow(Icons.Rounded.AutoAwesome, "Smart Playlists", currentView == LibraryView.SMART_PLAYLISTS) { pick(LibraryView.SMART_PLAYLISTS) }
+            DrawerRow(Icons.Rounded.NewReleases, "Recently Added", currentView == LibraryView.RECENTLY_ADDED) { pick(LibraryView.RECENTLY_ADDED) }
+            DrawerRow(Icons.Rounded.History, "Recently Played", currentView == LibraryView.RECENTLY_PLAYED) { pick(LibraryView.RECENTLY_PLAYED) }
+            DrawerRow(Icons.Rounded.Radio, "Radio", currentView == LibraryView.RADIO) { pick(LibraryView.RADIO) }
+            DrawerRow(Icons.Rounded.Storage, "SMB / NAS", currentView == LibraryView.SMB_NAS) { pick(LibraryView.SMB_NAS) }
+            DrawerRow(Icons.Rounded.Dns, "FTP / SFTP", currentView == LibraryView.FTP_SFTP) { pick(LibraryView.FTP_SFTP) }
+            DrawerRow(Icons.Rounded.Extension, "Add-ons", currentView == LibraryView.ADDONS) { pick(LibraryView.ADDONS) }
             DrawerRow(Icons.Rounded.Groups, "Play Together", false) { onClose(); onNavigateToPlayTogether() }
+          }
             Spacer(Modifier.height(10.dp))
             PlaybackModeSelector(
                 currentMode = playbackMode,
@@ -985,17 +1012,17 @@ fun MinimalDrawerMenu(
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(58.dp)
-                .clip(RoundedCornerShape(29.dp))
+                .height(50.dp)
+                .clip(RoundedCornerShape(25.dp))
                 .background(Color.White.copy(alpha = 0.08f))
-                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(29.dp)),
+                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(25.dp)),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = { onClose(); onNavigateToSettings() }) {
-                Icon(Icons.Rounded.Palette, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(26.dp))
+                Icon(Icons.Rounded.Palette, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(22.dp))
             }
-            IconButton(onClick = { onSelectView(LibraryView.ADDONS) }) {
+            IconButton(onClick = { pick(LibraryView.ADDONS) }) {
                 Icon(Icons.Rounded.Download, null, tint = Color.White.copy(alpha = 0.9f), modifier = Modifier.size(26.dp))
             }
             IconButton(onClick = { onClose(); onNavigateToDsp() }) {
@@ -1012,20 +1039,17 @@ private fun androidx.compose.foundation.layout.RowScope.ModeSegment(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val tint = if (selected) MinGold else Color.White.copy(alpha = 0.8f)
-    Row(
+    val tint = if (selected) MinGold else Color.White.copy(alpha = 0.75f)
+    Box(
         Modifier
             .weight(1f)
-            .height(38.dp)
-            .clip(RoundedCornerShape(19.dp))
-            .background(if (selected) Color.White.copy(alpha = 0.16f) else Color.Transparent)
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(15.dp))
+            .background(if (selected) Color.White.copy(alpha = 0.18f) else Color.Transparent)
             .clickable(onClick = onClick),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+        contentAlignment = Alignment.Center
     ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(label, color = tint, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Icon(icon, label, tint = tint, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -1034,10 +1058,11 @@ private fun DrawerLabel(text: String) {
     Text(
         text,
         color = MinMuted,
-        fontSize = 12.sp,
-        letterSpacing = 2.sp,
+        fontSize = 11.sp,
+        letterSpacing = 1.5.sp,
         fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 10.dp, top = 18.dp, bottom = 6.dp)
+        maxLines = 1,
+        modifier = Modifier.padding(start = 8.dp, top = 14.dp, bottom = 4.dp)
     )
 }
 
@@ -1052,7 +1077,7 @@ private fun DrawerRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .height(48.dp)
+            .height(44.dp)
             .clip(shape)
             .then(
                 if (selected) Modifier
@@ -1061,15 +1086,20 @@ private fun DrawerRow(
                 else Modifier
             )
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp),
+            .padding(horizontal = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = if (selected) Color.White else Color.White.copy(alpha = 0.85f), modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(16.dp))
+        Icon(icon, null, tint = if (selected) Color.White else Color.White.copy(alpha = 0.85f), modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(10.dp))
+        // One line, shrinking a little if a long name still does not fit the narrow drawer.
+        var size by remember(label) { mutableStateOf(15f) }
         Text(
             label,
             color = if (selected) Color.White else Color.White.copy(alpha = 0.9f),
-            fontSize = 17.sp,
+            fontSize = size.sp,
+            maxLines = 1,
+            softWrap = false,
+            onTextLayout = { r -> if (r.didOverflowWidth && size > 10f) size -= 0.5f },
             fontWeight = if (selected) FontWeight.Bold else FontWeight.SemiBold
         )
     }
@@ -1093,6 +1123,77 @@ private val decadeColors: List<List<Color>> = listOf(
     listOf(Color(0xFFB34A0E), Color(0xFFA03A1E)),
     listOf(Color(0xFF237A3C), Color(0xFF1F6A4C))
 )
+
+/** The big gradient card at the top of the Minimal Home (audio and video): greeting, title, stat chips, menu button. */
+@Composable
+fun MinimalHeaderCard(
+    eyebrow: String,
+    title: String,
+    titleAccent: String,
+    chips: List<Triple<androidx.compose.ui.graphics.vector.ImageVector, Color, String>>,
+    onOpenDrawer: () -> Unit,
+) {
+    Box(
+        Modifier
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(30.dp))
+            .background(Brush.linearGradient(listOf(Color(0xFF6A3A6E), Color(0xFF473A86))))
+            .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(30.dp))
+            .padding(18.dp)
+    ) {
+        Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(42.dp).clip(CircleShape).background(MinCoral.copy(alpha = 0.18f)).border(1.dp, MinCoral.copy(alpha = 0.5f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.WbTwilight, null, tint = MinCoral, modifier = Modifier.size(22.dp))
+                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    eyebrow.uppercase(Locale.getDefault()),
+                    color = MinCoral, fontSize = 13.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, softWrap = false,
+                    modifier = Modifier.weight(1f)
+                )
+                Box(
+                    Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)).clickable(onClick = onOpenDrawer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Rounded.Menu, null, tint = Color.White, modifier = Modifier.size(24.dp))
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row {
+                Text(title, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
+                Text(titleAccent, color = MinMint, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold, maxLines = 1, softWrap = false)
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                chips.forEach { (icon, tint, text) -> StatChip(icon, tint, text) }
+            }
+        }
+    }
+}
+
+/** Section heading used by the Minimal screens (also by the video home). */
+@Composable
+fun MinimalSectionTitle(title: String, action: String? = null, onAction: () -> Unit = {}) =
+    SectionTitle(title, action, false, onAction)
+
+/** Flat tile with a gradient icon block, shared with the video home. */
+@Composable
+fun MinimalQuickTile(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    colors: List<Color>,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) = QuickTile(icon, label, colors, modifier, onClick)
 
 @Composable
 private fun SectionTitle(title: String, action: String? = null, chevron: Boolean = false, onAction: () -> Unit = {}) {
@@ -1126,36 +1227,37 @@ private fun QuickTile(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
-            Modifier.width(58.dp).fillMaxHeight().background(Brush.linearGradient(colors)),
+            Modifier.width(48.dp).fillMaxHeight().background(Brush.linearGradient(colors)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, null, tint = Color.White, modifier = Modifier.size(28.dp))
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(24.dp))
         }
         Text(
             label,
             color = Color.White,
-            fontSize = 15.sp,
+            fontSize = 13.5.sp,
+            lineHeight = 16.sp,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(horizontal = 12.dp)
+            modifier = Modifier.weight(1f).padding(horizontal = 10.dp)
         )
     }
 }
 
 @Composable
-private fun StatChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, text: String) {
+internal fun StatChip(icon: androidx.compose.ui.graphics.vector.ImageVector, tint: Color, text: String) {
     Row(
         Modifier
             .clip(RoundedCornerShape(20.dp))
             .background(Color.White.copy(alpha = 0.08f))
             .border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(20.dp))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(horizontal = 10.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, null, tint = tint, modifier = Modifier.size(16.dp))
-        Spacer(Modifier.width(6.dp))
-        Text(text, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Icon(icon, null, tint = tint, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(text, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1, softWrap = false)
     }
 }
 
@@ -1281,49 +1383,17 @@ fun LazyListScope.minimalHomeItems(
     onArtist: (String) -> Unit,
 ) {
     item(key = "min_header") {
-        Box(
-            Modifier
-                .padding(horizontal = 16.dp, vertical = 8.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(30.dp))
-                .background(Brush.linearGradient(listOf(Color(0xFF6A3A6E), Color(0xFF473A86))))
-                .border(1.dp, Color.White.copy(alpha = 0.18f), RoundedCornerShape(30.dp))
-                .padding(18.dp)
-        ) {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(42.dp).clip(CircleShape).background(MinCoral.copy(alpha = 0.18f)).border(1.dp, MinCoral.copy(alpha = 0.5f), CircleShape),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Rounded.WbTwilight, null, tint = MinCoral, modifier = Modifier.size(22.dp))
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        greeting.uppercase(Locale.getDefault()),
-                        color = MinCoral, fontSize = 13.sp, letterSpacing = 3.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Box(
-                        Modifier.size(46.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.14f)).clickable(onClick = onOpenDrawer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(Icons.Rounded.Menu, null, tint = Color.White, modifier = Modifier.size(24.dp))
-                    }
-                }
-                Spacer(Modifier.height(14.dp))
-                Row {
-                    Text("Welcome, ", color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
-                    Text("back", color = MinMint, fontSize = 34.sp, fontWeight = FontWeight.ExtraBold)
-                }
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatChip(Icons.Rounded.MusicNote, MinPink, "%,d songs".format(Locale.getDefault(), songCount))
-                    StatChip(Icons.Rounded.Favorite, Color(0xFFFF5A6E), "$favoriteCount liked")
-                    StatChip(Icons.Rounded.Album, MinViolet, "$albumCount albums")
-                }
-            }
-        }
+        MinimalHeaderCard(
+            eyebrow = greeting,
+            title = "Welcome, ",
+            titleAccent = "back",
+            chips = listOf(
+                Triple(Icons.Rounded.MusicNote, MinPink, "%,d songs".format(Locale.getDefault(), songCount)),
+                Triple(Icons.Rounded.Favorite, Color(0xFFFF5A6E), "$favoriteCount liked"),
+                Triple(Icons.Rounded.Album, MinViolet, "$albumCount albums")
+            ),
+            onOpenDrawer = onOpenDrawer
+        )
     }
 
     item(key = "min_chips") {

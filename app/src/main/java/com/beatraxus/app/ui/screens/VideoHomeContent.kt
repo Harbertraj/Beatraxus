@@ -77,6 +77,15 @@ private val CinemaCyan = Color(0xFF00F2FF)
 private val CinemaBlue = Color(0xFF0A84FF)
 private val CinemaAmber = Color(0xFFFFAB40)
 
+/** True while the Minimal theme is active; set around the home list in MainScreen. */
+internal val LocalVideoMinimal = androidx.compose.runtime.staticCompositionLocalOf { false }
+
+@Composable
+private fun vCyan(): Color = if (LocalVideoMinimal.current) Color(0xFFFF4D9D) else CinemaCyan
+
+@Composable
+private fun vBlue(): Color = if (LocalVideoMinimal.current) Color(0xFF9B5CF6) else CinemaBlue
+
 /**
  * Video-mode home. The "play last video" button now lives INSIDE the hero card
  * (bottom-right corner of the card) instead of floating over the whole screen.
@@ -89,7 +98,8 @@ fun LazyListScope.videoHomeItems(
     videos: List<Video>,
     videoFolders: List<com.beatraxus.app.model.VideoFolder>,
     greeting: String,
-    onConnectCloudVideo: (com.beatraxus.app.ui.components.CloudVideoProvider) -> Unit = {}
+    onConnectCloudVideo: (com.beatraxus.app.ui.components.CloudVideoProvider) -> Unit = {},
+    onOpenDrawer: () -> Unit = {}
 ) {
     val libMode = uiState.libraryMode
     val resumePair = uiState.continueWatching.firstOrNull()
@@ -97,10 +107,24 @@ fun LazyListScope.videoHomeItems(
 
     // ── Greeting + stats ────────────────────────────────────────────────
     item(key = "VIDEO_GREETING") {
+      if (LocalVideoMinimal.current) {
+        val totalMs = remember(videos) { videos.sumOf { it.durationMs } }
+        com.beatraxus.app.ui.minimal.MinimalHeaderCard(
+            eyebrow = greeting,
+            title = "Your ",
+            titleAccent = "Cinema",
+            chips = buildList {
+                add(Triple(Icons.Rounded.VideoLibrary, Color(0xFFFF4D9D), "${videos.size} videos"))
+                add(Triple(Icons.Rounded.FolderCopy, Color(0xFFFFAB40), "${videoFolders.size} folders"))
+                if (totalMs > 0) add(Triple(Icons.Rounded.AccessTime, Color(0xFF9B5CF6), formatHours(totalMs).removeSuffix(" total")))
+            },
+            onOpenDrawer = onOpenDrawer
+        )
+      } else {
         Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp)) {
             Text(
                 text = greeting.uppercase(),
-                color = CinemaCyan,
+                color = vCyan(),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = 3.sp
@@ -121,6 +145,7 @@ fun LazyListScope.videoHomeItems(
                 if (totalMs > 0) StatPill(formatHours(totalMs))
             }
         }
+      }
     }
 
     // ── Live TV (available in every library mode, so it sits above the cloud gate) ───
@@ -166,13 +191,28 @@ fun LazyListScope.videoHomeItems(
 
     // ── Library shortcuts ───────────────────────────────────────────────
     item(key = "VIDEO_SHORTCUTS") {
+      if (LocalVideoMinimal.current) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                com.beatraxus.app.ui.minimal.MinimalQuickTile(Icons.Rounded.VideoLibrary, "All Videos", listOf(Color(0xFFE23DA6), Color(0xFF9B5CF6)), Modifier.weight(1f)) { viewModel.setLibraryView(LibraryView.VIDEO_ALL) }
+                com.beatraxus.app.ui.minimal.MinimalQuickTile(Icons.Rounded.FolderCopy, "Folders", listOf(Color(0xFFFFB347), Color(0xFFFFD54F)), Modifier.weight(1f)) { viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                com.beatraxus.app.ui.minimal.MinimalQuickTile(Icons.Rounded.NewReleases, "Recently Added", listOf(Color(0xFFFF8A4C), Color(0xFFFFA45C)), Modifier.weight(1f)) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_ADDED) }
+                com.beatraxus.app.ui.minimal.MinimalQuickTile(Icons.Rounded.History, "Recently Played", listOf(Color(0xFF22B573), Color(0xFF2ED69A)), Modifier.weight(1f)) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
+            }
+        }
+      } else {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ShortcutTile(
-                    "All Videos", Icons.Rounded.VideoLibrary, CinemaBlue,
+                    "All Videos", Icons.Rounded.VideoLibrary, vBlue(),
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_ALL) }
                 ShortcutTile(
@@ -191,13 +231,14 @@ fun LazyListScope.videoHomeItems(
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
             }
         }
+      }
         Spacer(Modifier.height(8.dp))
     }
 
     // ── Continue watching ───────────────────────────────────────────────
     if (uiState.continueWatching.size > 1) {
         item(key = "VIDEO_CONTINUE") {
-            SectionTitle("Continue Watching", "Pick up where you left off")
+            VSection("Continue Watching", "Pick up where you left off")
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -212,11 +253,11 @@ fun LazyListScope.videoHomeItems(
     // ── Folders ─────────────────────────────────────────────────────────
     if (videoFolders.isNotEmpty()) {
         item(key = "VIDEO_FOLDERS_HOME") {
-            SectionTitle("Folders", "${videoFolders.size} locations") {
+            VSection("Folders", "${videoFolders.size} locations") {
                 viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS)
             }
             val palette = listOf(
-                CinemaAmber, CinemaBlue, Color(0xFFBF5AF2), Color(0xFF30D158), Color(0xFFFF5E62)
+                CinemaAmber, vBlue(), Color(0xFFBF5AF2), Color(0xFF30D158), Color(0xFFFF5E62)
             )
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
@@ -236,7 +277,7 @@ fun LazyListScope.videoHomeItems(
     // ── Latest videos (2-up grid) ───────────────────────────────────────
     if (videos.isNotEmpty()) {
         item(key = "VIDEO_LATEST_TITLE") {
-            SectionTitle("Latest Videos", "See all") {
+            VSection("Latest Videos", "See all") {
                 viewModel.setLibraryView(LibraryView.VIDEO_ALL)
             }
         }
@@ -284,7 +325,7 @@ private fun VideoHeroCard(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp)
-            .shadow(20.dp, RoundedCornerShape(30.dp), ambientColor = CinemaCyan, spotColor = CinemaBlue)
+            .shadow(if (LocalVideoMinimal.current) 0.dp else 20.dp, RoundedCornerShape(30.dp), ambientColor = vCyan(), spotColor = vBlue())
             .clip(RoundedCornerShape(30.dp))
             .aspectRatio(16f / 10.5f)
             .background(Color(0xFF0B1220))
@@ -325,7 +366,7 @@ private fun VideoHeroCard(
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(Modifier.size(7.dp).background(CinemaCyan, CircleShape))
+            Box(Modifier.size(7.dp).background(vCyan(), CircleShape))
             Spacer(Modifier.width(8.dp))
             Text(
                 if (hasHistory) "LAST PLAYED" else "START WATCHING",
@@ -386,14 +427,14 @@ private fun VideoHeroCard(
                         val s = 0.75f + ring * 0.45f
                         scaleX = s; scaleY = s; alpha = (1f - ring) * 0.55f
                     }
-                    .border(2.dp, CinemaCyan, CircleShape)
+                    .border(2.dp, vCyan(), CircleShape)
             )
             Box(
                 modifier = Modifier
                     .size(58.dp)
-                    .shadow(12.dp, CircleShape, ambientColor = CinemaCyan, spotColor = CinemaCyan)
+                    .shadow(12.dp, CircleShape, ambientColor = vCyan(), spotColor = vCyan())
                     .clip(CircleShape)
-                    .background(Brush.linearGradient(listOf(CinemaCyan, CinemaBlue)))
+                    .background(Brush.linearGradient(listOf(vCyan(), vBlue())))
                     .clickable(role = Role.Button, onClick = onPlay)
                     .semantics { contentDescription = if (isResume) "Resume last video" else "Play video" },
                 contentAlignment = Alignment.Center
@@ -415,7 +456,7 @@ private fun VideoHeroCard(
                     Modifier
                         .fillMaxWidth(progress)
                         .fillMaxHeight()
-                        .background(Brush.horizontalGradient(listOf(CinemaCyan, CinemaBlue)))
+                        .background(Brush.horizontalGradient(listOf(vCyan(), vBlue())))
                 )
             }
         }
@@ -439,6 +480,13 @@ private fun StatPill(text: String) {
 }
 
 @Composable
+private fun VSection(title: String, sub: String? = null, onClick: (() -> Unit)? = null) {
+    if (LocalVideoMinimal.current) {
+        com.beatraxus.app.ui.minimal.MinimalSectionTitle(title, if (onClick != null) sub else null) { onClick?.invoke() }
+    } else SectionTitle(title, sub, onClick)
+}
+
+@Composable
 private fun SectionTitle(title: String, sub: String? = null, onClick: (() -> Unit)? = null) {
     Row(
         Modifier
@@ -452,7 +500,7 @@ private fun SectionTitle(title: String, sub: String? = null, onClick: (() -> Uni
                 Modifier
                     .width(4.dp)
                     .height(20.dp)
-                    .background(Brush.verticalGradient(listOf(CinemaCyan, CinemaBlue)), RoundedCornerShape(2.dp))
+                    .background(Brush.verticalGradient(listOf(vCyan(), vBlue())), RoundedCornerShape(2.dp))
             )
             Spacer(Modifier.width(10.dp))
             Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
@@ -460,7 +508,7 @@ private fun SectionTitle(title: String, sub: String? = null, onClick: (() -> Uni
         if (sub != null) {
             Text(
                 sub,
-                color = if (onClick != null) CinemaCyan else Color.White.copy(0.5f),
+                color = if (onClick != null) vCyan() else Color.White.copy(0.5f),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
@@ -549,7 +597,7 @@ private fun ContinueCard(
                 Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp)
                     .background(Color.White.copy(0.2f))
             ) {
-                Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(CinemaCyan))
+                Box(Modifier.fillMaxWidth(progress).fillMaxHeight().background(vCyan()))
             }
         }
         Spacer(Modifier.height(8.dp))
