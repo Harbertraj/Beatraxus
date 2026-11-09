@@ -128,6 +128,7 @@ import com.beatraxus.app.repository.RadioStationCache
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.beatraxus.app.ui.components.*
+import com.beatraxus.app.ui.minimal.*
 import com.beatraxus.app.ui.theme.*
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import androidx.palette.graphics.Palette
@@ -803,7 +804,29 @@ fun MainScreen(
                     }
                     .clip(RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp))
             ) {
-                SlideDrawerMenu(
+                if (uiState.appearance.isMinimal && uiState.playbackMode == PlaybackMode.AUDIO) MinimalDrawerMenu(
+                    currentView = uiState.currentView,
+                    libraryMode = uiState.libraryMode,
+                    playbackMode = uiState.playbackMode,
+                    onSelectView = { view -> viewModel.setLibraryView(view) },
+                    onSetLibraryMode = { mode ->
+                        showDrawer = false
+                        if (uiState.libraryMode != mode) viewModel.setLibraryMode(mode)
+                    },
+                    onSetPlaybackMode = { mode ->
+                        showDrawer = false
+                        if (uiState.playbackMode != mode) {
+                            if (mode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
+                                onRequestPermissions { viewModel.setPlaybackMode(mode) }
+                            } else viewModel.setPlaybackMode(mode)
+                        }
+                    },
+                    onNavigateToSettings = onNavigateToSettings,
+                    onNavigateToDsp = onNavigateToDsp,
+                    onNavigateToPlayTogether = onNavigateToPlayTogether,
+                    onClose = { showDrawer = false }
+
+                ) else SlideDrawerMenu(
                     currentView = uiState.currentView,
                     libraryMode = uiState.libraryMode,
                     playbackMode = uiState.playbackMode,
@@ -1030,6 +1053,16 @@ fun MainScreen(
                     topBar = {},
                     contentWindowInsets = WindowInsets.systemBars
                 ) { paddingValues ->
+                    val isMinimalLayout = uiState.appearance.isMinimal && uiState.playbackMode == PlaybackMode.AUDIO
+                    val minimalPage = isMinimalLayout && uiState.currentView in minimalPageViews &&
+                        !uiState.isSearchActive && !uiState.isMultiSelectMode
+                    val minimalHideHeader = isMinimalLayout &&
+                        (uiState.currentView == LibraryView.HOME || minimalPage)
+                    val minimalActions = MinimalActions(
+                        onBack = { viewModel.setLibraryView(LibraryView.HOME) },
+                        onSearch = { viewModel.setSearchActive(true) },
+                        onFilter = { r -> sortAnchor = r; activeMainSheet = MainSheetType.SORT }
+                    )
                     Box(Modifier.fillMaxSize()) {
                     if (isRichDetailView) {
                         com.beatraxus.app.ui.components.DetailBackdrop(
@@ -1051,6 +1084,7 @@ fun MainScreen(
                             }
                         )
                     }
+                    if (minimalHideHeader) MinimalBackdrop(uiState.currentView)
                     // Removed full-screen mode transition to align with library navigation style
                         Column(
                             Modifier
@@ -1062,7 +1096,7 @@ fun MainScreen(
                                 )
                         ) {
                             // New Integrated Header - Always Visible
-                            Box(
+                            if (minimalHideHeader) {} else Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -1572,7 +1606,7 @@ fun MainScreen(
                             // Action Icons Row
                             AnimatedVisibility(
                                 // Radio has its own screen without the shuffle / sort / cloud / density strip.
-                                visible = (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO &&
+                                visible = !minimalPage && (headerVisible || activeItemsCount <= 8) && uiState.currentView != LibraryView.HOME && uiState.currentView != LibraryView.RADIO &&
                                     uiState.currentView != LibraryView.LIVE_TV &&
                                     (!isRichDetailView || uiState.isMultiSelectMode),
                                 enter = fadeIn(tween(250)) + expandVertically(tween(250)),
@@ -1791,7 +1825,7 @@ fun MainScreen(
                                         ) { (targetView, _) ->
                                             when (targetView) {
                                                 LibraryView.HOME -> {
-                                                    HomeScreen(viewModel, uiState, homeListState, onNavigateToSettings)
+                                                    HomeScreen(viewModel, uiState, homeListState, onNavigateToSettings, onOpenDrawer = { showDrawer = true })
                                                 }
                                                 LibraryView.CLOUD -> {
                                                     val accounts = uiState.driveAccounts.isNotEmpty() ||
@@ -1933,7 +1967,11 @@ fun MainScreen(
                                                 }
                                                 LibraryView.ALBUMS -> {
                                                     val isGridView = trackLayoutDensity <= 2 // In this view, zoom affects item size but not layout type, OR we can implement something similar
-                                                    Box(Modifier.fillMaxSize()) {
+                                                    if (minimalPage) MinimalAlbumsPage(
+                                                        albums = albums, songs = songs, actions = minimalActions,
+                                                        onOpen = { viewModel.setLibraryView(LibraryView.ALBUM_DETAIL, it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) }
+                                                    ) else Box(Modifier.fillMaxSize()) {
                                                         LazyVerticalGrid(
                                                             state = albumsGridState,
                                                             columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -2112,7 +2150,11 @@ items(albumSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.ARTISTS -> {
-                                                    Box(Modifier.fillMaxSize()) {
+                                                    if (minimalPage) MinimalArtistsPage(
+                                                        artists = artists, actions = minimalActions,
+                                                        onOpen = { viewModel.setLibraryView(LibraryView.ARTIST_DETAIL, it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) }
+                                                    ) else Box(Modifier.fillMaxSize()) {
                                                         LazyVerticalGrid(
                                                             state = artistsGridState,
                                                             columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
@@ -2292,7 +2334,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.FOLDERS -> {
-                                                    LazyVerticalGrid(
+                                                    if (minimalPage) MinimalFoldersPage(
+                                                        folders = folders, songs = songs, actions = minimalActions,
+                                                        onOpen = { path, name -> viewModel.navigateToFolder(path, name) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) }
+                                                    ) else LazyVerticalGrid(
                                                         state = foldersGridState,
                                                         columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
                                                         contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
@@ -2433,7 +2479,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.YEARS -> {
-                                                    LazyVerticalGrid(
+                                                    if (minimalPage) MinimalYearsPage(
+                                                        years = years, actions = minimalActions,
+                                                        onOpen = { viewModel.setLibraryView(LibraryView.YEAR_DETAIL, it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) }
+                                                    ) else LazyVerticalGrid(
                                                         state = yearsGridState,
                                                         columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
                                                         contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
@@ -2573,7 +2623,11 @@ items(artistSongs, key = { it.id }) { song ->
                                                     }
                                                 }
                                                 LibraryView.GENRES -> {
-                                                    LazyVerticalGrid(
+                                                    if (minimalPage) MinimalGenresPage(
+                                                        genres = genres, actions = minimalActions,
+                                                        onOpen = { viewModel.setLibraryView(LibraryView.GENRE_DETAIL, it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) }
+                                                    ) else LazyVerticalGrid(
                                                         state = genresGridState,
                                                         columns = GridCells.Fixed(categoryGridColumns.coerceIn(1, 5)),
                                                         contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 120.dp),
@@ -2713,7 +2767,12 @@ items(artistSongs, key = { it.id }) { song ->
                                                 }
                                                 LibraryView.PLAYLISTS -> {
                                                     val shownPlaylists = if (isVideoPlaylistMode) videoPlaylists else playlists
-                                                    if (shownPlaylists.isEmpty()) {
+                                                    if (minimalPage && !isVideoPlaylistMode) MinimalPlaylistsPage(
+                                                        playlists = playlists, actions = minimalActions,
+                                                        onOpen = { viewModel.setLibraryView(LibraryView.PLAYLIST_DETAIL, it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleItemSelection(it) },
+                                                        onCreate = { playlistDialogSong = null; showPlaylistDialog = true }
+                                                    ) else if (shownPlaylists.isEmpty()) {
                                                         // ...
                                                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -3075,7 +3134,14 @@ items(artistSongs, key = { it.id }) { song ->
                                                 LibraryView.FAVORITES -> {
                                                     val favSongs = songs.filter { favorites.contains(it.id) }
                                                     val isListView = trackLayoutDensity <= 2
-                                                    AnimatedContent(
+                                                    if (minimalPage) MinimalSongsPage(
+                                                        title = "Favorites", songs = favSongs, favorites = favorites,
+                                                        currentSongId = uiState.currentSong?.id, actions = minimalActions, likedHero = true,
+                                                        onPlayAt = { viewModel.playList(favSongs, it) },
+                                                        onShuffle = { if (favSongs.isNotEmpty()) viewModel.playList(favSongs.shuffled(), 0) },
+                                                        onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleSongSelection(it.id) }
+                                                    ) else AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
                                                             (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
@@ -3203,7 +3269,14 @@ items(artistSongs, key = { it.id }) { song ->
                                                 else -> {
                                                     // Library list or grid based on zoom
                                                     val isListView = trackLayoutDensity <= 2
-                                                    AnimatedContent(
+                                                    if (minimalPage && targetView == LibraryView.ALL_SONGS) MinimalSongsPage(
+                                                        title = "All Songs", songs = songs, favorites = favorites,
+                                                        currentSongId = uiState.currentSong?.id, actions = minimalActions, likedHero = false,
+                                                        onPlayAt = { viewModel.playList(songs, it) },
+                                                        onShuffle = { viewModel.shuffleAndPlay() },
+                                                        onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                                        onLongPress = { viewModel.setMultiSelectMode(true); viewModel.toggleSongSelection(it.id) }
+                                                    ) else AnimatedContent(
                                                         targetState = isListView,
                                                         transitionSpec = {
                                                             (fadeIn(tween(200)) + scaleIn(initialScale = 0.98f, animationSpec = tween(200)))
@@ -3328,13 +3401,47 @@ items(artistSongs, key = { it.id }) { song ->
                                 } // end Column
                             } // end mode AnimatedContent
 
+                                if (isMinimalLayout && !showFullPlayer && !uiState.isSearchActive && !uiState.isMultiSelectMode) {
+
+                                    MinimalBottomNav(
+
+                                        currentView = uiState.currentView,
+
+                                        modifier = Modifier
+
+                                            .align(Alignment.BottomCenter)
+
+                                            .zIndex(21f)
+
+                                            .padding(bottom = paddingValues.calculateBottomPadding() + 10.dp)
+
+                                            .padding(horizontal = 16.dp),
+
+                                        onHome = { viewModel.setLibraryView(LibraryView.HOME) },
+
+                                        onSearch = { viewModel.setSearchActive(true) },
+
+                                        onLibrary = {
+
+                                            if (uiState.currentView == LibraryView.HOME || uiState.currentView == LibraryView.RADIO)
+
+                                                viewModel.setLibraryView(LibraryView.ALL_SONGS)
+
+                                        },
+
+                                        onRadio = { viewModel.setLibraryView(LibraryView.RADIO) }
+
+                                    )
+
+                                }
+
                                 // Unified Now Playing Bar (Adaptive for Audio & Video)
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomCenter)
                                         .fillMaxWidth()
                                         .zIndex(20f)
-                                        .padding(bottom = paddingValues.calculateBottomPadding() + 12.dp)
+                                        .padding(bottom = paddingValues.calculateBottomPadding() + (if (isMinimalLayout && !uiState.isSearchActive) 78.dp else 12.dp))
                                         .padding(horizontal = 12.dp)
                                 ) {
                                     val isVisible = uiState.currentSong != null && !showFullPlayer
@@ -4946,7 +5053,8 @@ fun HomeScreen(
     viewModel: PlayerViewModel,
     uiState: com.beatraxus.app.model.PlayerUiState,
     listState: LazyListState,
-    onNavigateToSettings: () -> Unit = {}
+    onNavigateToSettings: () -> Unit = {},
+    onOpenDrawer: () -> Unit = {}
 ) {
     val recentlyPlayed by viewModel.homeRecentlyPlayed.collectAsStateWithLifecycle()
     val quickPicks by viewModel.homeQuickPicks.collectAsStateWithLifecycle()
@@ -5058,7 +5166,7 @@ fun HomeScreen(
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 140.dp)
+        contentPadding = PaddingValues(bottom = if (uiState.appearance.isMinimal) 210.dp else 140.dp)
     ) {
         if (isVideoMode) {
             // Video Mode Home (hero card with integrated play button) -> VideoHomeContent.kt
@@ -5072,6 +5180,34 @@ fun HomeScreen(
                     com.beatraxus.app.ui.components.SettingsDeepLink.request(p.settingsPath)
                     onNavigateToSettings()
                 }
+            )
+        } else if (uiState.appearance.isMinimal) {
+            minimalHomeItems(
+                greeting = greeting,
+                songCount = allSongs.size,
+                favoriteCount = favorites.size,
+                albumCount = albums.size,
+                heroSong = heroSong,
+                quickPicks = quickPicks,
+                recentlyPlayed = recentlyPlayed,
+                hiResSongs = hiResSongs,
+                rediscoverSongs = rediscoverSongs,
+                artists = artists,
+                decades = decadeBuckets,
+                onOpenDrawer = onOpenDrawer,
+                onNavigate = { viewModel.setLibraryView(it) },
+                onPlayHero = { heroSong?.let { viewModel.playSong(it) } },
+                onLiked = { viewModel.setLibraryView(LibraryView.FAVORITES) },
+                onShuffleAll = { viewModel.shuffleAndPlay() },
+                onRecentlyAdded = { viewModel.setLibraryView(LibraryView.RECENTLY_ADDED) },
+                onHiResVault = { if (hiResSongs.isNotEmpty()) viewModel.playList(hiResSongs, 0) },
+                onRediscover = { if (rediscoverSongs.isNotEmpty()) viewModel.playList(rediscoverSongs, 0) },
+                onPlayList = { list, index -> viewModel.playList(list, index) },
+                onMood = { label ->
+                    val mood = allMoods.firstOrNull { it.label == label }
+                    if (mood == null) showAllMoodsDialog = true else playMood(mood)
+                },
+                onArtist = { viewModel.setLibraryView(LibraryView.ARTIST_DETAIL, it) }
             )
         } else {
             uiState.appearance.homeScreenSectionsOrder.forEach { sectionKey ->
