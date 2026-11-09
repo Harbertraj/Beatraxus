@@ -5721,8 +5721,9 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         val next = upcoming.take(LyricsUpgradePolicy.PRELOAD_NEXT)
         preloadLyricsJob?.cancel()
         preloadLyricsJob = viewModelScope.launch {
-            awaitUiSettled(0L)
-            lyricsRepository.preloadWindow(current, next)
+            // Preloading neighbours is background work: let the song-change animation and art load finish first.
+            awaitUiSettled(1500L)
+            withContext(Dispatchers.IO) { lyricsRepository.preloadWindow(current, next) }
         }
     }
 

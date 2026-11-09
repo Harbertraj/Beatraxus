@@ -243,8 +243,9 @@ fun NowPlayingScreen(
         val blurIntensity = uiState.appearance.nowPlayingBlurIntensity
         LaunchedEffect(song.albumArtUri, nextSong?.albumArtUri, next2Song?.albumArtUri, prevSong?.albumArtUri, blurIntensity) {
             val loader = context.imageLoader
+            val hdOn = uiState.appearance.nowPlayingHdCover
             for (s in listOfNotNull(song, nextSong, prevSong, next2Song)) {
-                val art = s.albumArtUri ?: continue
+                val art = (if (hdOn) cachedHdCover(context, s.id.toString()) else null) ?: s.albumArtUri ?: continue
                 loader.enqueue(
                     ImageRequest.Builder(context).data(art)
                         .size(600, 600).precision(Precision.INEXACT).build()
@@ -2509,7 +2510,7 @@ private fun FullCoverArtBackground(
 }
 
 /** Longest the previous cover stays on screen while the next one prepares. */
-private const val FULL_COVER_READY_TIMEOUT_MS = 0L
+private const val FULL_COVER_READY_TIMEOUT_MS = 100L
 
 /**
  * Song-change animation for the Full Cover Art cover (the whole full-width cover moves, not a
@@ -2519,28 +2520,28 @@ private fun fullCoverTransition(transform: AlbumArtTransform, direction: Int): C
     val dir = if (direction >= 0) 1 else -1
     return when (transform) {
         AlbumArtTransform.SOFT_FADE ->
-            (fadeIn(tween(220, easing = LinearOutSlowInEasing)) +
-                scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 1.04f))
-                .togetherWith(fadeOut(tween(160)))
+            (fadeIn(tween(380, easing = LinearOutSlowInEasing)) +
+                scaleIn(tween(420, easing = FastOutSlowInEasing), initialScale = 1.05f))
+                .togetherWith(fadeOut(tween(300)))
         // Next: current cover leaves to the left, the next one arrives from the right.
         // Previous: current cover leaves to the right, the previous one arrives from the left.
         AlbumArtTransform.SLIDE ->
-            slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it * dir }
-                .togetherWith(slideOutHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it * dir })
+            slideInHorizontally(tween(380, easing = FastOutSlowInEasing)) { it * dir }
+                .togetherWith(slideOutHorizontally(tween(380, easing = FastOutSlowInEasing)) { -it * dir })
         AlbumArtTransform.DEPTH ->
-            (scaleIn(tween(260, easing = FastOutSlowInEasing), initialScale = 0.9f) +
-                slideInVertically(tween(260, easing = FastOutSlowInEasing)) { it / 10 } +
-                fadeIn(tween(220)))
+            (scaleIn(tween(400, easing = FastOutSlowInEasing), initialScale = 0.88f) +
+                slideInVertically(tween(400, easing = FastOutSlowInEasing)) { it / 10 } +
+                fadeIn(tween(340)))
                 .togetherWith(
-                    scaleOut(tween(220, easing = FastOutSlowInEasing), targetScale = 0.94f) +
-                        fadeOut(tween(160))
+                    scaleOut(tween(340, easing = FastOutSlowInEasing), targetScale = 0.93f) +
+                        fadeOut(tween(260))
                 )
         AlbumArtTransform.POP ->
             (scaleIn(
-                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
-                initialScale = 0.86f
-            ) + fadeIn(tween(140)))
-                .togetherWith(fadeOut(tween(120)))
+                spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow),
+                initialScale = 0.84f
+            ) + fadeIn(tween(200)))
+                .togetherWith(fadeOut(tween(180)))
         AlbumArtTransform.NONE ->
             EnterTransition.None.togetherWith(ExitTransition.None)
     }
