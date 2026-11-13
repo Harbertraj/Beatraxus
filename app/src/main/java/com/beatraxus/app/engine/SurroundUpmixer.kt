@@ -1,6 +1,7 @@
 package com.beatraxus.app.engine
 
 import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
+import com.beatraxus.app.model.SurroundMoveMix
 import com.beatraxus.app.model.SurroundTuning
 import com.beatraxus.app.model.discreteChannelTrimIndex
 import com.beatraxus.app.model.sanitizeSurroundTrims
@@ -10,6 +11,7 @@ import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlin.math.tanh
 
 /**
  * Stereo (or mono) -> 5.1 / 7.1 upmixer. Pure Kotlin, no Android dependencies, allocation-free in [process].
@@ -51,6 +53,18 @@ internal class SurroundUpmixer(sampleRate: Int) {
     private val smoothing: Float = (1.0 - exp(-1.0 / (SMOOTH_SECONDS * sr))).toFloat()
     private var configured = false
 
+    // --- 360° move (stereo sources): the whole song is panned around the room, see SurroundMoveMix ---
+    private val moveTargetL = FloatArray(CHANNELS_UI)
+    private val moveTargetR = FloatArray(CHANNELS_UI)
+    private val moveCurrentL = FloatArray(CHANNELS_UI)
+    private val moveCurrentR = FloatArray(CHANNELS_UI)
+    private var moveCentreTarget = 0f
+    private var moveCentreCurrent = 0f
+    private var moveWanted = 0f
+    private var moveBlend = 0f
+    private var moveInitialised = false
+    private val moveSmoothing: Float = (1.0 - exp(-1.0 / (MOVE_SMOOTH_SECONDS * sr))).toFloat()
+
     // --- ambience delay (shared ring holding the side signal) ---
     private val delayLen = (sr * MAX_DELAY_SECONDS).toInt() + 4
     private val delayBuf = FloatArray(delayLen)
@@ -82,13 +96,13 @@ internal class SurroundUpmixer(sampleRate: Int) {
      *
      * @param outChannels 6 (5.1) or 8 (7.1)
      * @param trimsDb eight values in UI order L R C SL SR BL BR SW
-     * @param positionDb optional 360° move offsets (dB, same order) added on top of [trimsDb]; null = no move
+     * @param move optional 360° move routing for this layout; null = no move (the sound is exactly the upmix)
      */
     fun configure(
         outChannels: Int,
         tuning: SurroundTuning,
         trimsDb: List<Float>,
-        positionDb: List<Float>? = null
+        move: SurroundMoveMix? = null
     ) {
         require(outChannels == 6 || outChannels == 8) { "Unsupported surround channel count: $outChannels" }
         this.outChannels = outChannels
@@ -107,12 +121,33 @@ internal class SurroundUpmixer(sampleRate: Int) {
 
         val trims = sanitizeSurroundTrims(trimsDb)
         for (i in 0 until CHANNELS_UI) {
-            targetGain[i] = 10.0.pow((trims[i] + positionOffset(positionDb, i)) / 20.0).toFloat()
+            targetGain[i] = 10.0.pow(trims[i] / 20.0).toFloat()
         }
         if (!configured) {
             targetGain.copyInto(currentGain)
             configured = true
         }
+        configureMove(move)
+    }
+
+    private fun configureMove(move: SurroundMoveMix?) {
+        if (move == null) {
+            moveWanted = 0f
+            return
+        }
+        for (i in 0 until CHANNELS_UI) {
+            moveTargetL[i] = finiteOrZero(move.left.getOrNull(i))
+            moveTargetR[i] = finiteOrZero(move.right.getOrNull(i))
+        }
+        moveCentreTarget = finiteOrZero(move.centre).coerceIn(0f, 1f)
+        // The first time the move is switched on the routing starts where it is aimed; the blend below fades it in.
+        if (!moveInitialised || moveBlend <= 0f) {
+            moveTargetL.copyInto(moveCurrentL)
+            moveTargetR.copyInto(moveCurrentR)
+            moveCentreCurrent = moveCentreTarget
+            moveInitialised = true
+        }
+        moveWanted = 1f
     }
 
     /** Clears delay and filter memory (seek / flush) so old audio cannot leak into the next position. */
@@ -205,12 +240,83 @@ internal class SurroundUpmixer(sampleRate: Int) {
                 output[ob + 4] = clamp(surroundL * currentGain[IDX_SL])
                 output[ob + 5] = clamp(surroundR * currentGain[IDX_SR])
             }
+
+            // 360° move: fade to the panned song, or back to the plain upmix when the move is switched off.
+            if (moveBlend != moveWanted) {
+                moveBlend += moveSmoothing * (moveWanted - moveBlend)
+                if (abs(moveWanted - moveBlend) < MOVE_SNAP) moveBlend = moveWanted
+            }
+            val blend = moveBlend
+            if (blend > 0f) {
+                for (g in 0 until CHANNELS_UI) {
+                    moveCurrentL[g] += moveSmoothing * (moveTargetL[g] - moveCurrentL[g])
+                    moveCurrentR[g] += moveSmoothing * (moveTargetR[g] - moveCurrentR[g])
+                }
+                moveCentreCurrent += moveSmoothing * (moveCentreTarget - moveCentreCurrent)
+                // The centre speaker keeps its share of the dialogue, taken from the front pair like the normal upmix.
+                val kc = k * moveCentreCurrent
+                val lIn = l - kc * m
+                val rIn = r - kc * m
+                val keep = 1f - blend
+                mixMoved(output, ob, IDX_L, keep, blend, lIn, rIn)
+                mixMoved(output, ob, IDX_R, keep, blend, lIn, rIn)
+                output[ob + 2] = output[ob + 2] * keep +
+                    softClip(SQRT2 * kc * m * currentGain[IDX_C]) * blend
+                if (sevenOne) {
+                    mixMoved(output, ob, IDX_BL, keep, blend, lIn, rIn)
+                    mixMoved(output, ob, IDX_BR, keep, blend, lIn, rIn)
+                    mixMoved(output, ob, IDX_SL, keep, blend, lIn, rIn)
+                    mixMoved(output, ob, IDX_SR, keep, blend, lIn, rIn)
+                } else {
+                    mixMoved(output, ob, IDX_SL, keep, blend, lIn, rIn)
+                    mixMoved(output, ob, IDX_SR, keep, blend, lIn, rIn)
+                }
+            }
         }
 
         writePos = wp
         sideAmbience = sAmb
         backAmbience = bAmb
     }
+
+    /**
+     * Puts the moved song on one speaker (UI index [ui]) and fades it against what the plain upmix already wrote there.
+     * The output slot of a speaker depends on the layout, see the class comment.
+     */
+    private fun mixMoved(output: FloatArray, ob: Int, ui: Int, keep: Float, blend: Float, lIn: Float, rIn: Float) {
+        val slot = outputSlot(ui)
+        val moved = softClip((lIn * moveCurrentL[ui] + rIn * moveCurrentR[ui]) * currentGain[ui])
+        output[ob + slot] = output[ob + slot] * keep + moved * blend
+    }
+
+    /** Position of a speaker (UI index) in the interleaved output frame of the current layout. */
+    private fun outputSlot(ui: Int): Int = if (outChannels == 8) {
+        when (ui) {
+            IDX_L -> 0
+            IDX_R -> 1
+            IDX_BL -> 4
+            IDX_BR -> 5
+            IDX_SL -> 6
+            else -> 7 // IDX_SR
+        }
+    } else {
+        when (ui) {
+            IDX_L -> 0
+            IDX_R -> 1
+            IDX_SL -> 4
+            else -> 5 // IDX_SR
+        }
+    }
+
+    /** Gentle limiter for the moved song: transparent below the knee, never above full scale. */
+    private fun softClip(v: Float): Float {
+        val a = abs(v)
+        if (a <= SOFT_KNEE) return v
+        val y = SOFT_KNEE + (1f - SOFT_KNEE) * tanh((a - SOFT_KNEE) / (1f - SOFT_KNEE))
+        return if (v < 0f) -y else y
+    }
+
+    private fun finiteOrZero(v: Float?): Float = if (v == null || v.isNaN() || v.isInfinite()) 0f else v
 
     private fun msToSamples(ms: Float): Int =
         (ms.coerceIn(1f, MAX_DELAY_SECONDS.toFloat() * 1000f - 1f) * sr / 1000.0).toInt().coerceIn(1, delayLen - 1)
@@ -247,6 +353,10 @@ internal class SurroundUpmixer(sampleRate: Int) {
         private const val LFE_BASE_GAIN = 0.5f
         private const val BUTTERWORTH_Q = 0.70710678
         private const val SMOOTH_SECONDS = 0.012
+        /** Moved-song gains glide slower than the trims: the orbit updates the position only 20 times a second. */
+        private const val MOVE_SMOOTH_SECONDS = 0.05
+        private const val MOVE_SNAP = 1e-4f
+        private const val SOFT_KNEE = 0.85f
         private const val MAX_DELAY_SECONDS = 0.06
         private const val AMBIENCE_LOWPASS_HZ = 7_000.0
     }

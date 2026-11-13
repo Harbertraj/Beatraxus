@@ -197,4 +197,97 @@ class SurroundPositionTest {
         assertTrue(g[5] > 0f && g[6] > 0f)
         assertTrue(g[2] < 0f)
     }
+
+    // ── 360° move for stereo sources (constant-power routing) ───────────────────────────────────────────────
+
+    private fun power(g: List<Float>) = g.sumOf { (it * it).toDouble() }
+
+    @Test
+    fun moveRoutingKeepsConstantPowerAtEveryAngleAndDistance() {
+        for (sevenOne in listOf(true, false)) {
+            var angle = 0f
+            while (angle < 360f) {
+                for (distance in listOf(0.15f, 0.3f, 0.5f, 0.8f, 1f)) {
+                    val m = surroundMoveMix(angle, distance, sevenOne)
+                    assertEquals("left @$angle/$distance", 1.0, power(m.left), 1e-3)
+                    assertEquals("right @$angle/$distance", 1.0, power(m.right), 1e-3)
+                    assertTrue((m.left + m.right).all { !it.isNaN() && it in 0f..1.0001f })
+                    assertTrue(m.centre in 0f..1f)
+                }
+                angle += 7.5f
+            }
+        }
+    }
+
+    @Test
+    fun moveRoutingNeverUsesCentreOrSubOrMissingBackPair() {
+        val five = surroundMoveMix(180f, 1f, false)
+        assertEquals(0f, five.left[idxBL], 0f)
+        assertEquals(0f, five.right[idxBR], 0f)
+        for (m in listOf(surroundMoveMix(40f, 0.7f, true), five)) {
+            assertEquals(0f, m.left[idxC], 0f)
+            assertEquals(0f, m.right[idxSW], 0f)
+        }
+    }
+
+    @Test
+    fun straightAheadIsPlainStereoOnTheFrontPair() {
+        val m = surroundMoveMix(0f, 1f, true)
+        assertTrue(m.left[idxL] > 0.99f)
+        assertTrue(m.right[idxR] > 0.99f)
+        assertEquals(1f, m.centre, 1e-4f)
+    }
+
+    @Test
+    fun straightBehindKeepsTheWholeSongOnTheBackPair() {
+        val seven = surroundMoveMix(180f, 1f, true)
+        assertTrue(seven.left[idxBR] + seven.left[idxBL] > 0.99f)
+        assertTrue(seven.left[idxL] < 0.01f && seven.right[idxR] < 0.01f)
+        assertEquals(0f, seven.centre, 1e-4f)
+        val five = surroundMoveMix(180f, 1f, false)
+        assertTrue(five.left[idxSL] + five.left[idxSR] > 0.99f)
+    }
+
+    @Test
+    fun rightSideCarriesBothHalvesOfTheSong() {
+        val m = surroundMoveMix(90f, 1f, true)
+        val rightSide = m.left[idxR] * m.left[idxR] + m.left[idxSR] * m.left[idxSR] + m.left[idxBR] * m.left[idxBR]
+        assertTrue("left half should sit on the right side", rightSide > 0.95f)
+        assertTrue(m.right[idxSR] > m.right[idxSL])
+    }
+
+    @Test
+    fun theDistanceSliderChangesTheSoundOverItsWholeRange() {
+        // No dead zone: every 10% step of the slider changes the routing of a speaker.
+        var previous = surroundMoveMix(0f, SURROUND_POSITION_MIN_DISTANCE, true)
+        var d = SURROUND_POSITION_MIN_DISTANCE + 0.085f
+        while (d <= SURROUND_POSITION_MAX_DISTANCE + 1e-4f) {
+            val now = surroundMoveMix(0f, d, true)
+            val moved = now.left.indices.any { kotlin.math.abs(now.left[it] - previous.left[it]) > 0.01f }
+            assertTrue("slider at $d changed nothing", moved)
+            previous = now
+            d += 0.085f
+        }
+        // Close surrounds the listener evenly, wide is placed.
+        val close = surroundMoveMix(0f, SURROUND_POSITION_MIN_DISTANCE, true)
+        assertEquals(close.left[idxL], close.left[idxBR], 1e-3f)
+        assertEquals(0f, close.centre, 1e-4f)
+    }
+
+    @Test
+    fun moveLevelsShowTheSpeakersThatCarryTheSound() {
+        val behind = surroundMoveLevelsDb(180f, 1f, true)
+        assertTrue(behind[idxBL] > -3f && behind[idxBR] > -3f)
+        assertTrue(behind[idxL] < -15f && behind[idxC] <= -30f)
+        assertEquals(0f, behind[idxSW], 0f)
+        val ahead = surroundMoveLevelsDb(0f, 1f, true)
+        assertEquals(0f, ahead[idxL], 0.5f)
+        assertTrue(ahead.all { !it.isNaN() })
+    }
+
+    @Test
+    fun moveOffMeansNoMoveRouting() {
+        assertNull(DspConfig().surroundMoveMixOrNull(true))
+        assertNotNull(DspConfig(surroundMoveEnabled = true).surroundMoveMixOrNull(true))
+    }
 }

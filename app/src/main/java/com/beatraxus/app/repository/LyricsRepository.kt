@@ -14,8 +14,10 @@ import com.beatraxus.app.repository.lyrics.LyricsRacePolicy
 import com.beatraxus.app.repository.lyrics.LyricsTransientException
 import com.beatraxus.app.repository.lyrics.LyricsValidator
 import com.beatraxus.app.repository.lyrics.ValidationResult
+import com.beatraxus.app.repository.lyrics.mapAsCompleted
 import com.beatraxus.app.repository.lyrics.VideoIdResolver
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -26,6 +28,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
@@ -272,6 +275,54 @@ class LyricsRepository(
         }
     }
 
+    /**
+     * Asks ONE source for lyrics. Never throws (except cancellation): a failure comes back as a result with
+     * status "error", so one slow or broken source cannot hold up or break the others.
+     */
+    private suspend fun fetchFromProvider(
+        provider: LyricsProvider,
+        baseQuery: LyricsQuery,
+        videoIdDeferred: Deferred<String?>?,
+        semaphore: Semaphore
+    ): ProviderFetchResult {
+        var finalQuery = baseQuery
+        if (provider.requiresVideoId) {
+            val videoId = videoIdDeferred?.await()
+            if (videoId == null) {
+                Log.d("LyricsProvider", "id=${provider.id} status=miss type=- ms=0")
+                return ProviderFetchResult(provider, null, "miss", 0L)
+            }
+            finalQuery = baseQuery.copy(videoId = videoId)
+        }
+
+        return semaphore.withPermit {
+            val timeoutMs = if (provider.id == "paxsenix" || provider.id == "youtube_captions") 12_000L else 8_000L
+            val startTime = System.currentTimeMillis()
+            var status = "miss"
+            var typeStr = "-"
+            var lyricsResult: LyricsResult? = null
+            var error: Throwable? = null
+
+            try {
+                lyricsResult = withTimeout(timeoutMs) {
+                    provider.fetch(finalQuery)
+                }
+                if (lyricsResult != null) {
+                    status = "hit"
+                    typeStr = lyricsResult.type.name
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                status = "error"
+                error = e
+            }
+            val durationMs = System.currentTimeMillis() - startTime
+            Log.d("LyricsProvider", "id=${provider.id} status=$status type=$typeStr ms=$durationMs")
+            ProviderFetchResult(provider, lyricsResult, status, durationMs, error)
+        }
+    }
+
     private suspend fun runProviders(
         song: Song,
         providers: List<LyricsProvider>,
@@ -298,44 +349,7 @@ class LyricsRepository(
         val config = providerConfig()
 
         val deferredList = providers.map { provider ->
-            async(Dispatchers.IO) {
-                var finalQuery = baseQuery
-                if (provider.requiresVideoId) {
-                    val videoId = videoIdDeferred?.await()
-                    if (videoId == null) {
-                        Log.d("LyricsProvider", "id=${provider.id} status=miss type=- ms=0")
-                        return@async ProviderFetchResult(provider, null, "miss", 0L)
-                    }
-                    finalQuery = baseQuery.copy(videoId = videoId)
-                }
-
-                semaphore.withPermit {
-                    val timeoutMs = if (provider.id == "paxsenix" || provider.id == "youtube_captions") 12_000L else 8_000L
-                    val startTime = System.currentTimeMillis()
-                    var status = "miss"
-                    var typeStr = "-"
-                    var lyricsResult: LyricsResult? = null
-                    var error: Throwable? = null
-
-                    try {
-                        lyricsResult = withTimeout(timeoutMs) {
-                            provider.fetch(finalQuery)
-                        }
-                        if (lyricsResult != null) {
-                            status = "hit"
-                            typeStr = lyricsResult.type.name
-                        }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Throwable) {
-                        status = "error"
-                        error = e
-                    }
-                    val durationMs = System.currentTimeMillis() - startTime
-                    Log.d("LyricsProvider", "id=${provider.id} status=$status type=$typeStr ms=$durationMs")
-                    ProviderFetchResult(provider, lyricsResult, status, durationMs, error)
-                }
-            }
+            async(Dispatchers.IO) { fetchFromProvider(provider, baseQuery, videoIdDeferred, semaphore) }
         }
 
         fun placeholder(idx: Int, reason: String) = ProviderFetchResult(
@@ -559,24 +573,31 @@ class LyricsRepository(
      * priority  Word -> Line -> Plain,  then clean (no validator warning) before warned,
      * then the user's provider order.
      */
-    private fun buildCandidates(song: Song, results: List<ProviderFetchResult>): List<LyricsCandidate> {
+    private fun buildCandidates(song: Song, results: List<ProviderFetchResult>): List<LyricsCandidate> =
+        sortCandidates(results.mapNotNull { buildCandidate(song, it) })
+
+    /** The popup entry for one source's answer, or null when that source found nothing. */
+    private fun buildCandidate(song: Song, fetchRes: ProviderFetchResult): LyricsCandidate? {
+        val res = fetchRes.result ?: return null
+        val lines = LrcParser.parse(res.content, song.durationMs)
+        val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
+        val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
+        return LyricsCandidate(
+            providerId = fetchRes.provider.id,
+            providerName = fetchRes.provider.displayName,
+            granularity = fetchRes.provider.granularity,
+            type = res.type,
+            lineCount = lines.size,
+            preview = previewLine,
+            content = res.content,
+            warning = validation.reason
+        )
+    }
+
+    /** Popup order: Word -> Line -> Plain, clean before warned, then the user's provider order. */
+    fun sortCandidates(candidates: List<LyricsCandidate>): List<LyricsCandidate> {
         val order = providerConfig().order
-        return results.mapNotNull { fetchRes ->
-            val res = fetchRes.result ?: return@mapNotNull null
-            val lines = LrcParser.parse(res.content, song.durationMs)
-            val previewLine = lines.firstOrNull { it.text.isNotBlank() }?.text ?: "No preview available"
-            val validation = LyricsValidator.validate(res.content, song.durationMs, res.type)
-            LyricsCandidate(
-                providerId = fetchRes.provider.id,
-                providerName = fetchRes.provider.displayName,
-                granularity = fetchRes.provider.granularity,
-                type = res.type,
-                lineCount = lines.size,
-                preview = previewLine,
-                content = res.content,
-                warning = validation.reason
-            )
-        }.sortedWith(
+        return candidates.sortedWith(
             compareBy<LyricsCandidate>(
                 { typeRank(it.type) },
                 { if (it.warning.isNullOrBlank()) 0 else 1 },
@@ -607,6 +628,66 @@ class LyricsRepository(
 
         candidatesCache[cacheKey] = candidates
         candidates
+    }
+
+    /**
+     * The sources popup search. Every enabled source is asked on its own, all at the same time, and its lyrics are
+     * emitted the moment that source answers (sources with nothing to offer emit nothing), so the popup fills up
+     * one card at a time instead of waiting for the slowest source. The flow ends when every source is done.
+     *
+     * A finished, complete search is cached like the preload does, so opening the popup again is instant.
+     */
+    fun candidatesFlow(song: Song): Flow<LyricsCandidate> = flow {
+        val cacheKey = getCandidatesCacheKey(song)
+        val cached = candidatesCache[cacheKey]
+        if (cached != null) {
+            cached.forEach { emit(it) }
+            return@flow
+        }
+
+        val providers = enabledOrderedProviders()
+        val answers = mutableListOf<ProviderFetchResult>()
+        streamProviders(song, providers).collect { fetched ->
+            answers += fetched
+            buildCandidate(song, fetched)?.let { emit(it) }
+        }
+
+        val anyHit = answers.any { it.result != null }
+        val hasTransientError = answers.any {
+            val ex = it.exception
+            ex is LyricsTransientException || ex?.cause is LyricsTransientException
+        }
+        if (anyHit || !hasTransientError) {
+            candidatesCache[cacheKey] = buildCandidates(song, answers)
+        }
+    }.flowOn(Dispatchers.IO)
+
+    /** Every provider's answer as soon as it is ready; a provider that has not answered in [overallTimeoutMs] is cut. */
+    private fun streamProviders(
+        song: Song,
+        providers: List<LyricsProvider>,
+        overallTimeoutMs: Long = 15_000L
+    ): Flow<ProviderFetchResult> = channelFlow {
+        val baseQuery = LyricsQuery(
+            title = song.title,
+            artist = song.artist,
+            album = song.album,
+            durationMs = song.durationMs,
+            videoId = null
+        )
+        // The video-id lookup runs alongside the providers; only those that need it wait for it.
+        val videoIdDeferred = if (providers.any { it.requiresVideoId }) {
+            async(Dispatchers.IO) { runCatching { VideoIdResolver.resolve(baseQuery) }.getOrNull() }
+        } else null
+        val semaphore = Semaphore(maxOf(4, providers.size))
+
+        providers.mapAsCompleted { provider ->
+            withTimeoutOrNull(overallTimeoutMs) {
+                fetchFromProvider(provider, baseQuery, videoIdDeferred, semaphore)
+            } ?: ProviderFetchResult(provider, null, "error", overallTimeoutMs, LyricsTransientException("Timed out"))
+        }.collect { send(it) }
+
+        videoIdDeferred?.cancel()
     }
 
     /** Kept for older callers: preloads [songs] without a playing song. */

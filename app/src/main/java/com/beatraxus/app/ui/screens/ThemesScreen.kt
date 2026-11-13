@@ -101,6 +101,7 @@ fun ThemesContent(appearance: AppearanceConfig) {
             0 -> BrowseTab(
                 store = state.store,
                 installed = state.installed,
+                builtIn = state.builtIn,
                 activeId = active?.id,
                 busyId = state.busyId,
                 previews = state.previews,
@@ -128,6 +129,7 @@ fun ThemesContent(appearance: AppearanceConfig) {
 private fun BrowseTab(
     store: com.beatraxus.app.theme.StoreUiState,
     installed: List<ThemeSpec>,
+    builtIn: List<ThemeSpec>,
     activeId: String?,
     busyId: String?,
     previews: Map<String, ThemeSpec>,
@@ -143,6 +145,14 @@ private fun BrowseTab(
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         DefaultThemeCard(onApplyDefault)
+        builtIn.forEach { spec ->
+            ThemeCard(
+                name = spec.name, author = spec.author, swatches = spec.preview,
+                note = "Built-in", spec = spec
+            ) {
+                if (activeId == spec.id) AppliedChip() else SmallButton("Apply") { onApplyInstalled(spec) }
+            }
+        }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 text = if (store.fromCache) "Showing saved list (offline)" else "Official themes",

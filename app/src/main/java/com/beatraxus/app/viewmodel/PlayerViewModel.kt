@@ -4612,6 +4612,16 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
     fun setSurroundPosition(angleDeg: Float, distance: Float) =
         applyDspConfig { it.withSurroundPosition(angleDeg, distance) }
 
+    /**
+     * Changes only the distance, keeping the angle that is current right now (not the one a screen last drew), and
+     * ignores changes smaller than 0.5% so dragging the slider does not flood the audio engine and the settings store.
+     */
+    fun setSurroundDistance(distance: Float) {
+        val d = com.beatraxus.app.model.sanitizeSurroundDistance(distance)
+        if (kotlin.math.abs(_uiState.value.dsp.config.surroundPositionDistance - d) < 0.005f) return
+        applyDspConfig { it.withSurroundPosition(it.surroundPositionAngleDeg, d) }
+    }
+
     /** One tap on a built-in spot such as "Behind you". */
     fun applySurroundPositionPreset(name: String) =
         applyDspConfig { it.withSurroundPositionPreset(name) }
@@ -5597,28 +5607,52 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private var lyricsCandidatesJob: Job? = null
+
+    /**
+     * Fills the lyric-sources popup. Every source is searched on its own, in parallel, and its card is added the
+     * moment that source answers, so the first results show up in a fraction of a second instead of after the
+     * slowest source. The embedded / saved lyrics are looked up at the same time as the online sources.
+     */
     fun loadLyricsCandidates() {
         val song = _uiState.value.currentSong ?: return
-        
+
+        lyricsCandidatesJob?.cancel() // a repeated tap restarts the search instead of mixing two searches
         _uiState.update { it.copy(isLoadingLyricsCandidates = true, lyricsCandidates = emptyList()) }
-        
-        viewModelScope.launch {
-            val embeddedCandidate = lyricsRepository.fetchEmbeddedCandidate(song)
-            if (embeddedCandidate != null) {
-                _uiState.update { 
-                    it.copy(lyricsCandidates = listOf(embeddedCandidate))
+
+        fun addCandidate(candidate: LyricsCandidate) {
+            _uiState.update { state ->
+                // the user may have skipped to another song while this one was still searching
+                if (state.currentSong?.id != song.id) state
+                else state.copy(
+                    lyricsCandidates = lyricsRepository.sortCandidates(
+                        state.lyricsCandidates.filter { it.providerId != candidate.providerId } + candidate
+                    )
+                )
+            }
+        }
+
+        lyricsCandidatesJob = viewModelScope.launch {
+            try {
+                kotlinx.coroutines.coroutineScope {
+                    launch {
+                        // its own failure must not stop the online sources
+                        try {
+                            lyricsRepository.fetchEmbeddedCandidate(song)?.let { addCandidate(it) }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Log.w("PlayerViewModel", "Embedded lyrics lookup failed", e)
+                        }
+                    }
+                    lyricsRepository.candidatesFlow(song).collect { addCandidate(it) }
                 }
+            } catch (e: CancellationException) {
+                throw e // replaced by a newer search: that one owns the loading flag now
+            } catch (e: Exception) {
+                Log.w("PlayerViewModel", "Lyric sources search failed", e)
             }
-
-            val onlineCandidates = lyricsRepository.fetchAllCandidates(song)
-            val allCandidates = onlineCandidates.filter { it.providerId != "embedded" } + listOfNotNull(embeddedCandidate)
-
-            _uiState.update { 
-                it.copy(
-                    lyricsCandidates = allCandidates,
-                    isLoadingLyricsCandidates = false
-                ) 
-            }
+            _uiState.update { it.copy(isLoadingLyricsCandidates = false) }
         }
     }
 

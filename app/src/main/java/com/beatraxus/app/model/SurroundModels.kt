@@ -335,9 +335,106 @@ fun DspConfig.activeSurroundPositionPreset(): String? =
             abs(surroundPositionDistance - it.distance) <= 0.05f
     }?.name
 
-/** Position offsets for the audio engine: null while 360° move is off, so the sound stays exactly as before. */
+/**
+ * Position offsets for a source that already is a real 5.1 / 7.1 mix (the discrete trimmer can only change levels,
+ * it cannot re-route sound). null while 360° move is off, so the sound stays exactly as before.
+ */
 fun DspConfig.surroundPositionOffsetsDb(): List<Float>? =
     if (surroundMoveEnabled) surroundPositionGainsDb(surroundPositionAngleDeg, surroundPositionDistance) else null
+
+// ── 360° move for stereo sources: the whole song is panned around the room at constant loudness ────────────
+
+/**
+ * Where the left and right halves of the song sit, relative to the chosen direction, while the sound is moved.
+ * +-30 degrees is the classic stereo triangle, so "straight ahead" puts them on the front L / R speakers.
+ */
+const val SURROUND_MOVE_IMAGE_HALF_WIDTH_DEG = 30f
+
+/**
+ * How the upmixer routes a stereo song while 360° move is on.
+ *
+ * Every speaker gets a share of the song's left channel ([left]) and of its right channel ([right]); both lists are in
+ * UI order L R C SL SR BL BR SW, with 0 for C and SW (the centre is [centre], the subwoofer is not moved).
+ * Each list is constant power: its squares add up to 1, so the song is equally loud at every angle and distance.
+ *
+ * @property centre 0..1, how much of the centre (dialogue) feed stays on the centre speaker: 1 straight ahead and
+ *                  focused, 0 anywhere else.
+ */
+class SurroundMoveMix(val left: List<Float>, val right: List<Float>, val centre: Float)
+
+/** Ring of speakers the song can be panned between, clockwise from straight ahead: UI index and angle. */
+private val MOVE_RING_71 = listOf(1 to 32f, 4 to 90f, 6 to 148f, 5 to 212f, 3 to 270f, 0 to 328f) // R SR BR BL SL L
+private val MOVE_RING_51 = listOf(1 to 32f, 4 to 110f, 3 to 250f, 0 to 328f) // R SR SL L
+
+/** Constant-power pan of one source at [angleDeg] between the two ring speakers that surround it. */
+private fun panOnRing(ring: List<Pair<Int, Float>>, angleDeg: Float): FloatArray {
+    val gains = FloatArray(SURROUND_SPEAKER_ANGLES_DEG.size)
+    val a = normalizeSurroundAngle(angleDeg)
+    for (k in ring.indices) {
+        val (fromIdx, fromAngle) = ring[k]
+        val (toIdx, toAngleRaw) = ring[(k + 1) % ring.size]
+        val toAngle = if (toAngleRaw <= fromAngle) toAngleRaw + 360f else toAngleRaw
+        val x = if (a < fromAngle) a + 360f else a
+        if (x >= fromAngle && x <= toAngle) {
+            val t = ((x - fromAngle) / (toAngle - fromAngle)).coerceIn(0f, 1f)
+            val theta = t * (Math.PI.toFloat() / 2f)
+            gains[fromIdx] = kotlin.math.cos(theta)
+            gains[toIdx] = kotlin.math.sin(theta)
+            return gains
+        }
+    }
+    return gains
+}
+
+/**
+ * Routing for [angleDeg] / [distance]. Distance is the whole slider range, no dead zone: at 0.15 the song surrounds
+ * the listener evenly, at 1 it is placed exactly at the angle, and everything in between blends the two smoothly.
+ */
+fun surroundMoveMix(angleDeg: Float, distance: Float, sevenOne: Boolean): SurroundMoveMix {
+    val angle = normalizeSurroundAngle(angleDeg)
+    val d = sanitizeSurroundDistance(distance)
+    val focus = ((d - SURROUND_POSITION_MIN_DISTANCE) / (SURROUND_POSITION_MAX_DISTANCE - SURROUND_POSITION_MIN_DISTANCE))
+        .coerceIn(0f, 1f)
+    val ring = if (sevenOne) MOVE_RING_71 else MOVE_RING_51
+    val even = 1f / ring.size
+
+    fun half(offsetDeg: Float): List<Float> {
+        val pan = panOnRing(ring, angle + offsetDeg)
+        return List(pan.size) { i ->
+            if (ring.none { it.first == i }) 0f
+            else kotlin.math.sqrt(focus * pan[i] * pan[i] + (1f - focus) * even)
+        }
+    }
+
+    val front = kotlin.math.cos(Math.toRadians(angle.toDouble())).toFloat().coerceAtLeast(0f)
+    return SurroundMoveMix(
+        left = half(-SURROUND_MOVE_IMAGE_HALF_WIDTH_DEG),
+        right = half(SURROUND_MOVE_IMAGE_HALF_WIDTH_DEG),
+        centre = front * focus
+    )
+}
+
+/** 360° routing for the audio engine; null while 360° move is off. */
+fun DspConfig.surroundMoveMixOrNull(sevenOne: Boolean): SurroundMoveMix? =
+    if (surroundMoveEnabled) surroundMoveMix(surroundPositionAngleDeg, surroundPositionDistance, sevenOne) else null
+
+/**
+ * What the room view shows per speaker (dB, UI order L R C SL SR BL BR SW) while the song is moved: the level of
+ * every speaker compared with plain stereo, for content that is different on the left and right. Floors at -30.
+ */
+fun surroundMoveLevelsDb(angleDeg: Float, distance: Float, sevenOne: Boolean): List<Float> {
+    val m = surroundMoveMix(angleDeg, distance, sevenOne)
+    return List(SURROUND_SPEAKER_ANGLES_DEG.size) { i ->
+        when (i) {
+            SW_INDEX -> 0f
+            2 -> if (m.centre < 0.01f) -30f else (10f * kotlin.math.log10(m.centre * m.centre)).coerceIn(-30f, 0f)
+            else -> {
+                val p = m.left[i] * m.left[i] + m.right[i] * m.right[i]
+                if (p < 0.001f) -30f else (10f * kotlin.math.log10(p)).coerceIn(-30f, 6f)
+            }
+        }
+    }
+}
 
 // ── Pure settings edits (shared by every screen that edits the surround settings) ───────────────────────────
 

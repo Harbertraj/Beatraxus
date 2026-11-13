@@ -9,6 +9,7 @@ import com.beatraxus.app.model.resolveSurroundStage
 import com.beatraxus.app.model.toSurroundEngineConfig
 import com.beatraxus.app.model.resolveSurroundOutputChannels
 import com.beatraxus.app.model.sanitizeSurroundTrims
+import com.beatraxus.app.model.surroundMoveMix
 import com.beatraxus.app.model.surroundPositionGainsDb
 import com.beatraxus.app.model.tuning
 import org.junit.Assert.assertEquals
@@ -305,12 +306,18 @@ class SurroundUpmixerTest {
 
     // ── 360° move ──────────────────────────────────────────────────────────────────────────────────────────
 
-    private fun upmixWithPosition(angle: Float, distance: Float, left: FloatArray, right: FloatArray): FloatArray {
+    private val moveFrames = 24_000
+    private val settled = 12_000 // the move fades in over about 50 ms; measure after it has settled
+
+    private fun upmixWithPosition(
+        angle: Float, distance: Float, left: FloatArray, right: FloatArray, sevenOne: Boolean = true
+    ): FloatArray {
+        val ch = if (sevenOne) 8 else 6
         val up = SurroundUpmixer(rate)
-        up.configure(8, SurroundMode.MOVIE.tuning(), flat, surroundPositionGainsDb(angle, distance))
+        up.configure(ch, SurroundMode.MOVIE.tuning(), flat, surroundMoveMix(angle, distance, sevenOne))
         val frames = left.size
         val input = FloatArray(frames * 2) { if (it % 2 == 0) left[it / 2] else right[it / 2] }
-        val out = FloatArray(frames * 8)
+        val out = FloatArray(frames * ch)
         up.process(input, 2, frames, out)
         return out
     }
@@ -329,36 +336,83 @@ class SurroundUpmixerTest {
     }
 
     @Test
-    fun positionBehindMakesBackLouderThanFront() {
-        // Opposite-phase content so the surround / back channels carry signal.
-        val l = sine(1000.0, 9600)
-        val r = FloatArray(l.size) { -l[it] }
+    fun positionBehindMovesTheSongToTheBackPair() {
+        val l = sine(1000.0, moveFrames)
+        val r = sine(1700.0, moveFrames)
         val ahead = upmixWithPosition(0f, 1f, l, r)
         val behind = upmixWithPosition(180f, 1f, l, r)
         // 8-channel order: FL FR FC LFE BL BR SL SR
-        assertTrue(rms(behind, 8, 4, 4800) > rms(ahead, 8, 4, 4800))
-        assertTrue(rms(behind, 8, 0, 4800) < rms(ahead, 8, 0, 4800))
+        assertTrue(rms(behind, 8, 4, settled) > 0.2)
+        assertTrue(rms(behind, 8, 5, settled) > 0.2)
+        assertTrue(rms(behind, 8, 4, settled) > 10 * rms(ahead, 8, 4, settled))
+        assertTrue(rms(behind, 8, 0, settled) < 0.1 * rms(ahead, 8, 0, settled))
     }
 
     @Test
     fun positionToTheRightMakesRightLouderThanLeft() {
-        val x = sine(1000.0, 9600)
-        val out = upmixWithPosition(90f, 1f, x, FloatArray(x.size))
-        assertTrue(rms(out, 8, 1, 4800) > 0.0)
+        val x = sine(1000.0, moveFrames)
         val right = upmixWithPosition(90f, 1f, x, x)
-        // mono content: front pair is identical before the position, so the position alone makes R win
-        assertTrue(rms(right, 8, 1, 4800) > rms(right, 8, 0, 4800))
+        assertTrue(rms(right, 8, 1, settled) > 3 * rms(right, 8, 0, settled))
         val left = upmixWithPosition(270f, 1f, x, x)
-        assertTrue(rms(left, 8, 0, 4800) > rms(left, 8, 1, 4800))
+        assertTrue(rms(left, 8, 0, settled) > 3 * rms(left, 8, 1, settled))
+    }
+
+    /** Loudness of everything except the subwoofer (which the move never touches), in dB. */
+    private fun mainLevelDb(out: FloatArray, channels: Int): Double {
+        var sum = 0.0
+        for (ch in 0 until channels) if (ch != 3) sum += rms(out, channels, ch, settled).let { it * it }
+        return 10.0 * kotlin.math.log10(sum)
+    }
+
+    @Test
+    fun theSongKeepsTheSameLoudnessWhileItOrbits() {
+        // Different content left and right, so no angle gets a free boost from correlated signals.
+        val l = sine(900.0, moveFrames)
+        val r = sine(1700.0, moveFrames)
+        for ((sevenOne, ch) in listOf(true to 8, false to 6)) {
+            for (distance in listOf(0.15f, 0.5f, 1f)) {
+                val reference = mainLevelDb(upmixWithPosition(0f, distance, l, r, sevenOne), ch)
+                for (angle in listOf(45f, 90f, 135f, 180f, 225f, 270f, 315f)) {
+                    val level = mainLevelDb(upmixWithPosition(angle, distance, l, r, sevenOne), ch)
+                    assertEquals("ch=$ch d=$distance angle=$angle", reference, level, 1.5)
+                }
+            }
+        }
     }
 
     @Test
     fun positionNeverBreaksFullScaleOrProducesNaN() {
-        val loud = FloatArray(4800) { if (it % 2 == 0) 1f else -1f }
+        val loud = FloatArray(moveFrames) { if (it % 2 == 0) 1f else -1f }
         for (angle in listOf(0f, 45f, 90f, 135f, 180f, 225f, 270f, 315f, 359.9f)) {
-            val out = upmixWithPosition(angle, 1f, loud, loud.reversedArray())
-            assertTrue(out.all { it in -1f..1f && !it.isNaN() })
+            for (sevenOne in listOf(true, false)) {
+                val out = upmixWithPosition(angle, 1f, loud, loud.reversedArray(), sevenOne)
+                assertTrue(out.all { it in -1f..1f && !it.isNaN() })
+                val mono = upmixWithPosition(angle, 1f, loud, loud, sevenOne)
+                assertTrue(mono.all { it in -1f..1f && !it.isNaN() })
+            }
         }
+    }
+
+    @Test
+    fun switchingTheMoveOffFadesBackToThePlainUpmix() {
+        val l = sine(700.0, moveFrames)
+        val r = sine(1300.0, moveFrames)
+        val input = FloatArray(moveFrames * 2) { if (it % 2 == 0) l[it / 2] else r[it / 2] }
+        val up = SurroundUpmixer(rate)
+        up.configure(8, SurroundMode.MOVIE.tuning(), flat, surroundMoveMix(180f, 1f, true))
+        val moved = FloatArray(moveFrames * 8)
+        up.process(input, 2, moveFrames, moved)
+        up.configure(8, SurroundMode.MOVIE.tuning(), flat, null)
+        val after = FloatArray(moveFrames * 8)
+        up.process(input, 2, moveFrames, after)
+        // no jump between consecutive samples while it fades, and the plain upmix is back at the end
+        for (ch in 0 until 8) {
+            var maxStep = 0f
+            for (f in 1 until moveFrames) maxStep = maxOf(maxStep, kotlin.math.abs(after[f * 8 + ch] - after[(f - 1) * 8 + ch]))
+            assertTrue("ch $ch jumps", maxStep < 0.2f)
+        }
+        val plain = upmix(8, SurroundMode.MOVIE, flat, l, r)
+        assertEquals(rms(plain, 8, 0, settled), rms(after, 8, 0, settled), 0.02)
     }
 
     @Test

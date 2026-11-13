@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "violet-night",
+  "name": "Violet Night",
+  "author": "Beatraxus",
+  "version": 1,
+  "mode": "dark",
+  "colors": {
+    "accent": "#C77DFF",
+    "accentSecondary": "#D946EF",
+    "preview": ["#0B0A12", "#C77DFF", "#D946EF", "#5EEAD4"],
+    "background": "#0B0A12",
+    "surface": "#16112A",
+    "text": "#FFFFFF"
+  },
+  "dsp": { "primary": "#C77DFF", "secondary": "#D946EF" },
+  "seekbar": "BEATRAXUS_PRISM",
+  "font": "plus_jakarta_sans",
+  "background": {
+    "mode": "BLUR",
+    "blurScale": 1.0,
+    "blurDarkness": 0.55,
+    "solidIntensity": 0.6,
+    "solidDarkness": 0.4
+  },
+  "shape": { "cornerScale": 1.5 },
+  "player": {
+    "albumArt": "SOFT_FADE",
+    "qualityBadge": "GLASSMORPHIC",
+    "miniStyle": "PILL",
+    "miniHeight": 64,
+    "miniCorner": 36,
+    "miniArtCorner": 18,
+    "miniProgressRing": true,
+    "miniShowTime": true,
+    "miniTintFromArt": true
+  }
+}

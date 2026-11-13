@@ -10,6 +10,7 @@ import com.beatraxus.app.model.ReplayGainSource
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SpatialUiMode
 import com.beatraxus.app.model.surroundEffectiveTuning
+import com.beatraxus.app.model.surroundMoveMixOrNull
 import com.beatraxus.app.model.surroundPositionOffsetsDb
 import com.beatraxus.app.model.Audio3DSpeakerPosition
 import com.beatraxus.app.model.SoundStageNodePosition
@@ -92,7 +93,7 @@ internal class AudioDspPipeline(
         }
         val upmixer = surroundUpmixer ?: SurroundUpmixer(outputSampleRate).also { surroundUpmixer = it }
         val cfg = surroundConfig
-        upmixer.configure(outChannels, cfg.surroundEffectiveTuning(), cfg.surroundChannelTrimsDb, cfg.surroundPositionOffsetsDb())
+        upmixer.configure(outChannels, cfg.surroundEffectiveTuning(), cfg.surroundChannelTrimsDb, cfg.surroundMoveMixOrNull(outChannels == 8))
         surroundOutChannels = outChannels
     }
 
@@ -213,7 +214,7 @@ internal class AudioDspPipeline(
         surroundConfig = config
         val outCh = surroundOutChannels
         if (outCh > 2) {
-            surroundUpmixer?.configure(outCh, config.surroundEffectiveTuning(), config.surroundChannelTrimsDb, config.surroundPositionOffsetsDb())
+            surroundUpmixer?.configure(outCh, config.surroundEffectiveTuning(), config.surroundChannelTrimsDb, config.surroundMoveMixOrNull(outCh == 8))
         }
         if (discreteActive) {
             surroundTrimmer?.configure(channels, config.surroundChannelTrimsDb, config.surroundPositionOffsetsDb())

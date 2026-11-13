@@ -28,6 +28,8 @@ data class StoreUiState(
 data class ThemesUiState(
     val store: StoreUiState = StoreUiState(),
     val installed: List<ThemeSpec> = emptyList(),
+    /** Themes bundled inside the app (assets/themes), always available offline. */
+    val builtIn: List<ThemeSpec> = emptyList(),
     /** Id of the store theme being downloaded right now. */
     val busyId: String? = null,
     /** A short one-off message ("Applied Neon Night"), shown once. */
@@ -45,6 +47,7 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         reloadInstalled()
+        loadBuiltIn()
         refreshStore()
     }
 
@@ -72,6 +75,10 @@ class ThemeViewModel(application: Application) : AndroidViewModel(application) {
                 if (spec != null) _state.update { it.copy(previews = it.previews + (entry.id to spec)) }
             }
         }
+    }
+
+    private fun loadBuiltIn() {
+        viewModelScope.launch { _state.update { it.copy(builtIn = repo.builtIn()) } }
     }
 
     private fun reloadInstalled() {

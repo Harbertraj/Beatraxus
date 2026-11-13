@@ -18,7 +18,7 @@ data class StoreIndex(val entries: List<ThemeIndexEntry>, val fromCache: Boolean
  *
  * Files live in `filesDir/themes/`:
  *  - `index.json`            last store index that downloaded successfully
- *  - `installed/<id>.json`   every installed theme (from the store or imported)
+ *  - `installed/id.json`     every installed theme (from the store or imported)
  */
 class ThemeRepository(context: Context) {
 
@@ -90,7 +90,7 @@ class ThemeRepository(context: Context) {
     }
 
     /**
-     * Downloads the icon images a theme names into `filesDir/themes/icons/<id>/`. Files that are already
+     * Downloads the icon images a theme names into `filesDir/themes/icons/id/`. Files that are already
      * there are kept (a theme update changes its version, and its icons are fetched again). Best effort:
      * an icon that can't be downloaded just stays the app's own. Returns true when every wanted icon is on the phone.
      */
@@ -132,8 +132,24 @@ class ThemeRepository(context: Context) {
     // ---------------------------------------------------------------- installed
 
     suspend fun installed(): List<ThemeSpec> = withContext(Dispatchers.IO) {
-        installedDir.listFiles { f -> f.extension == "json" }.orEmpty()
+        installedDir.listFiles()?.filter { it.extension == "json" }.orEmpty()
             .mapNotNull { f -> runCatching { ThemeCodec.parseTheme(f.readText()).getOrThrow() }.getOrNull() }
+            .sortedBy { it.name.lowercase() }
+    }
+
+    /**
+     * Themes that ship inside the app (`assets/themes/`). They need no download, work offline
+     * and cannot be removed. Parsed with the same [ThemeCodec] checks as any other theme file.
+     */
+    suspend fun builtIn(): List<ThemeSpec> = withContext(Dispatchers.IO) {
+        appContext.assets.list(BUILT_IN_DIR).orEmpty()
+            .filter { it.endsWith(".json") }
+            .mapNotNull { name ->
+                runCatching {
+                    val text = appContext.assets.open("$BUILT_IN_DIR/$name").use { it.readBytes().toString(Charsets.UTF_8) }
+                    ThemeCodec.parseTheme(text).getOrThrow()
+                }.getOrNull()
+            }
             .sortedBy { it.name.lowercase() }
     }
 
@@ -235,6 +251,7 @@ class ThemeRepository(context: Context) {
             "https://raw.githubusercontent.com/$REPO/$BRANCH/",
             "https://cdn.jsdelivr.net/gh/$REPO@$BRANCH/"
         )
+        private const val BUILT_IN_DIR = "themes"
         private const val INDEX_FRESH_MS = 10 * 60 * 1000L
     }
 }

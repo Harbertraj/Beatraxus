@@ -98,7 +98,7 @@ import com.beatraxus.app.model.surroundGyroAngle
 import com.beatraxus.app.model.surroundOrbitPoint
 import com.beatraxus.app.model.surroundPhoneHeadingDeg
 import com.beatraxus.app.model.surroundPresetDescription
-import com.beatraxus.app.model.surroundPositionGainsDb
+import com.beatraxus.app.model.surroundMoveLevelsDb
 import com.beatraxus.app.model.BUILT_IN_SURROUND_POSITIONS
 import com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS
 import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
@@ -170,17 +170,23 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         } else 0f
         var last = androidx.compose.runtime.withFrameNanos { it }
         var acc = 0f
-        while (true) {
-            val now = androidx.compose.runtime.withFrameNanos { it }
-            acc += (now - last) / 1_000_000_000f
-            last = now
-            if (acc >= ORBIT_STEP_S) {
-                phase = advanceSurroundOrbitPhase(phase, acc, orbitSeconds)
-                val style = styles[orbitStyle.coerceIn(0, styles.size - 1)]
-                val (angle, distance) = surroundOrbitPoint(style, phase, orbitBase)
-                viewModel.setSurroundPosition(angle, distance)
-                acc = 0f
+        try {
+            while (true) {
+                val now = androidx.compose.runtime.withFrameNanos { it }
+                acc += (now - last) / 1_000_000_000f
+                last = now
+                if (acc >= ORBIT_STEP_S) {
+                    phase = advanceSurroundOrbitPhase(phase, acc, orbitSeconds)
+                    val style = styles[orbitStyle.coerceIn(0, styles.size - 1)]
+                    val (angle, distance) = surroundOrbitPoint(style, phase, orbitBase)
+                    viewModel.setSurroundPosition(angle, distance)
+                    acc = 0f
+                }
             }
+        } finally {
+            // Spiral and Figure 8 breathe in and out; when the orbit stops the distance goes back to the one the
+            // user chose, so the slider and the next orbit start from it (not from wherever the breath stopped).
+            viewModel.setSurroundDistance(orbitBase)
         }
     }
 
@@ -224,6 +230,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         MoveState(config.surroundPositionAngleDeg, config.surroundPositionDistance) { angle, distance ->
             orbit = false
             gyro = false
+            orbitBase = distance
             viewModel.setSurroundPosition(angle, distance)
         }
     } else null
@@ -327,9 +334,13 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 PositionPanel(
                     config = config,
                     accent = accent,
+                    sevenOne = plannedChannels >= 8,
+                    // While an orbit runs the live distance breathes (Spiral / Figure 8); the slider shows the
+                    // distance the user chose, so the thumb stays where they put it.
+                    distanceValue = if (orbit) orbitBase else config.surroundPositionDistance,
                     orbit = orbit,
                     onOrbit = {
-                        if (it) { gyro = false; orbitBase = config.surroundPositionDistance }
+                        if (it) gyro = false
                         orbit = it
                     },
                     gyro = gyro,
@@ -339,9 +350,23 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                     onOrbitStyle = { orbitStyle = it },
                     orbitSeconds = orbitSeconds,
                     onOrbitSeconds = { orbitSeconds = it },
-                    onDistance = { orbitBase = it; viewModel.setSurroundPosition(config.surroundPositionAngleDeg, it) },
-                    onSpot = { orbit = false; gyro = false; viewModel.applySurroundPositionPreset(it) },
-                    onCenter = { orbit = false; gyro = false; viewModel.resetSurroundPosition() }
+                    onDistance = {
+                        orbitBase = sanitizeSurroundDistance(it)
+                        // While orbiting, the orbit applies the new base itself on its next step.
+                        if (!orbit) viewModel.setSurroundDistance(it)
+                    },
+                    onSpot = { name ->
+                        orbit = false
+                        gyro = false
+                        BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name }?.let { orbitBase = it.distance }
+                        viewModel.applySurroundPositionPreset(name)
+                    },
+                    onCenter = {
+                        orbit = false
+                        gyro = false
+                        orbitBase = SURROUND_POSITION_MIN_DISTANCE
+                        viewModel.resetSurroundPosition()
+                    }
                 )
             }
 
@@ -819,6 +844,8 @@ private fun positionFromTouch(x: Float, y: Float, w: Float, h: Float, currentAng
 private fun PositionPanel(
     config: DspConfig,
     accent: Color,
+    sevenOne: Boolean,
+    distanceValue: Float,
     orbit: Boolean,
     onOrbit: (Boolean) -> Unit,
     gyro: Boolean,
@@ -832,9 +859,9 @@ private fun PositionPanel(
     onSpot: (String) -> Unit,
     onCenter: () -> Unit
 ) {
-    val distance = sanitizeSurroundDistance(config.surroundPositionDistance)
+    val distance = sanitizeSurroundDistance(distanceValue)
     val percent = (distance * 100f).roundToInt()
-    val offsets = surroundPositionGainsDb(config.surroundPositionAngleDeg, distance)
+    val offsets = surroundMoveLevelsDb(config.surroundPositionAngleDeg, config.surroundPositionDistance, sevenOne)
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -856,7 +883,7 @@ private fun PositionPanel(
                 color = accent, fontSize = 11.sp, fontWeight = FontWeight.Black
             )
         }
-        Text("Drag the glowing orb in the room to place the sound anywhere around you.", color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
+        Text("Drag the glowing orb in the room to place the sound anywhere around you. Close surrounds you, Wide puts it right at that direction.", color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
         Slider(
             value = distance,
             onValueChange = onDistance,
@@ -868,8 +895,8 @@ private fun PositionPanel(
             )
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Closer", color = Color.White.copy(0.55f), fontSize = 10.sp)
-            Text("Wider", color = Color.White.copy(0.55f), fontSize = 10.sp)
+            Text("Close · all around", color = Color.White.copy(0.55f), fontSize = 10.sp)
+            Text("Wide · placed", color = Color.White.copy(0.55f), fontSize = 10.sp)
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             LayoutButton(if (orbit) "Orbit: on" else "Orbit", Icons.Rounded.Autorenew, orbit, accent, Modifier.weight(1f)) {
@@ -932,7 +959,7 @@ private fun PositionPanel(
             }
         }
         Text(
-            "POSITION EFFECT (dB, on top of channel levels)", color = Color.White.copy(0.55f), fontSize = 9.sp,
+            "SPEAKER LEVELS WHILE MOVING (dB, 0 = normal stereo)", color = Color.White.copy(0.55f), fontSize = 9.sp,
             fontWeight = FontWeight.Bold, letterSpacing = 1.sp
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
