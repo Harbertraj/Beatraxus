@@ -2854,7 +2854,8 @@ class VideoPlayerViewModel(
     fun applyCinemaPreset() {
         setUpscaleMode(VideoUpscaleMode.CLEAN)
         setUpscaleStrength(0.5f)
-        if (_uiState.value.surroundLayout != SurroundLayout.FIVE_ONE) setSurroundLayout(SurroundLayout.FIVE_ONE)
+        // No-op when the layout already is 5.1 (applySurroundConfig skips unchanged configs).
+        setSurroundLayout(SurroundLayout.FIVE_ONE)
         if (!_uiState.value.surroundSimulatorEnabled) setSurroundSimulatorEnabled(true)
     }
 
