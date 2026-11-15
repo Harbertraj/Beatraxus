@@ -63,10 +63,18 @@ def train_numpy(args) -> int:
     print(f"{len(files)} shards, {n} samples (numpy backend)", flush=True)
     rng = np.random.default_rng(0)
     perm = rng.permutation(n)
-    n_val = min(200_000, n // 10)
-    vi, ti = np.sort(perm[:n_val]), perm[n_val:]
-    xv, cv, gv = (a[vi].astype(np.float32) for a in (x, c, g))
+    if args.val_data:       # explicit hold-out (e.g. a later time range of a clip): never trained on
+        _, xv, cv, gv = load(args.val_data)
+        xv, cv, gv = (a.astype(np.float32) for a in (xv, cv, gv))
+        ti = perm
+        print(f"validation set {args.val_data}: {len(xv)} samples", flush=True)
+    else:
+        n_val = min(200_000, n // 10)
+        vi, ti = np.sort(perm[:n_val]), perm[n_val:]
+        xv, cv, gv = (a[vi].astype(np.float32) for a in (x, c, g))
     p = init_params(rng, args.h1, args.h2)
+    if args.init:           # fine-tune from existing weights
+        p = {k: v.astype(np.float32) for k, v in np.load(args.init).items()}
     m = {k: np.zeros_like(v) for k, v in p.items()}
     v2 = {k: np.zeros_like(v) for k, v in p.items()}
     steps_per_epoch = max(1, len(ti) // args.batch)
@@ -256,6 +264,8 @@ def main() -> int:
     ap.add_argument("--h2", type=int, default=10)
     ap.add_argument("--max-shards", type=int, default=None)
     ap.add_argument("--backend", choices=["auto", "jax", "numpy"], default="auto")
+    ap.add_argument("--init", default=None, help="npz of weights to start from (fine-tuning)")
+    ap.add_argument("--val-data", default=None, help="directory of shards used only for validation / best-epoch choice")
     ap.add_argument("--export", default=None, help="npz to export instead of training")
     ap.add_argument("--glsl", default=None)
     args = ap.parse_args()

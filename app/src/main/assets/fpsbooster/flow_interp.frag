@@ -13,7 +13,8 @@
 // where the two frames really agree under that motion (colour check), so a moving object is never dragged along
 // with the background. This removes most of the patchwork of unmoved frame on fast pans.
 // Pixels that are identical in both frames and have no motion around them skip all of this (static early-out).
-// A scene cut (uCut.b) shows the nearest real frame everywhere.
+// A scene cut (uCut.b = 1) shows the nearest real frame everywhere; a sustained break (uCut.b = 2, a whip pan: see
+// cut_detect.frag) shows the plain blend of the two real frames, like the motion blur of the real shot.
 //
 // ---- AI fusion (optional) -------------------------------------------------------------------------------------
 // One source file, three programs (the loader prepends the #defines, see InterpShaderSource.kt):
@@ -52,7 +53,7 @@ uniform sampler2D uA;        // RGBA8 frame A, LINEAR
 uniform sampler2D uB;        // RGBA8 frame B, LINEAR
 uniform sampler2D uFw;       // RGBA16F, LINEAR: rg = A->B flow (work px), b = match cost, a = fw/bw inconsistency (px)
 uniform sampler2D uBw;       // RGBA16F, LINEAR: B->A
-uniform sampler2D uCut;      // 1x1 RGBA8/16F: b = 1 on a scene cut
+uniform sampler2D uCut;      // 1x1 RGBA16F: b = 1 on a scene cut, 2 on a sustained break (whip pan)
 uniform sampler2D uRisk;     // RGBA16F, LINEAR, ~1 texel per 16 work px (risk_map.frag): r = how much the two flow fields disagree around here
 uniform sampler2D uGlobal;   // 1x1 RGBA16F, NEAREST: rg = dominant A->B motion (work px), b = share of the picture that agrees
 uniform sampler2D uFuse0;    // AI composite only: RGBA16F fusion map, LINEAR: weights of candidates 0..3
@@ -514,6 +515,8 @@ void main() {
         rgb = mix(rgb, rifeRgb, rifeConf);
       }
     }
+  } else if (uWarp == 1 && texture(uCut, vec2(0.5)).b > 1.5) {
+    rgb = mix(pa, pb, uT);   // whip pan: a cross-fade, not a frozen frame
   }
 
   o = finish(rgb);

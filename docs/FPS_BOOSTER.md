@@ -597,3 +597,23 @@ weights to 3-4 LSB on one or two rim pixels; the pixel-fraction bound is unchang
 - Whip pans (about 90+ px/frame with motion blur) are flagged by the cut detector, so the engine shows the nearest real frame; a
   cross-fade scores about 2 dB better on those 6 of 276 frames. Telling a whip from a cut (e.g. by colour histogram) is the next step.
 - Not verified: Kotlin compile, shader compile on real GPUs, GPU cost of the extra boundary fetches, battery / thermal.
+
+## 17. Real-clip tuning: whip-pan cross-fade and fusion fine-tune
+
+Measured offline (tools/fpsbooster_harness, Mesa llvmpipe) on one 19 s screen recording (365 unique frames, 960x430;
+frame k rebuilt from k-1 and k+1 and compared with the real frame k). Nothing here was run on a phone.
+
+* **Cut vs whip pan.** `cut_detect.frag` flagged every pair of a fast whip pan as a scene cut, so the picture froze on
+  the nearest real frame for about half a second. A real cut is ONE isolated flagged pair; a whip pan flags many in a
+  row. The pass now also reads the previous pair's result (`uPrev`, `uPrevValid`) and writes `b = 2` for a "sustained
+  break", which `flow_interp.frag` renders as a cross-fade. Isolated cuts are unchanged (still a clean frame, 99 dB).
+  `OpticalFlowRenderer` binds the previous slot's cut texture.
+* **Fusion weights.** `ai_fusion.glsl` was re-trained (same 22-16-10-6 network) on synthetic data plus frames 1-254 of
+  the clip and validated on the never-seen frames 255-363. A bigger network (24-12) did not help, so capacity is not
+  the limit. Tools: `ai/gen_clip_data.py`, `ai/glsl_to_npz.py`, `train_fusion.py --init --val-data`, `eval_real.py`.
+
+Results, all non-cut triples (streaming protocol): repeat 29.5 dB, blend 32.2, Classic 32.4, optical flow 34.6 -> 34.7,
+optical flow + AI fusion 37.0 -> 37.3 dB (SSIM 0.961 -> 0.964; fast motion 31.0 -> 31.5 dB). On the held-out frames
+alone: 39.74 -> 39.94 dB (fast 34.05 -> 34.76). The gains are real but small and measured on a single clip.
+Classic is limited by its +-8 block search (about 32 px at this size): above that it falls back to a cross-fade, and
+loosening its confidence gates changed nothing measurable, so it is left as it was.

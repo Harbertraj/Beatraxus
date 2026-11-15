@@ -10,8 +10,15 @@
 //     disagrees with the backward field (forward/backward inconsistency far beyond what the speed explains). Measured on a
 //     real 24 FPS action film (14 hard cuts, 353 non-cut pairs incl. whip pans, flying objects, motion blur, grain):
 //     share of such lattice points >= 0.65 at every cut, <= 0.45 everywhere else (a synthetic cut: 0.98).
-// r = mean cost (coarse), g = fraction of blocks with a poor match (coarse), b = 1 if cut,
+// r = mean cost (coarse), g = fraction of blocks with a poor match (coarse), b = 1 on a cut, 2 on a SUSTAINED break,
 // a = share of lattice points that are "unrelated" in the sense of test 2 (diagnostics / harness).
+//
+// Cut or whip pan? A hard cut is ONE broken pair: the pairs before and after it are ordinary. A whip pan (the camera
+// swings so fast that frame and neighbour share no content) breaks many pairs in a row, and showing the nearest real
+// frame for all of them freezes the picture for half a second. So when the PREVIOUS pair was flagged too (uPrev, read
+// from the previous pair's own texture) the break is "sustained": b = 2, and the interpolation shader cross-fades the two
+// frames, which is what a real blurred whip pan looks like. Measured on a real film (19 s clip, 3 cuts, 1 whip pan):
+// the cut flag fired on all 13 pairs of the whip pan; the share test alone cannot tell them from cuts (0.56-0.85 vs 0.79-0.94).
 precision highp float;
 precision highp int;
 precision highp sampler2D;
@@ -21,6 +28,8 @@ uniform sampler2D uCons;     // RGBA16F final forward field: .xy = flow (work px
 uniform ivec2 uConsGrid;
 uniform float uMeanThresh;
 uniform float uPoorThresh;
+uniform sampler2D uPrev;     // 1x1: the previous pair's result of this pass (b >= 0.5 when that pair was flagged)
+uniform int uPrevValid;      // 1 only when uPrev really is the pair directly before this one (same sequence, not skipped)
 out vec4 o;
 
 const float CUT_COST = 0.012;    // match cost above which a block matches badly (real motion: median 0.003-0.010)
@@ -53,5 +62,6 @@ void main() {
   }
   float share = unrelated / float(SX * SY);
   bool cut = (mean > uMeanThresh && frac > 0.5) || share > CUT_SHARE;
-  o = vec4(mean, frac, cut ? 1.0 : 0.0, share);
+  bool prevFlagged = (uPrevValid == 1) && texture(uPrev, vec2(0.5)).b >= 0.5;
+  o = vec4(mean, frac, cut ? (prevFlagged ? 2.0 : 1.0) : 0.0, share);
 }

@@ -856,6 +856,10 @@ class OpticalFlowRenderer(
             GLES30.glUniform2i(cut.loc("uConsGrid"), gridW[0], gridH[0])
             GLES30.glUniform1f(cut.loc("uMeanThresh"), CUT_MEAN)
             GLES30.glUniform1f(cut.loc("uPoorThresh"), CUT_POOR)
+            // The previous pair's verdict tells a whip pan (many flagged pairs in a row: cross-fade) from a hard cut
+            // (one isolated flagged pair: show the nearest real frame). a.cut is the previous pair's result.
+            tex(2, cut, "uPrev", a.cut)
+            GLES30.glUniform1i(cut.loc("uPrevValid"), if (a.hasFlow) 1 else 0)
             GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         }
 
