@@ -368,6 +368,31 @@ data class DspConfig(
     val surroundTuneEnabled: Boolean = false,
     /** The user's Upmix Lab values; only used while [surroundTuneEnabled] is on. */
     val surroundTune: SurroundTuning? = null,
+    /**
+     * Headphone surround: the 5.1 / 7.1 mix is folded back to two ears with a head model, so it works on headphones,
+     * earbuds and Bluetooth, where a real multichannel output does not exist. See [resolveSurroundBinauralChannels].
+     */
+    val surroundHeadphoneMode: Boolean = false,
+    /** Smart steering: the upmix follows the song (centred voices to the centre, loose ambience to the surrounds). */
+    val surroundSmartSteering: Boolean = false,
+    val surroundSmartSteeringAmount: Float = SURROUND_SMART_DEFAULT_AMOUNT,
+    /** Bass management: the main speakers are high-passed at the bass cutoff, the subwoofer carries the low end. */
+    val surroundBassManagement: Boolean = false,
+    /** Distance calibration: on = every speaker is delayed so all arrive together, from [surroundSpeakerDistancesM]. */
+    val surroundCalibrationEnabled: Boolean = false,
+    /** Distance in metres per speaker in [SurroundChannel] order: L R C SL SR BL BR SW. */
+    val surroundSpeakerDistancesM: List<Float> = DEFAULT_SURROUND_DISTANCES_M,
+    /** User slots "Custom 2".."Custom 4" ("Custom 1" stays in [surroundCustomTrimsDb]). */
+    val surroundSlotPresets: List<SurroundSlotPreset> = emptyList(),
+    /** Speaker index whose test noise is playing, -1 = none. Never saved. */
+    val surroundTestChannel: Int = -1,
+    /** True while the A/B button is held: plain stereo instead of the surround mix. Never saved. */
+    val surroundHoldOriginal: Boolean = false,
+    /** Audio upscaler (Studio DSP > Master): restores some of the highs a low-bitrate file lost. Off by default. */
+    val audioUpscalerEnabled: Boolean = false,
+    val audioUpscalerAmount: Float = AUDIO_UPSCALER_AMOUNT_DEFAULT,
+    /** Where the file's own highs stop (Hz); the upscaler fills in above it. */
+    val audioUpscalerCutoffHz: Float = AUDIO_UPSCALER_CUTOFF_DEFAULT_HZ,
     /** Stem Mixer page switch. Off = the song is played as it is. */
     val stemMixerEnabled: Boolean = false,
     /** Level per stem in dB, [StemChannel] order (Vocals, Drums, Bass, Guitar, Piano, Other). */
@@ -420,7 +445,9 @@ data class DspConfig(
                     else -> "Surround"
                 }
             )
+            if (surroundHeadphoneMode) add("Headphone Surround")
         }
+        if (audioUpscalerEnabled && !bypassAll && !bitPerfectEnabled) add("Upscaler")
         if (float64Enabled) add("Float64")
         if (limiterEnabled) add("Limiter")
         if (noHeadroomGainEnabled) add("No Headroom Gain")
@@ -445,7 +472,7 @@ fun DspConfig.stageStates(): List<DspStageState> {
     return listOf(
         stage(c.eqEnabled || c.autoEqEnabled || c.aiEqEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassEq),
         stage(c.surroundEnabled, c.bitPerfectEnabled),
-        stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled, c.bitPerfectEnabled),
+        stage(c.bassEnabled || c.trebleEnabled || c.airEnabled || c.balanceEnabled || c.stereoExpansionEnabled || c.audioUpscalerEnabled, c.bitPerfectEnabled),
         stage(c.reverbEnabled, c.bitPerfectEnabled && !c.bitPerfectUnbypassReverb),
         stage(c.stemMixerEnabled, c.bitPerfectEnabled)
     )

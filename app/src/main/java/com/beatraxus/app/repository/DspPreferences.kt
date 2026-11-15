@@ -230,6 +230,16 @@ class DspPreferences(private val context: Context) {
             surroundPositionDistance = sanitizeSurroundDistance(pref(SURROUND_POSITION_DISTANCE, SURROUND_POSITION_DEFAULT_DISTANCE)),
             surroundTuneEnabled = pref(SURROUND_TUNE_ENABLED, false),
             surroundTune = deserializeSurroundTuning(prefNullable(SURROUND_TUNE)),
+            surroundHeadphoneMode = pref(SURROUND_HEADPHONE_MODE, false),
+            surroundSmartSteering = pref(SURROUND_SMART_STEERING, false),
+            surroundSmartSteeringAmount = sanitizeSmartSteeringAmount(pref(SURROUND_SMART_AMOUNT, SURROUND_SMART_DEFAULT_AMOUNT)),
+            surroundBassManagement = pref(SURROUND_BASS_MANAGEMENT, false),
+            surroundCalibrationEnabled = pref(SURROUND_CALIBRATION_ENABLED, false),
+            surroundSpeakerDistancesM = deserializeSurroundDistances(prefNullable(SURROUND_DISTANCES)) ?: DEFAULT_SURROUND_DISTANCES_M,
+            surroundSlotPresets = deserializeSurroundSlots(prefNullable(SURROUND_SLOT_PRESETS)),
+            audioUpscalerEnabled = pref(AUDIO_UPSCALER_ENABLED, false),
+            audioUpscalerAmount = sanitizeUpscalerAmount(pref(AUDIO_UPSCALER_AMOUNT, AUDIO_UPSCALER_AMOUNT_DEFAULT)),
+            audioUpscalerCutoffHz = sanitizeUpscalerCutoff(pref(AUDIO_UPSCALER_CUTOFF, AUDIO_UPSCALER_CUTOFF_DEFAULT_HZ)),
             stemMixerEnabled = pref(STEM_MIXER_ENABLED, false),
             stemGainsDb = deserializeStemGains(prefNullable(STEM_GAINS)),
             stemMuteMask = sanitizeStemMask(pref(STEM_MUTE_MASK, 0)),
@@ -382,6 +392,16 @@ class DspPreferences(private val context: Context) {
             set(SURROUND_POSITION_DISTANCE, config.surroundPositionDistance)
             set(SURROUND_TUNE_ENABLED, config.surroundTuneEnabled)
             set(SURROUND_TUNE, serializeSurroundTuning(config.surroundTune))
+            set(SURROUND_HEADPHONE_MODE, config.surroundHeadphoneMode)
+            set(SURROUND_SMART_STEERING, config.surroundSmartSteering)
+            set(SURROUND_SMART_AMOUNT, config.surroundSmartSteeringAmount)
+            set(SURROUND_BASS_MANAGEMENT, config.surroundBassManagement)
+            set(SURROUND_CALIBRATION_ENABLED, config.surroundCalibrationEnabled)
+            set(SURROUND_DISTANCES, serializeSurroundDistances(config.surroundSpeakerDistancesM))
+            set(SURROUND_SLOT_PRESETS, serializeSurroundSlots(config.surroundSlotPresets))
+            set(AUDIO_UPSCALER_ENABLED, config.audioUpscalerEnabled)
+            set(AUDIO_UPSCALER_AMOUNT, config.audioUpscalerAmount)
+            set(AUDIO_UPSCALER_CUTOFF, config.audioUpscalerCutoffHz)
             set(STEM_MIXER_ENABLED, config.stemMixerEnabled)
             set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
             set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
@@ -567,6 +587,16 @@ class DspPreferences(private val context: Context) {
                 set(SURROUND_POSITION_DISTANCE, config.surroundPositionDistance)
                 set(SURROUND_TUNE_ENABLED, config.surroundTuneEnabled)
                 set(SURROUND_TUNE, serializeSurroundTuning(config.surroundTune))
+                set(SURROUND_HEADPHONE_MODE, config.surroundHeadphoneMode)
+                set(SURROUND_SMART_STEERING, config.surroundSmartSteering)
+                set(SURROUND_SMART_AMOUNT, config.surroundSmartSteeringAmount)
+                set(SURROUND_BASS_MANAGEMENT, config.surroundBassManagement)
+                set(SURROUND_CALIBRATION_ENABLED, config.surroundCalibrationEnabled)
+                set(SURROUND_DISTANCES, serializeSurroundDistances(config.surroundSpeakerDistancesM))
+                set(SURROUND_SLOT_PRESETS, serializeSurroundSlots(config.surroundSlotPresets))
+                set(AUDIO_UPSCALER_ENABLED, config.audioUpscalerEnabled)
+                set(AUDIO_UPSCALER_AMOUNT, config.audioUpscalerAmount)
+                set(AUDIO_UPSCALER_CUTOFF, config.audioUpscalerCutoffHz)
                 set(STEM_MIXER_ENABLED, config.stemMixerEnabled)
                 set(STEM_GAINS, serializeStemGains(config.stemGainsDb))
                 set(STEM_MUTE_MASK, sanitizeStemMask(config.stemMuteMask))
@@ -982,6 +1012,16 @@ class DspPreferences(private val context: Context) {
         private val SURROUND_POSITION_DISTANCE = floatPreferencesKey("surround_position_distance")
         private val SURROUND_TUNE_ENABLED = booleanPreferencesKey("surround_tune_enabled")
         private val SURROUND_TUNE = stringPreferencesKey("surround_tune")
+        private val SURROUND_HEADPHONE_MODE = booleanPreferencesKey("surround_headphone_mode")
+        private val SURROUND_SMART_STEERING = booleanPreferencesKey("surround_smart_steering")
+        private val SURROUND_SMART_AMOUNT = floatPreferencesKey("surround_smart_amount")
+        private val SURROUND_BASS_MANAGEMENT = booleanPreferencesKey("surround_bass_management")
+        private val SURROUND_CALIBRATION_ENABLED = booleanPreferencesKey("surround_calibration_enabled")
+        private val SURROUND_DISTANCES = stringPreferencesKey("surround_distances_m")
+        private val SURROUND_SLOT_PRESETS = stringPreferencesKey("surround_slot_presets")
+        private val AUDIO_UPSCALER_ENABLED = booleanPreferencesKey("audio_upscaler_enabled")
+        private val AUDIO_UPSCALER_AMOUNT = floatPreferencesKey("audio_upscaler_amount")
+        private val AUDIO_UPSCALER_CUTOFF = floatPreferencesKey("audio_upscaler_cutoff_hz")
         private val STEM_MIXER_ENABLED = booleanPreferencesKey("stem_mixer_enabled")
         private val STEM_GAINS = stringPreferencesKey("stem_gains_db")
         private val STEM_MUTE_MASK = intPreferencesKey("stem_mute_mask")

@@ -174,6 +174,9 @@ class AudioPlaybackService : Service() {
 
     fun getLevels(): FloatArray = engine.getLevels()
 
+    /** Live level of every surround speaker (room view); false while no surround upmix runs. */
+    fun getSurroundLevels(dst: FloatArray): Boolean = engine.getSurroundLevels(dst)
+
     override fun onCreate() {
         super.onCreate()
         instance = this

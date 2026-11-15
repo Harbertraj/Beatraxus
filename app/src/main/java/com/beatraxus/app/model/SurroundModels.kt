@@ -101,7 +101,7 @@ const val SURROUND_CUSTOM_PRESET_NAME = "Custom 1"
  */
 fun surroundPresetDescription(activePreset: String): String = when {
     activePreset.isEmpty() -> "Your own mix. Tap Save as Custom 1 to keep it."
-    activePreset == SURROUND_CUSTOM_PRESET_NAME -> "Your saved mix."
+    activePreset == SURROUND_CUSTOM_PRESET_NAME || activePreset in SURROUND_EXTRA_SLOT_NAMES -> "Your saved mix."
     else -> BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == activePreset }?.description.orEmpty()
 }
 
@@ -137,6 +137,9 @@ fun resolveSurroundOutputChannels(
     if (!config.surroundEnabled || config.bypassAll || config.bitPerfectEnabled) return sourceChannels
     if (isDoP) return sourceChannels
     if (sourceChannels !in 1..2) return sourceChannels
+    // Headphone surround runs inside the pipeline and hands the output two channels, so a stereo device is not widened.
+    // A device that really has 5.1 / 7.1 speakers keeps the normal discrete upmix.
+    if (config.surroundHeadphoneMode && deviceMaxChannels <= 2) return sourceChannels
     val target = when (config.surroundLayout) {
         SurroundLayout.STEREO -> 2
         SurroundLayout.FIVE_ONE -> 6
@@ -179,7 +182,11 @@ fun resolveSurroundStage(
 ): SurroundStage {
     if (!config.surroundEnabled || config.bypassAll || config.bitPerfectEnabled || isDoP) return SurroundStage.OFF
     return when (sourceChannels) {
-        1, 2 -> if (outputChannels > 2) SurroundStage.UPMIX else SurroundStage.OFF
+        1, 2 -> if (outputChannels > 2 || resolveSurroundBinauralChannels(config, sourceChannels, isDoP, outputChannels) > 0) {
+            SurroundStage.UPMIX
+        } else {
+            SurroundStage.OFF
+        }
         6, 8 -> if (outputChannels == sourceChannels) SurroundStage.DISCRETE else SurroundStage.OFF
         else -> SurroundStage.OFF
     }
@@ -243,7 +250,15 @@ fun DspConfig.toSurroundEngineConfig(): DspConfig = DspConfig(
     surroundPositionAngleDeg = surroundPositionAngleDeg,
     surroundPositionDistance = surroundPositionDistance,
     surroundTuneEnabled = surroundTuneEnabled,
-    surroundTune = surroundTune
+    surroundTune = surroundTune,
+    surroundHeadphoneMode = surroundHeadphoneMode,
+    surroundSmartSteering = surroundSmartSteering,
+    surroundSmartSteeringAmount = surroundSmartSteeringAmount,
+    surroundBassManagement = surroundBassManagement,
+    surroundCalibrationEnabled = surroundCalibrationEnabled,
+    surroundSpeakerDistancesM = surroundSpeakerDistancesM,
+    surroundTestChannel = surroundTestChannel,
+    surroundHoldOriginal = surroundHoldOriginal
 )
 
 // ── 360° move: place the sound anywhere around the listener ────────────────────────────────────────────────
@@ -469,6 +484,12 @@ fun DspConfig.withSurroundPreset(name: String): DspConfig {
         val saved = surroundCustomTrimsDb ?: return this
         return copy(
             surroundChannelTrimsDb = saved, surroundMode = surroundCustomMode, surroundActivePreset = name,
+            surroundTuneEnabled = false
+        )
+    }
+    surroundSlotPresets.firstOrNull { it.name == name }?.let { slot ->
+        return copy(
+            surroundChannelTrimsDb = slot.trimsDb, surroundMode = slot.mode, surroundActivePreset = name,
             surroundTuneEnabled = false
         )
     }

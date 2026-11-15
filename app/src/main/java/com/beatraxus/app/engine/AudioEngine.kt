@@ -16,6 +16,7 @@ import com.beatraxus.app.model.SampleFormat
 import com.beatraxus.app.model.Song
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundStage
+import com.beatraxus.app.model.resolveSurroundBinauralChannels
 import com.beatraxus.app.model.resolveSurroundOutputChannels
 import com.beatraxus.app.model.resolveSurroundStage
 import com.beatraxus.app.model.toSurroundEngineConfig
@@ -1068,6 +1069,13 @@ class AudioEngine(
         return if (deviceChannels > 2 && format.channels in 1..2 && !format.isDoP) deviceChannels else 0
     }
 
+    /** 6 / 8 virtual speakers while headphone surround folds this stereo stream to two ears, else 0. */
+    private fun binauralChannelsForOutput(format: PcmAudioFormat): Int =
+        resolveSurroundBinauralChannels(dspConfig, format.channels, format.isDoP, output.outputChannelCount())
+
+    /** Live level of every surround speaker for the room view; false while no surround upmix runs. */
+    fun getSurroundLevels(dst: FloatArray): Boolean = activeSession?.dspPipeline?.copySurroundLevels(dst) ?: false
+
     /**
      * True when the source already is a real 5.1 / 7.1 mix that the surround stage must keep discrete (only trims
      * apply). Mirrors [surroundChannelsForOutput] for the multichannel case.
@@ -1214,6 +1222,7 @@ class AudioEngine(
                     // change) follows it here, so pipeline and output can never stay out of step.
                     targetSession.dspPipeline.syncSurroundChannels(surroundChannelsForOutput(format))
                     targetSession.dspPipeline.syncDiscreteTrims(discreteSurroundForOutput(format))
+                    targetSession.dspPipeline.syncBinauralChannels(binauralChannelsForOutput(format))
 
                     targetSession.dspPipeline.process(localBuffer, sampleCount, format.channels, format.sampleRate)
                 }
