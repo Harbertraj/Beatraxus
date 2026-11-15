@@ -10,6 +10,7 @@ import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.pow
+import kotlin.math.sqrt
 import kotlin.math.sin
 import kotlin.math.tanh
 
@@ -90,6 +91,60 @@ internal class SurroundUpmixer(sampleRate: Int) {
     private var y1b = 0.0
     private var y2b = 0.0
 
+    // --- smart steering: the matrix follows the song (centred voices -> centre, loose ambience -> surrounds) ---
+    private var smartAmount = 0f
+    private var corrLL = 0f
+    private var corrRR = 0f
+    private var corrLR = 0f
+    private var smartCentre = 1f
+    private var smartSurround = 1f
+    private val corrDecay: Float = exp(-1.0 / (SMART_WINDOW_SECONDS * sr)).toFloat()
+    private val smartSmoothing: Float = (1.0 - exp(-1.0 / (SMART_SMOOTH_SECONDS * sr))).toFloat()
+
+    // --- bass management: 4th-order (two Butterworth sections) high-pass on every main speaker ---
+    private var bassWanted = false
+    private var bassBlend = 0f
+    private val bassSmoothing: Float = (1.0 - exp(-1.0 / (0.02 * sr))).toFloat()
+    private var hb0 = 1.0
+    private var hb1 = 0.0
+    private var hb2 = 0.0
+    private var ha1 = 0.0
+    private var ha2 = 0.0
+    private val hpX1a = DoubleArray(MAX_SLOTS)
+    private val hpX2a = DoubleArray(MAX_SLOTS)
+    private val hpY1a = DoubleArray(MAX_SLOTS)
+    private val hpY2a = DoubleArray(MAX_SLOTS)
+    private val hpX1b = DoubleArray(MAX_SLOTS)
+    private val hpX2b = DoubleArray(MAX_SLOTS)
+    private val hpY1b = DoubleArray(MAX_SLOTS)
+    private val hpY2b = DoubleArray(MAX_SLOTS)
+
+    // --- distance calibration: one short delay line per output slot ---
+    private val calLen = (sr * MAX_CAL_DELAY_SECONDS).toInt() + 4
+    private val calBuf = Array(MAX_SLOTS) { FloatArray(calLen) }
+    private val calDelay = IntArray(MAX_SLOTS)
+    private var calOn = false
+    private var calWp = 0
+
+    // --- A/B hold (plain stereo on the front pair) and speaker test noise ---
+    private var holdWanted = 0f
+    private var holdBlend = 0f
+    private val holdSmoothing: Float = (1.0 - exp(-1.0 / (0.008 * sr))).toFloat()
+    private var testWanted = 0f
+    private var testBlend = 0f
+    private var testSlot = -1
+    private val testSmoothing: Float = (1.0 - exp(-1.0 / (0.015 * sr))).toFloat()
+    private var pink0 = 0f
+    private var pink1 = 0f
+    private var pink2 = 0f
+    private var testLfe = 0f
+    private var rngState = 0x2545F491
+    private val testLfeCoef: Float = (1.0 - exp(-2.0 * PI * 120.0 / sr)).toFloat()
+
+    // --- live level per speaker for the room view (UI order), peak with a fast decay ---
+    private val meterBatchPeak = FloatArray(MAX_SLOTS)
+    private val meterLevel = FloatArray(CHANNELS_UI)
+
     /**
      * Applies new matrix parameters / trims. Safe to call while audio is flowing (gains glide to their new
      * value); the very first call snaps so the stream does not fade in from silence.
@@ -102,7 +157,8 @@ internal class SurroundUpmixer(sampleRate: Int) {
         outChannels: Int,
         tuning: SurroundTuning,
         trimsDb: List<Float>,
-        move: SurroundMoveMix? = null
+        move: SurroundMoveMix? = null,
+        extras: SurroundExtras = SurroundExtras.NONE
     ) {
         require(outChannels == 6 || outChannels == 8) { "Unsupported surround channel count: $outChannels" }
         this.outChannels = outChannels
@@ -128,6 +184,55 @@ internal class SurroundUpmixer(sampleRate: Int) {
             configured = true
         }
         configureMove(move)
+        configureExtras(tuning, extras)
+    }
+
+    private fun configureExtras(tuning: SurroundTuning, extras: SurroundExtras) {
+        smartAmount = if (extras.smartSteering.isNaN()) 0f else extras.smartSteering.coerceIn(0f, 1f)
+
+        bassWanted = extras.bassManagement
+        if (bassWanted) designHighPass(tuning.lfeCrossoverHz.toDouble().coerceIn(40.0, 250.0))
+
+        val delays = extras.delaysMs
+        val map = discreteChannelTrimIndex(outChannels)
+        var anyDelay = false
+        calDelay.fill(0)
+        if (delays != null && map != null) {
+            for (slot in map.indices) {
+                val ms = delays.getOrNull(map[slot]) ?: 0f
+                val samples = if (ms.isNaN() || ms < 0f) 0 else (ms * sr / 1000.0).toInt().coerceIn(0, calLen - 1)
+                calDelay[slot] = samples
+                if (samples > 0) anyDelay = true
+            }
+        }
+        if (anyDelay && !calOn) {
+            for (b in calBuf) b.fill(0f)
+            calWp = 0
+        }
+        calOn = anyDelay
+
+        val slot = testSlotFor(extras.testChannel, outChannels)
+        if (slot >= 0) {
+            testSlot = slot
+            testWanted = 1f
+        } else {
+            testWanted = 0f
+        }
+        holdWanted = if (extras.holdOriginal) 1f else 0f
+    }
+
+    /** Output slot of the speaker with UI index [ui] in a layout of [channels], or -1 when that speaker does not exist. */
+    private fun testSlotFor(ui: Int, channels: Int): Int {
+        if (ui < 0) return -1
+        val map = discreteChannelTrimIndex(channels) ?: return -1
+        for (slot in map.indices) if (map[slot] == ui) return slot
+        return -1
+    }
+
+    /** Copies the live level (0..1 peak) of every speaker, UI order L R C SL SR BL BR SW, into [dst]. */
+    fun readLevels(dst: FloatArray) {
+        val n = minOf(dst.size, CHANNELS_UI)
+        for (i in 0 until n) dst[i] = meterLevel[i]
     }
 
     private fun configureMove(move: SurroundMoveMix?) {
@@ -158,6 +263,12 @@ internal class SurroundUpmixer(sampleRate: Int) {
         backAmbience = 0f
         x1a = 0.0; x2a = 0.0; y1a = 0.0; y2a = 0.0
         x1b = 0.0; x2b = 0.0; y1b = 0.0; y2b = 0.0
+        hpX1a.fill(0.0); hpX2a.fill(0.0); hpY1a.fill(0.0); hpY2a.fill(0.0)
+        hpX1b.fill(0.0); hpX2b.fill(0.0); hpY1b.fill(0.0); hpY2b.fill(0.0)
+        for (b in calBuf) b.fill(0f)
+        calWp = 0
+        corrLL = 0f; corrRR = 0f; corrLR = 0f
+        smartCentre = 1f; smartSurround = 1f
     }
 
     /**
@@ -177,6 +288,10 @@ internal class SurroundUpmixer(sampleRate: Int) {
         val frontSide = frontSideKeep
         val gSide = sideGain
         val gBack = backGain
+        val smart = smartAmount
+        val smartOn = smart > 0f
+        val post = bassWanted || bassBlend > 0f || calOn || holdWanted > 0f || holdBlend > 0f ||
+            testWanted > 0f || testBlend > 0f
         val sDelay = sideDelay
         val bDelay = backDelay
         val amb = ambienceCoef
@@ -218,11 +333,45 @@ internal class SurroundUpmixer(sampleRate: Int) {
                 currentGain[g] += smoothing * (targetGain[g] - currentGain[g])
             }
 
-            val front = frontMid * m
-            val frontL = front + frontSide * s
-            val frontR = front - frontSide * s
-            val centreSig = centre * m
-            val surroundL = gSide * sAmb
+            var centreCur = centre
+            var frontMidCur = frontMid
+            var frontSideCur = frontSide
+            var gSideCur = gSide
+            var gBackCur = gBack
+            if (smartOn) {
+                // How centred (same level, same phase) and how ambient (uncorrelated) the song is right now.
+                corrLL = corrDecay * corrLL + (1f - corrDecay) * l * l
+                corrRR = corrDecay * corrRR + (1f - corrDecay) * r * r
+                corrLR = corrDecay * corrLR + (1f - corrDecay) * l * r
+                val power = corrLL + corrRR
+                var centred = 0f
+                var ambient = 0f
+                if (power > 1e-9f) {
+                    val geo = sqrt(corrLL * corrRR)
+                    val rho = if (geo > 1e-9f) (corrLR / geo).coerceIn(-1f, 1f) else 0f
+                    val balance = 2f * geo / power
+                    centred = rho.coerceAtLeast(0f) * balance
+                    ambient = 1f - abs(rho)
+                }
+                val wantCentre = (1f - smart) + smart * 2f * centred
+                val wantSurround = (1f - smart) + smart * (0.5f + ambient)
+                smartCentre += smartSmoothing * (wantCentre - smartCentre)
+                smartSurround += smartSmoothing * (wantSurround - smartSurround)
+                val kDyn = (k * smartCentre).coerceAtMost(0.5f)
+                centreCur = SQRT2 * kDyn
+                frontMidCur = 1f - kDyn
+                val totalBase = gSide + gBack
+                var mul = smartSurround
+                if (totalBase > 0f && totalBase * mul > 1f) mul = 1f / totalBase
+                gSideCur = gSide * mul
+                gBackCur = gBack * mul
+                frontSideCur = 1f - FOLD * totalBase * mul
+            }
+            val front = frontMidCur * m
+            val frontL = front + frontSideCur * s
+            val frontR = front - frontSideCur * s
+            val centreSig = centreCur * m
+            val surroundL = gSideCur * sAmb
             val surroundR = -surroundL
 
             val ob = f * outCh
@@ -231,7 +380,7 @@ internal class SurroundUpmixer(sampleRate: Int) {
             output[ob + 2] = clamp(centreSig * currentGain[IDX_C])
             output[ob + 3] = clamp(lfe * currentGain[IDX_SW])
             if (sevenOne) {
-                val backL = gBack * bAmb
+                val backL = gBackCur * bAmb
                 output[ob + 4] = clamp(backL * currentGain[IDX_BL])
                 output[ob + 5] = clamp(-backL * currentGain[IDX_BR])
                 output[ob + 6] = clamp(surroundL * currentGain[IDX_SL])
@@ -272,11 +421,124 @@ internal class SurroundUpmixer(sampleRate: Int) {
                     mixMoved(output, ob, IDX_SR, keep, blend, lIn, rIn)
                 }
             }
+
+            if (post) postFrame(output, ob, outCh, l, r)
+            for (slot in 0 until outCh) {
+                val a = abs(output[ob + slot])
+                if (a > meterBatchPeak[slot]) meterBatchPeak[slot] = a
+            }
         }
 
+        publishLevels(outCh)
         writePos = wp
         sideAmbience = sAmb
         backAmbience = bAmb
+    }
+
+    /** End of a batch: decays the room-view levels and lifts them to the peaks of this batch. */
+    private fun publishLevels(outCh: Int) {
+        for (i in 0 until CHANNELS_UI) meterLevel[i] *= METER_DECAY
+        val map = discreteChannelTrimIndex(outCh) ?: return
+        for (slot in 0 until outCh) {
+            val ui = map[slot]
+            val v = meterBatchPeak[slot].coerceAtMost(1f)
+            if (v > meterLevel[ui]) meterLevel[ui] = v
+            meterBatchPeak[slot] = 0f
+        }
+    }
+
+    /** Bass management, distance delays, A/B hold and speaker test noise for one finished output frame. */
+    private fun postFrame(output: FloatArray, ob: Int, outCh: Int, l: Float, r: Float) {
+        if (bassWanted || bassBlend > 0f) {
+            val target = if (bassWanted) 1f else 0f
+            if (bassBlend != target) {
+                bassBlend += bassSmoothing * (target - bassBlend)
+                if (abs(target - bassBlend) < MOVE_SNAP) bassBlend = target
+            }
+            for (slot in 0 until outCh) {
+                if (slot == SLOT_LFE) continue
+                val x = output[ob + slot]
+                val y = highPass(slot, x)
+                output[ob + slot] = x + (y - x) * bassBlend
+            }
+        }
+
+        if (calOn) {
+            val wp = calWp
+            for (slot in 0 until outCh) {
+                val buf = calBuf[slot]
+                buf[wp] = output[ob + slot]
+                var idx = wp - calDelay[slot]
+                if (idx < 0) idx += calLen
+                output[ob + slot] = buf[idx]
+            }
+            calWp = if (wp + 1 == calLen) 0 else wp + 1
+        }
+
+        if (holdBlend != holdWanted) {
+            holdBlend += holdSmoothing * (holdWanted - holdBlend)
+            if (abs(holdWanted - holdBlend) < MOVE_SNAP) holdBlend = holdWanted
+        }
+        val h = holdBlend
+        if (h > 0f) {
+            val keep = 1f - h
+            for (slot in 0 until outCh) output[ob + slot] *= keep
+            output[ob] += l * h
+            output[ob + 1] += r * h
+        }
+
+        if (testBlend != testWanted) {
+            testBlend += testSmoothing * (testWanted - testBlend)
+            if (abs(testWanted - testBlend) < MOVE_SNAP) testBlend = testWanted
+        }
+        val tb = testBlend
+        if (tb > 0f) {
+            val tone = nextTestSample()
+            val keep = 1f - tb
+            for (slot in 0 until outCh) {
+                val v = output[ob + slot] * keep
+                output[ob + slot] = if (slot == testSlot) v + clamp(tone) * tb else v
+            }
+        }
+    }
+
+    /** Pink noise (Paul Kellet's filter) around -21 dBFS; the subwoofer gets it low-passed so it can be heard as a sub. */
+    private fun nextTestSample(): Float {
+        var x = rngState
+        x = x xor (x shl 13)
+        x = x xor (x ushr 17)
+        x = x xor (x shl 5)
+        rngState = x
+        val white = x.toFloat() / 2.1474836E9f
+        pink0 = 0.99765f * pink0 + white * 0.0990460f
+        pink1 = 0.96300f * pink1 + white * 0.2965164f
+        pink2 = 0.57000f * pink2 + white * 1.0526913f
+        val pink = (pink0 + pink1 + pink2 + white * 0.1848f) * TEST_LEVEL
+        if (testSlot != SLOT_LFE) return pink
+        testLfe += testLfeCoef * (pink - testLfe)
+        return testLfe * 3f
+    }
+
+    private fun highPass(slot: Int, input: Float): Float {
+        val x = input.toDouble()
+        val ya = hb0 * x + hb1 * hpX1a[slot] + hb2 * hpX2a[slot] - ha1 * hpY1a[slot] - ha2 * hpY2a[slot]
+        hpX2a[slot] = hpX1a[slot]; hpX1a[slot] = x; hpY2a[slot] = hpY1a[slot]; hpY1a[slot] = ya
+        val yb = hb0 * ya + hb1 * hpX1b[slot] + hb2 * hpX2b[slot] - ha1 * hpY1b[slot] - ha2 * hpY2b[slot]
+        hpX2b[slot] = hpX1b[slot]; hpX1b[slot] = ya; hpY2b[slot] = hpY1b[slot]; hpY1b[slot] = yb
+        return yb.toFloat()
+    }
+
+    /** RBJ Butterworth (Q = 1/sqrt2) high-pass; the same section is used twice (4th order, complements the LFE low-pass). */
+    private fun designHighPass(cutoffHz: Double) {
+        val w0 = 2.0 * PI * cutoffHz / sr
+        val cosW = cos(w0)
+        val alpha = sin(w0) / (2.0 * BUTTERWORTH_Q)
+        val a0 = 1.0 + alpha
+        hb0 = (1.0 + cosW) / 2.0 / a0
+        hb1 = -(1.0 + cosW) / a0
+        hb2 = hb0
+        ha1 = -2.0 * cosW / a0
+        ha2 = (1.0 - alpha) / a0
     }
 
     /**
@@ -359,6 +621,14 @@ internal class SurroundUpmixer(sampleRate: Int) {
         private const val SOFT_KNEE = 0.85f
         private const val MAX_DELAY_SECONDS = 0.06
         private const val AMBIENCE_LOWPASS_HZ = 7_000.0
+
+        private const val MAX_SLOTS = 8
+        private const val SLOT_LFE = 3
+        private const val SMART_WINDOW_SECONDS = 0.05
+        private const val SMART_SMOOTH_SECONDS = 0.03
+        private const val MAX_CAL_DELAY_SECONDS = 0.045
+        private const val TEST_LEVEL = 0.06f
+        private const val METER_DECAY = 0.82f
     }
 }
 

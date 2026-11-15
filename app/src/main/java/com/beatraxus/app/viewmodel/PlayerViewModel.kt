@@ -42,6 +42,23 @@ import com.beatraxus.app.engine.StemEngines
 import com.beatraxus.app.engine.StemSeparator
 import com.beatraxus.app.engine.StemSeparatorManager
 import com.beatraxus.app.model.LrcLine
+import com.beatraxus.app.model.withAudioUpscaler
+import com.beatraxus.app.model.withAudioUpscalerAmount
+import com.beatraxus.app.model.withAudioUpscalerCutoff
+import com.beatraxus.app.model.surroundPresetCode
+import com.beatraxus.app.model.withSurroundBassManagement
+import com.beatraxus.app.model.withSurroundCalibration
+import com.beatraxus.app.model.withSurroundDistance
+import com.beatraxus.app.model.withSurroundDistancesReset
+import com.beatraxus.app.model.withSurroundHeadphoneMode
+import com.beatraxus.app.model.withSurroundHoldOriginal
+import com.beatraxus.app.model.withSurroundPreset
+import com.beatraxus.app.model.withSurroundPresetCode
+import com.beatraxus.app.model.withSurroundSlotSaved
+import com.beatraxus.app.model.withSurroundSmartSteering
+import com.beatraxus.app.model.withSurroundSmartSteeringAmount
+import com.beatraxus.app.model.withSurroundTestChannel
+import com.beatraxus.app.model.parseSurroundPresetCode
 import com.beatraxus.app.model.withSurroundKnob
 import com.beatraxus.app.model.withSurroundLab
 import com.beatraxus.app.model.withSurroundLabReset
@@ -4692,26 +4709,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    fun applySurroundPreset(name: String) = applyDspConfig { cfg ->
-        if (name == com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME) {
-            val saved = cfg.surroundCustomTrimsDb ?: return@applyDspConfig cfg
-            cfg.copy(
-                surroundChannelTrimsDb = saved,
-                surroundMode = cfg.surroundCustomMode,
-                surroundActivePreset = name,
-                surroundTuneEnabled = false
-            )
-        } else {
-            val preset = com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == name }
-                ?: return@applyDspConfig cfg
-            cfg.copy(
-                surroundChannelTrimsDb = preset.trimsDb,
-                surroundMode = preset.mode,
-                surroundActivePreset = name,
-                surroundTuneEnabled = false
-            )
-        }
-    }
+    fun applySurroundPreset(name: String) = applyDspConfig { it.withSurroundPreset(name) }
 
     /** Stores the current trims + mode in the user slot ("Custom 1"). */
     fun saveSurroundCustomPreset() = applyDspConfig {
@@ -4721,6 +4719,65 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
             surroundActivePreset = com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
         )
     }
+
+    /** Stores the current trims + mode in user slot "Custom 1".."Custom 4". */
+    fun saveSurroundSlot(name: String) = applyDspConfig(triggerStems = false) { it.withSurroundSlotSaved(name) }
+
+    /** The current mix as one line of text, for the clipboard. */
+    fun surroundPresetCodeText(): String = surroundPresetCode(_uiState.value.dsp.config)
+
+    /** Applies a mix pasted from the clipboard. False (nothing changed) when the text is not a valid code. */
+    fun importSurroundPresetCode(text: String?): Boolean {
+        if (parseSurroundPresetCode(text) == null) return false
+        applyDspConfig(triggerStems = false) { it.withSurroundPresetCode(text) }
+        return true
+    }
+
+    // ── Surround extras: headphone surround, smart steering, calibration, A/B hold ──────────────────────
+
+    fun setSurroundHeadphoneMode(enabled: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withSurroundHeadphoneMode(enabled) }
+
+    fun setSurroundSmartSteering(enabled: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withSurroundSmartSteering(enabled) }
+
+    fun setSurroundSmartSteeringAmount(amount: Float) =
+        applyDspConfig(triggerStems = false) { it.withSurroundSmartSteeringAmount(amount) }
+
+    fun setSurroundBassManagement(enabled: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withSurroundBassManagement(enabled) }
+
+    fun setSurroundCalibration(enabled: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withSurroundCalibration(enabled) }
+
+    /** One speaker's distance in metres (index = SurroundChannel ordinal). */
+    fun setSurroundSpeakerDistance(index: Int, metres: Float) =
+        applyDspConfig(triggerStems = false) { it.withSurroundDistance(index, metres) }
+
+    fun resetSurroundSpeakerDistances() =
+        applyDspConfig(triggerStems = false) { it.withSurroundDistancesReset() }
+
+    /** Plays test noise on one speaker (index = SurroundChannel ordinal); -1 stops it. Not saved. */
+    fun setSurroundTestChannel(index: Int) =
+        applyDspConfig(triggerStems = false) { it.withSurroundTestChannel(index) }
+
+    /** True while the A/B button is held: plain stereo instead of the surround mix. Not saved. */
+    fun setSurroundHoldOriginal(hold: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withSurroundHoldOriginal(hold) }
+
+    /** Live level (0..1) of every surround speaker for the room view; false while no upmix runs. */
+    fun readSurroundLevels(dst: FloatArray): Boolean = service?.getSurroundLevels(dst) ?: false
+
+    // ── Audio upscaler (Studio DSP > Master) ──────────────────────────────────────────────────────────
+
+    fun setAudioUpscaler(enabled: Boolean) =
+        applyDspConfig(triggerStems = false) { it.withAudioUpscaler(enabled) }
+
+    fun setAudioUpscalerAmount(amount: Float) =
+        applyDspConfig(triggerStems = false) { it.withAudioUpscalerAmount(amount) }
+
+    fun setAudioUpscalerCutoff(hz: Float) =
+        applyDspConfig(triggerStems = false) { it.withAudioUpscalerCutoff(hz) }
 
     fun setAudio3DWidth(value: Float) = applyDspConfig { it.copy(audio3DWidth = value.coerceIn(0f, 2f)) }
     fun setAudio3DDepth(value: Float) = applyDspConfig { it.copy(audio3DDepth = value.coerceIn(0f, 1f)) }

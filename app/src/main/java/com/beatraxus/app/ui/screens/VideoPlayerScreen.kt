@@ -3253,6 +3253,25 @@ fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerView
     val mxOrange = Color(0xFFFF8F00)
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingSectionHeader("Upscaler")
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(mxOrange.copy(0.10f))
+                .border(1.dp, mxOrange.copy(0.5f), RoundedCornerShape(12.dp))
+                .clickable { viewModel.applyCinemaPreset() }
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Cinema preset", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "Clean upscale + 5.1 surround simulator in one tap",
+                    color = Color.White.copy(0.6f), fontSize = 12.sp
+                )
+            }
+        }
         VideoUpscaleMode.entries.forEach { mode ->
             val selected = uiState.upscaleMode == mode
             Row(

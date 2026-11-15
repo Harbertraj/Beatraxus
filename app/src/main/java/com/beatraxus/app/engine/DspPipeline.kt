@@ -78,6 +78,15 @@ internal class AudioDspPipeline(
     @Volatile private var discreteActive = false
     private var surroundTrimmer: SurroundTrimmer? = null
 
+    // Headphone surround: a stereo source is upmixed to 6 / 8 virtual speakers and folded back to two ears, so the
+    // output keeps its stereo layout. 0 = off. Mutually exclusive with a real 6 / 8 channel output (surroundOutChannels).
+    @Volatile private var binauralChannels = 0
+    private var binauralizer: SurroundBinauralizer? = null
+    private var binauralBuffer = FloatArray(0)
+
+    // Audio upscaler (Studio DSP > Master): adds highs to the stereo chain output, before the surround stage.
+    private var audioUpscaler: AudioUpscaler? = null
+
     /** Channel count this pipeline currently produces: 6 / 8 while the surround stage is on, else the input count. */
     val outputChannels: Int get() = surroundOutChannels.takeIf { it > 2 } ?: channels
 
@@ -92,9 +101,50 @@ internal class AudioDspPipeline(
             return
         }
         val upmixer = surroundUpmixer ?: SurroundUpmixer(outputSampleRate).also { surroundUpmixer = it }
-        val cfg = surroundConfig
-        upmixer.configure(outChannels, cfg.surroundEffectiveTuning(), cfg.surroundChannelTrimsDb, cfg.surroundMoveMixOrNull(outChannels == 8))
+        configureUpmixer(upmixer, outChannels, surroundConfig, binaural = false)
         surroundOutChannels = outChannels
+    }
+
+    private fun configureUpmixer(upmixer: SurroundUpmixer, outChannels: Int, cfg: DspConfig, binaural: Boolean) {
+        upmixer.configure(
+            outChannels, cfg.surroundEffectiveTuning(), cfg.surroundChannelTrimsDb,
+            cfg.surroundMoveMixOrNull(outChannels == 8), cfg.surroundExtras(outChannels == 8, binaural)
+        )
+    }
+
+    /**
+     * Turns headphone surround on for [virtualChannels] = 6 (5.1) or 8 (7.1) virtual speakers, or off for anything
+     * else. Only a stereo source can use it; the output stays stereo.
+     */
+    fun setBinauralChannels(virtualChannels: Int) {
+        val valid = (virtualChannels == 6 || virtualChannels == 8) && channels == 2
+        if (!valid) {
+            binauralChannels = 0
+            return
+        }
+        val upmixer = surroundUpmixer ?: SurroundUpmixer(outputSampleRate).also { surroundUpmixer = it }
+        configureUpmixer(upmixer, virtualChannels, surroundConfig, binaural = true)
+        val binaural = binauralizer ?: SurroundBinauralizer(outputSampleRate).also { binauralizer = it }
+        binaural.configure(virtualChannels)
+        binaural.setHold(surroundConfig.surroundHoldOriginal)
+        binauralChannels = virtualChannels
+    }
+
+    /** Cheap per-batch check, like [syncSurroundChannels]: only reconfigures when the wanted layout differs. */
+    fun syncBinauralChannels(virtualChannels: Int) {
+        val wanted = if (virtualChannels == 6 || virtualChannels == 8) virtualChannels else 0
+        if (wanted != binauralChannels) setBinauralChannels(wanted)
+    }
+
+    /**
+     * Copies the live level (0..1) of every speaker, UI order L R C SL SR BL BR SW, into [dst] for the room view.
+     * False while no surround upmix runs.
+     */
+    fun copySurroundLevels(dst: FloatArray): Boolean {
+        if (surroundOutChannels <= 2 && binauralChannels <= 2) return false
+        val upmixer = surroundUpmixer ?: return false
+        upmixer.readLevels(dst)
+        return true
     }
 
     /** Cheap per-batch check: (re)configures the surround stage only when [outChannels] differs from the current one. */
@@ -123,10 +173,40 @@ internal class AudioDspPipeline(
         if (enabled != discreteActive) setDiscreteTrims(enabled)
     }
 
+    /** Audio upscaler: adds highs to the stereo stream in place (fades out when switched off). */
+    private fun applyUpscaler(base: DspProcessResult, inChannels: Int): DspProcessResult {
+        if (inChannels != 2 || base.isDoP || base.sampleRate < 32_000) return base
+        val cfg = surroundConfig
+        val wanted = cfg.audioUpscalerEnabled && !cfg.bypassAll && !cfg.bitPerfectEnabled
+        var upscaler = audioUpscaler
+        if (upscaler == null) {
+            if (!wanted) return base
+            upscaler = AudioUpscaler(base.sampleRate).also { audioUpscaler = it }
+        }
+        upscaler.configure(if (wanted) cfg.audioUpscalerAmount else 0f, cfg.audioUpscalerCutoffHz)
+        if (upscaler.active) upscaler.process(base.data, base.sampleCount / 2)
+        return base
+    }
+
     private fun applySurround(base: DspProcessResult, inChannels: Int): DspProcessResult {
         if (discreteActive && inChannels == channels && !base.isDoP) {
             surroundTrimmer?.process(base.data, base.sampleCount / inChannels)
             return base
+        }
+        val virtual = binauralChannels
+        if (virtual > 2 && inChannels == 2 && !base.isDoP) {
+            val up = surroundUpmixer
+            val binaural = binauralizer
+            if (up != null && binaural != null) {
+                val frames = base.sampleCount / 2
+                val needed = frames * virtual
+                if (surroundBuffer.size < needed) surroundBuffer = FloatArray(needed + needed / 4)
+                up.process(base.data, 2, frames, surroundBuffer)
+                val outNeeded = frames * 2
+                if (binauralBuffer.size < outNeeded) binauralBuffer = FloatArray(outNeeded + outNeeded / 4)
+                binaural.process(surroundBuffer, frames, binauralBuffer, base.data)
+                return DspProcessResult(data = binauralBuffer, sampleCount = outNeeded, sampleRate = base.sampleRate)
+            }
         }
         val outCh = surroundOutChannels
         val upmixer = surroundUpmixer
@@ -145,7 +225,7 @@ internal class AudioDspPipeline(
     }
 
     fun process(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult =
-        applySurround(processChain(data, sampleCount, channels, sampleRate), channels)
+        applySurround(applyUpscaler(processChain(data, sampleCount, channels, sampleRate), channels), channels)
 
     private fun processChain(data: FloatArray, sampleCount: Int, channels: Int, sampleRate: Int): DspProcessResult {
         if (isDoP) {
@@ -214,7 +294,12 @@ internal class AudioDspPipeline(
         surroundConfig = config
         val outCh = surroundOutChannels
         if (outCh > 2) {
-            surroundUpmixer?.configure(outCh, config.surroundEffectiveTuning(), config.surroundChannelTrimsDb, config.surroundMoveMixOrNull(outCh == 8))
+            surroundUpmixer?.let { configureUpmixer(it, outCh, config, binaural = false) }
+        }
+        val virtual = binauralChannels
+        if (virtual > 2) {
+            surroundUpmixer?.let { configureUpmixer(it, virtual, config, binaural = true) }
+            binauralizer?.setHold(config.surroundHoldOriginal)
         }
         if (discreteActive) {
             surroundTrimmer?.configure(channels, config.surroundChannelTrimsDb, config.surroundPositionOffsetsDb())
@@ -232,6 +317,8 @@ internal class AudioDspPipeline(
     fun flush() {
         processors.forEach { it.flush() }
         surroundUpmixer?.reset()
+        binauralizer?.reset()
+        audioUpscaler?.reset()
     }
 
     fun seekTo(positionMs: Long) {
@@ -241,6 +328,7 @@ internal class AudioDspPipeline(
     fun release() {
         processors.forEach { it.release() }
         surroundOutChannels = 0
+        binauralChannels = 0
         discreteActive = false
     }
 

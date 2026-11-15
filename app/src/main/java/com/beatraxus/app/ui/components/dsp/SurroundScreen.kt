@@ -101,6 +101,8 @@ import com.beatraxus.app.model.surroundPresetDescription
 import com.beatraxus.app.model.surroundMoveLevelsDb
 import com.beatraxus.app.model.BUILT_IN_SURROUND_POSITIONS
 import com.beatraxus.app.model.BUILT_IN_SURROUND_PRESETS
+import com.beatraxus.app.model.SURROUND_ALL_SLOT_NAMES
+import com.beatraxus.app.model.surroundSlotFilled
 import com.beatraxus.app.model.DEFAULT_SURROUND_TRIMS_DB
 import com.beatraxus.app.model.PlayerUiState
 import com.beatraxus.app.model.SURROUND_CUSTOM_PRESET_NAME
@@ -144,6 +146,12 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val plannedChannels = when {
         !config.surroundEnabled || forcedOff || fallback -> 2
         liveChannels > 2 -> liveChannels
+        // Headphone surround: the output stays stereo, the virtual speakers are what the room view shows.
+        config.surroundHeadphoneMode -> when (config.surroundLayout) {
+            SurroundLayout.FIVE_ONE -> 6
+            SurroundLayout.SEVEN_ONE, SurroundLayout.AUTO -> 8
+            SurroundLayout.STEREO -> 2
+        }
         else -> when (config.surroundLayout) {
             SurroundLayout.SEVEN_ONE -> 8
             SurroundLayout.FIVE_ONE, SurroundLayout.AUTO -> 6
@@ -318,6 +326,13 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 Text(note, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
             }
 
+            // ── Headphone surround, live speaker levels, A/B hold ─────────────────────────────────────────
+            HeadphoneSurroundPanel(config, accent) { viewModel.setSurroundHeadphoneMode(it) }
+            if (config.surroundEnabled && plannedChannels > 2) {
+                SurroundMeterStrip(viewModel, running = uiState.isPlaying && !forcedOff, channels = plannedChannels, accent = accent)
+                HoldOriginalButton(accent, enabled = uiState.isPlaying) { viewModel.setSurroundHoldOriginal(it) }
+            }
+
             // ── Channel levels only, or place the sound anywhere around you ───────────────────────────────
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 LayoutButton("Channel levels", Icons.Rounded.Tune, !config.surroundMoveEnabled, accent, Modifier.weight(1f)) {
@@ -446,12 +461,12 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                         Text("SAVE AS CUSTOM 1", color = accent, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                     }
                 }
-                val names = BUILT_IN_SURROUND_PRESETS.map { it.name } + SURROUND_CUSTOM_PRESET_NAME
+                val names = BUILT_IN_SURROUND_PRESETS.map { it.name } + SURROUND_ALL_SLOT_NAMES
                 names.chunked(4).forEach { rowNames ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                         rowNames.forEach { name ->
-                            val isCustomSlot = name == SURROUND_CUSTOM_PRESET_NAME
-                            val available = !isCustomSlot || config.surroundCustomTrimsDb != null
+                            val isCustomSlot = name in SURROUND_ALL_SLOT_NAMES
+                            val available = !isCustomSlot || config.surroundSlotFilled(name)
                             PresetChip(
                                 name = name,
                                 selected = config.surroundActivePreset == name,
@@ -467,7 +482,31 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 if (presetNote.isNotEmpty()) {
                     Text(presetNote, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
                 }
+                PresetSlotsRow(
+                    config = config,
+                    accent = accent,
+                    onSave = { viewModel.saveSurroundSlot(it) },
+                    exportCode = { viewModel.surroundPresetCodeText() },
+                    onImport = { viewModel.importSurroundPresetCode(it) }
+                )
             }
+
+            // ── Smart steering and speaker setup ──────────────────────────────────────────────────────────
+            SmartSteeringPanel(
+                config, accent,
+                onEnabled = { viewModel.setSurroundSmartSteering(it) },
+                onAmount = { viewModel.setSurroundSmartSteeringAmount(it) }
+            )
+            SpeakerSetupPanel(
+                config = config,
+                accent = accent,
+                sevenOne = plannedChannels >= 8 || config.surroundLayout == SurroundLayout.SEVEN_ONE,
+                onTest = { viewModel.setSurroundTestChannel(it) },
+                onCalibration = { viewModel.setSurroundCalibration(it) },
+                onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
+                onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
+                onBassManagement = { viewModel.setSurroundBassManagement(it) }
+            )
         }
     }
 }
@@ -1165,7 +1204,7 @@ private fun Modifier.glassPanel(primary: Color, secondary: Color, radius: androi
     )
 
 @Composable
-private fun LayoutButton(label: String, icon: ImageVector, selected: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
+internal fun LayoutButton(label: String, icon: ImageVector, selected: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Row(
         modifier = modifier
@@ -1185,7 +1224,7 @@ private fun LayoutButton(label: String, icon: ImageVector, selected: Boolean, ac
 }
 
 @Composable
-private fun PresetChip(name: String, selected: Boolean, enabled: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
+internal fun PresetChip(name: String, selected: Boolean, enabled: Boolean, accent: Color, modifier: Modifier, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Box(
         modifier = modifier

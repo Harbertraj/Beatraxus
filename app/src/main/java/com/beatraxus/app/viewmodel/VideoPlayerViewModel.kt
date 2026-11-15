@@ -2847,6 +2847,17 @@ class VideoPlayerViewModel(
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
+    /**
+     * One tap "Cinema": the Clean upscaler at 50% sharpening together with the surround simulator in 5.1.
+     * Both stay changeable afterwards in their own sheets.
+     */
+    fun applyCinemaPreset() {
+        setUpscaleMode(VideoUpscaleMode.CLEAN)
+        setUpscaleStrength(0.5f)
+        if (_uiState.value.surroundLayout != SurroundLayout.FIVE_ONE) setSurroundLayout(SurroundLayout.FIVE_ONE)
+        if (!_uiState.value.surroundSimulatorEnabled) setSurroundSimulatorEnabled(true)
+    }
+
     /** Sharpening strength of the upscaler, 0..1. Applies on the next frame. */
     fun setUpscaleStrength(strength: Float) {
         val v = strength.coerceIn(0f, 1f)

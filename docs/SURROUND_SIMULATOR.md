@@ -63,3 +63,20 @@ The first time the icon ever appears it pulses with a "New" label (shown once, s
 Real 5.1 / 7.1 soundtracks (`SurroundStage.DISCRETE`) are never re-synthesised: FFmpeg decodes all channels,
 they stay on their own speakers, and the levels are applied relative to the Default preset by `SurroundTrimmer`,
 so untouched levels leave the audio bit-for-bit unchanged. Stereo soundtracks use `SurroundStage.UPMIX`.
+
+## Surround extras (Studio DSP > Surround, and Master > Upscaler)
+
+Every switch below is **off by default**; while off, the audio path is exactly what it was before.
+
+- **Headphone surround.** A stereo source on a stereo output is upmixed to 5.1 / 7.1 virtual speakers and folded back to
+  two ears with a parametric head model (level split, interaural delay, head shadow, rear-speaker pinna cue). It needs a
+  5.1, 7.1 or Auto layout, and it stands aside when the device really has 5.1 / 7.1 speakers. Not a measured HRTF.
+- **Live levels** per speaker in the room view, and **Hold to hear original** (plain stereo while pressed).
+- **Smart steering.** Follows the song: centred sound is pulled to the centre speaker, uncorrelated (wide) sound to the
+  surrounds. Based on left / right correlation, so it is a steering aid, not source separation.
+- **Speaker setup.** 6 s pink-noise test per speaker, per-speaker distance (0.5 to 10 m) turned into delay so every
+  speaker arrives together, and bass management (4th-order high-pass on the mains at the LFE cutoff).
+- **Presets.** Custom 1 to 4, plus Copy / Paste code (`BTXS1|MODE|8 trims`).
+- **Audio upscaler (Master).** Harmonic exciter above the file's own cutoff (chips: 128 / 192 / 256+ kbps, Old / AM).
+  Adds content only; stereo, 32 kHz and up.
+- **Video.** "Cinema preset" in the Upscaler sheet: Clean upscale at 50 % + 5.1 surround simulator.

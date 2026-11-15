@@ -10,6 +10,8 @@ import kotlin.math.atan2
 import kotlin.math.pow
 import kotlin.math.sqrt
 import kotlin.math.min
+import com.beatraxus.app.model.AUDIO_UPSCALER_SOURCES
+import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.DspStageState
 import com.beatraxus.app.model.SpatialUiMode
 import com.beatraxus.app.model.stageStates
@@ -4524,6 +4526,9 @@ private fun PremiumMasteringCard(uiState: PlayerUiState, viewModel: PlayerViewMo
                     )
                 }
             }
+
+            // Section 4: Upscaler (adds highs a low-bitrate file lost)
+            AudioUpscalerSection(config = config, enabled = controlsEnabled, viewModel = viewModel)
         }
     }
 }
@@ -4976,5 +4981,62 @@ private fun fftFloat(real: FloatArray, imag: FloatArray) {
             i += len
         }
         len = len shl 1
+    }
+}
+
+/**
+ * Master > UPSCALER. Restores some of the highs a low-bitrate file (MP3 / AAC) lost: a harmonic exciter that only
+ * fills in above the point where the file's own highs stop. Off by default; the chips set that point for common bitrates.
+ */
+@Composable
+private fun AudioUpscalerSection(config: DspConfig, enabled: Boolean, viewModel: PlayerViewModel) {
+    Column(modifier = Modifier.fillMaxWidth().dspSubPanel(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            MasteringSectionHeader(
+                "UPSCALER", Icons.Rounded.AutoAwesome, isActive = config.audioUpscalerEnabled,
+                modifier = Modifier.weight(1f)
+            )
+            PremiumSwitch(
+                checked = config.audioUpscalerEnabled,
+                onCheckedChange = { viewModel.setAudioUpscaler(it) },
+                accentColor = PremiumAccent
+            )
+        }
+        Text(
+            "Adds back some of the air a low-bitrate file lost. It never removes anything, and does nothing at " +
+                "sample rates under 32 kHz. Pick the file's bitrate, then raise the amount to taste.",
+            color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            AUDIO_UPSCALER_SOURCES.forEach { source ->
+                PresetChip(
+                    name = source.label,
+                    selected = kotlin.math.abs(config.audioUpscalerCutoffHz - source.cutoffHz) < 1f,
+                    enabled = enabled,
+                    accent = PremiumAccent,
+                    modifier = Modifier.weight(1f)
+                ) { viewModel.setAudioUpscalerCutoff(source.cutoffHz) }
+            }
+        }
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "AMOUNT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                letterSpacing = 0.8.sp, modifier = Modifier.weight(1f)
+            )
+            Text(
+                "${(config.audioUpscalerAmount * 100f).toInt()}%  ·  from ${(config.audioUpscalerCutoffHz / 1000f).toInt()} kHz",
+                color = PremiumAccent, fontSize = 11.sp, fontWeight = FontWeight.Black
+            )
+        }
+        androidx.compose.material3.Slider(
+            value = config.audioUpscalerAmount,
+            onValueChange = { viewModel.setAudioUpscalerAmount(it) },
+            valueRange = 0f..1f,
+            enabled = enabled,
+            colors = androidx.compose.material3.SliderDefaults.colors(
+                thumbColor = PremiumAccent, activeTrackColor = PremiumAccent,
+                inactiveTrackColor = Color.White.copy(0.12f)
+            )
+        )
     }
 }
