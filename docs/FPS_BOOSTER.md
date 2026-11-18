@@ -176,7 +176,7 @@ Reproduce: §8.
 | ViewModel / Screen / settings sheet integration | **Implemented; syntax-checked only; not compiled or run** |
 | Bounded frame queue, GPU resource reuse, seek/shutdown cancellation, surface recreation, GPU-failure fallback, thermal/perf-aware quality | **Implemented (logic unit-tested; GL paths not run)** |
 | Live statistics | **Implemented** (latency = sampled `glFinish`, not GPU timers) |
-| AI / RIFE engine | **Not implemented** (assessment below) |
+| AI / RIFE engine | **Implemented (§12, §14), not run on a device** (original assessment in §10, status in §24) |
 | HDR support | **Not implemented** (excluded by design) |
 | Motion-strength control | **Not implemented** (no such algorithm parameter) |
 | Automatic A/V compensation for the hold-back | Implemented in step 2 (section 19), default on, switchable |
@@ -215,7 +215,7 @@ python3 flow_eval.py                                         # flow end-point er
 9. Sustained run: 30 min at your chosen setting. Note battery drop, device temperature, and whether a "too hot / could not keep up" fallback toast appears (that is the intended behaviour). Optional: `adb shell dumpsys gfxinfo`, `adb shell dumpsys thermalservice`, `adb shell dumpsys batterystats`, Perfetto/Snapdragon-style GPU profiling is not available on MediaTek, so rely on the in-app latency figure.
 10. Send me: device log (`adb logcat -s FpsBoosterGL FpsBoosterView FpsBoosterMgr`), the stats at each quality level, and any artifacts as screenshots.
 
-## 10. AI interpolation (RIFE): assessment — **not implemented**
+## 10. AI interpolation (RIFE): original assessment (historical; superseded by §12, §14, §22 and §24)
 
 Researched from primary sources by a read-only agent; **nothing was downloaded and no Android GPU support is claimed.**
 
@@ -756,3 +756,40 @@ conservative by design. It is gone: the sheet opens straight to the options and 
   Optical flow; RIFE AI and Hybrid stay selectable by hand and are protected by their runtime deadline (step 5). The
   manual "Run device test" card is only shown after a failed run; stored old results still feed the AI fusion hint.
 - Not run on a device. Test: `FpsBoosterSettingsTest.freshInstallStartsAtTheDevicesFullPotential`.
+
+## 24. Spec audit and fixes (RIFE backend)
+
+Audit of the RIFE path against the FPS Booster architecture brief. Nothing here was built with Gradle or run on a device.
+
+Changed:
+- `InterpolationBackend.kt` (new): provider-agnostic interface (`initialize`, `infer`, `benchmark`, `release`, `activeProvider`,
+  `lastLatencyMs`) and `InferenceProvider`. `RifeAiEngine` implements it.
+- **Provider order.** Default is XNNPACK, then CPU. NNAPI is no longer tried first: the RIFE graph uses GridSample / ConvTranspose,
+  which NNAPI lacks (§10), so it splits the graph. It is opt-in (`initialize(quality, useNnapi = true)`) until a device benchmark
+  shows it winning. A provider that fails to configure or create a session falls through to the next; CPU is always the last resort.
+- Rolling median of recent inference latency is exposed as `lastLatencyMs`.
+- `RifePacking` converts pixels with bulk copies and a lookup table instead of one absolute `get` per byte (same results).
+- Model provenance, SHA-256 and the MIT notice are recorded in `assets/models/readme.txt` and `ATTRIBUTION.md`.
+- Tests: `InterpolationBackendTest`, plus a chunk-boundary packing test in `RifePackingTest`.
+
+Still open (needs a device or a design decision):
+- The bundled model is RIFE 4.26, not 4.25 Lite; no IFRNet-Small / 4.22 Lite comparison, no FP16/INT8 trial, no QNN provider.
+- The model always receives t = 0.5 and the shader remaps the position, so RIFE stays limited to exact 2x targets. True arbitrary-t
+  output (24 to 60 / 90) needs one inference per output phase, which must be benchmarked first.
+- GPU to CPU read-back (`glReadPixels`) and the 8-bit RGBA round trip remain; a GPU-side float path would remove them.
+- RIFE has no resolution ladder of its own (640 / 960 / 1280 long edge, fixed per session); the quality ladder drives Optical flow.
+- Scene-cut and confidence checks are simple luma / colour-range tests; no dedicated artifact detector.
+- ONNX Runtime is still 1.18.0. Gradle build, `testDebugUnitTest`, thermal, battery and memory measurements are all still to do.
+
+### 24.1 RIFE shows the target FPS but generates no frames
+
+Cause (code reading plus a CPU run of `rife_v426.onnx`, not a phone measurement): the model returns the right shape for the
+sizes the app uses, but is far slower than one source interval (41.7 ms at 24 fps) on CPU. `RifeRenderer` only uses a result
+when it belongs to the current real frame (`synthFor === cur`); a result that arrives after the next frame is stale and is
+dropped, so every output frame is a repeated real frame. The presenter still runs at the target rate, so "Rendered" equals the
+target while "Generated" is 0. The old safety net counted per vsync and only fired above 2x the source interval, so a model
+between 0.9x and 2x never fell back.
+
+Fix: `RifeRenderer.fallingBehind` is judged once per window, uses the planner's 90 % budget, and also fires when
+interpolation was expected but a window produced zero generated frames (4 windows in a row), reporting `RIFE_TOO_SLOW`.
+Optical flow is unaffected (its estimate runs on the GPU in a few ms).

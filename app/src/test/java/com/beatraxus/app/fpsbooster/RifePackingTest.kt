@@ -88,4 +88,33 @@ class RifePackingTest {
             assertTrue("Aspect error $aspectError for (${srcW}x${srcH} -> ${mw}x${mh}) must be <= 0.03", aspectError <= 0.03f)
         }
     }
+
+    @Test
+    fun bulkConversionMatchesPerPixelReferenceAcrossChunkBoundaries() {
+        // 200 x 100 = 20000 pixels: more than two 8192-pixel chunks, so chunk edges are exercised.
+        val w = 200
+        val h = 100
+        val n = w * h
+        val src = ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder())
+        for (i in 0 until n * 4) src.put(i, ((i * 31 + 7) and 0xFF).toByte())
+        src.position(5) // the conversion must ignore and preserve the caller's position
+
+        val planar = ByteBuffer.allocateDirect(3 * n * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
+        RifePacking.rgbaToPlanar(src, w, h, planar, 0)
+        assertEquals(5, src.position())
+
+        for (i in 0 until n) {
+            for (c in 0 until 3) {
+                val expected = (src.get(i * 4 + c).toInt() and 0xFF) / 255.0f
+                assertEquals(expected, planar.get(c * n + i), 0f)
+            }
+        }
+
+        val dst = ByteBuffer.allocateDirect(n * 4).order(ByteOrder.nativeOrder())
+        RifePacking.planarToRgba(planar, w, h, dst)
+        for (i in 0 until n * 4) {
+            val expectedByte = if (i % 4 == 3) 255 else src.get(i).toInt() and 0xFF
+            assertEquals("byte $i", expectedByte, dst.get(i).toInt() and 0xFF)
+        }
+    }
 }

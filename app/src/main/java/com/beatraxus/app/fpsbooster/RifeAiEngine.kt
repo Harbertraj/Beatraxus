@@ -25,10 +25,11 @@ import java.util.concurrent.Executors
  * `[batch, 7, height, width]` (img0 RGB, img1 RGB, timestep plane, float 0..1, NCHW), producing
  * a single float32 output tensor named `output` of shape `[batch, 3, height, width]`.
  */
-class RifeAiEngine(private val context: Context) {
+class RifeAiEngine(private val context: Context) : InterpolationBackend {
 
     companion object {
         private const val TAG = "RifeAiEngine"
+        private const val LATENCY_WINDOW = 16
         private val MODEL_ASSET_NAMES = listOf(
             "models/rife_v4.26.onnx",
             "models/rife_v426.onnx",
@@ -87,7 +88,17 @@ class RifeAiEngine(private val context: Context) {
     private var inputName: String = "input"
 
     @Volatile private var isInitialized = false
-    @Volatile private var isNnapiSupported = false
+    @Volatile private var provider: InferenceProvider? = null
+
+    /** Provider the session is running on (null until [initialize] succeeds). */
+    override val activeProvider: InferenceProvider? get() = provider
+
+    private val latencyRing = FloatArray(LATENCY_WINDOW)
+    private var latencyCount = 0
+    private var latencyHead = 0
+
+    @Volatile private var latestLatencyMs = -1f
+    override val lastLatencyMs: Float get() = latestLatencyMs
 
     var modelWidth = 640
         private set
@@ -95,83 +106,94 @@ class RifeAiEngine(private val context: Context) {
         private set
 
     /**
-     * Initializes the ONNX Runtime session and loads the RIFE 4.26 model asset.
+     * Initializes the session using the default provider order (XNNPACK, then CPU). NNAPI is never part of the
+     * default: see [InferenceProvider.DEFAULT_ORDER].
      */
-    fun initialize(quality: BoosterQuality = BoosterQuality.PERFORMANCE, useNnapi: Boolean = true): Boolean =
-        synchronized(sessionLock) { initializeLocked(quality, useNnapi) }
+    override fun initialize(providers: List<InferenceProvider>): Boolean =
+        synchronized(sessionLock) { initializeLocked(providers) }
 
-    private fun initializeLocked(quality: BoosterQuality, useNnapi: Boolean): Boolean {
+    /**
+     * Legacy entry point: [quality] sets the nominal model size; [useNnapi] puts NNAPI first in the provider order
+     * (CPU providers remain as fallbacks). Defaults to no NNAPI.
+     */
+    fun initialize(quality: BoosterQuality, useNnapi: Boolean = false): Boolean {
+        when (quality) {
+            BoosterQuality.PERFORMANCE -> { modelWidth = 640; modelHeight = 360 }
+            BoosterQuality.BALANCED -> { modelWidth = 960; modelHeight = 540 }
+            BoosterQuality.QUALITY -> { modelWidth = 1280; modelHeight = 720 }
+        }
+        val order = if (useNnapi) listOf(InferenceProvider.NNAPI) + InferenceProvider.DEFAULT_ORDER
+        else InferenceProvider.DEFAULT_ORDER
+        return initialize(order)
+    }
+
+    private fun initializeLocked(providers: List<InferenceProvider>): Boolean {
         if (closed) return false
         if (isInitialized) return ortSession != null
 
         return try {
-            ortEnv = OrtEnvironment.getEnvironment()
-            val sessionOptions = OrtSession.SessionOptions()
-            try {
-                if (useNnapi) {
-                    try {
-                        sessionOptions.addNnapi()
-                        isNnapiSupported = true
-                        Log.i(TAG, "ONNX Runtime NNAPI acceleration enabled for RIFE AI")
-                    } catch (e: Exception) {
-                        Log.w(TAG, "NNAPI acceleration unavailable, falling back to CPU/XNNPACK: ${e.message}")
-                        isNnapiSupported = false
-                    }
-                } else {
-                    isNnapiSupported = false
-                    try {
-                        sessionOptions.addXnnpack(mapOf("intra_op_num_threads" to "4"))
-                        Log.i(TAG, "ONNX Runtime XNNPACK acceleration enabled for RIFE AI")
-                    } catch (e: Throwable) {
-                        Log.w(TAG, "XNNPACK acceleration unavailable: ${e.message}")
-                    }
-                }
-                sessionOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                sessionOptions.setInterOpNumThreads(2)
-                sessionOptions.setIntraOpNumThreads(4)
-
-                when (quality) {
-                    BoosterQuality.PERFORMANCE -> { modelWidth = 640; modelHeight = 360 }
-                    BoosterQuality.BALANCED -> { modelWidth = 960; modelHeight = 540 }
-                    BoosterQuality.QUALITY -> { modelWidth = 1280; modelHeight = 720 }
-                }
-
-                val modelFile = getOrExtractModelFile()
-                if (modelFile != null && modelFile.exists() && modelFile.length() > 0) {
-                    val session = ortEnv?.createSession(modelFile.absolutePath, sessionOptions)
-                    if (session != null) {
-                        inputName = session.inputNames.firstOrNull() ?: "input"
-                        Log.i(TAG, "RIFE session created. Inputs: ${session.inputInfo}, Outputs: ${session.outputInfo}")
-
-                        val inputNodeInfo = session.inputInfo[inputName]?.info as? TensorInfo
-                        val channels = inputNodeInfo?.shape?.getOrNull(1)
-                        if (channels != null && channels != 7L) {
-                            Log.e(TAG, "RIFE model input must have 7 channels, found $channels in input '$inputName'")
-                            session.close()
-                            ortSession = null
-                            isInitialized = true
-                            return false
-                        }
-
-                        ortSession = session
-                        isInitialized = true
-                        Log.i(TAG, "RIFE 4.26 ONNX model initialized successfully (${modelWidth}x${modelHeight})")
-                        true
-                    } else {
-                        isInitialized = true
-                        false
-                    }
-                } else {
-                    Log.i(TAG, "RIFE model file not present in assets/cache")
-                    isInitialized = true
-                    false
-                }
-            } finally {
-                sessionOptions.close()
+            val modelFile = getOrExtractModelFile()
+            if (modelFile == null || !modelFile.exists() || modelFile.length() <= 0) {
+                Log.i(TAG, "RIFE model file not present in assets/cache")
+                isInitialized = true
+                return false
             }
-        } catch (e: Exception) {
+            val env = OrtEnvironment.getEnvironment()
+            ortEnv = env
+
+            // Try each provider in order. A provider that cannot be configured, or whose session cannot be
+            // created, is skipped; the plain CPU provider is always the last resort.
+            val order = if (providers.contains(InferenceProvider.CPU)) providers else providers + InferenceProvider.CPU
+            for (candidate in order) {
+                val session = createSession(env, modelFile, candidate) ?: continue
+                inputName = session.inputNames.firstOrNull() ?: "input"
+                Log.i(TAG, "RIFE session created on ${candidate.label}. Inputs: ${session.inputInfo}, Outputs: ${session.outputInfo}")
+
+                val channels = (session.inputInfo[inputName]?.info as? TensorInfo)?.shape?.getOrNull(1)
+                if (channels != null && channels != 7L) {
+                    Log.e(TAG, "RIFE model input must have 7 channels, found $channels in input '$inputName'")
+                    session.close()
+                    isInitialized = true
+                    return false
+                }
+                ortSession = session
+                provider = candidate
+                isInitialized = true
+                return true
+            }
+            Log.e(TAG, "No inference provider could create a RIFE session")
+            isInitialized = true
+            false
+        } catch (e: Throwable) {
             Log.e(TAG, "Error initializing RIFE AI Engine: ${e.message}", e)
             false
+        }
+    }
+
+    /** Creates a session for [candidate], or returns null (and logs) when that provider fails. */
+    private fun createSession(env: OrtEnvironment, modelFile: File, candidate: InferenceProvider): OrtSession? {
+        val options = OrtSession.SessionOptions()
+        return try {
+            when (candidate) {
+                InferenceProvider.NNAPI -> {
+                    options.addNnapi()
+                    options.setIntraOpNumThreads(4)
+                }
+                InferenceProvider.XNNPACK -> {
+                    // XNNPACK runs its own thread pool; keep the session pool at 1 to avoid oversubscribing cores.
+                    options.addXnnpack(mapOf("intra_op_num_threads" to "4"))
+                    options.setIntraOpNumThreads(1)
+                }
+                InferenceProvider.CPU -> options.setIntraOpNumThreads(4)
+            }
+            options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            options.setInterOpNumThreads(1)
+            env.createSession(modelFile.absolutePath, options)
+        } catch (e: Throwable) {
+            Log.w(TAG, "${candidate.label} unavailable, trying next provider: ${e.message}")
+            null
+        } finally {
+            options.close()
         }
     }
 
@@ -211,9 +233,9 @@ class RifeAiEngine(private val context: Context) {
      * [packed]: direct FloatBuffer of 7*w*h floats (img0 RGB, img1 RGB, timestep plane 0..1), NCHW.
      * [out]: direct FloatBuffer receiving 3*w*h floats (interpolated RGB).
      */
-    fun infer(packed: FloatBuffer, w: Int, h: Int, out: FloatBuffer): Boolean = synchronized(sessionLock) {
+    override fun infer(packed: FloatBuffer, w: Int, h: Int, out: FloatBuffer): Boolean = synchronized(sessionLock) {
         if (closed) return@synchronized false
-        if (!isInitialized && !initializeLocked(BoosterQuality.PERFORMANCE, true)) return@synchronized false
+        if (!isInitialized && !initializeLocked(InferenceProvider.DEFAULT_ORDER)) return@synchronized false
         val session = ortSession ?: return@synchronized false
         val env = ortEnv ?: return@synchronized false
 
@@ -221,6 +243,7 @@ class RifeAiEngine(private val context: Context) {
             val tensorShape = longArrayOf(1, 7, h.toLong(), w.toLong())
             val tensor = OnnxTensor.createTensor(env, packed, tensorShape)
             var result: OrtSession.Result? = null
+            val startNs = System.nanoTime()
             try {
                 result = session.run(mapOf(inputName to tensor))
                 val outputTensor = result.get(0) as? OnnxTensor ?: return@synchronized false
@@ -234,6 +257,7 @@ class RifeAiEngine(private val context: Context) {
                 out.rewind()
                 out.put(outBuf)
                 out.rewind()
+                recordLatency((System.nanoTime() - startNs) / 1e6f)
                 true
             } finally {
                 tensor.close()
@@ -245,11 +269,20 @@ class RifeAiEngine(private val context: Context) {
         }
     }
 
+    /** Called under [sessionLock]: keeps the last [LATENCY_WINDOW] inference times and publishes their median. */
+    private fun recordLatency(ms: Float) {
+        latencyRing[latencyHead] = ms
+        latencyHead = (latencyHead + 1) % LATENCY_WINDOW
+        if (latencyCount < LATENCY_WINDOW) latencyCount++
+        val sorted = latencyRing.copyOf(latencyCount).also { it.sort() }
+        latestLatencyMs = sorted[latencyCount / 2]
+    }
+
     /**
      * Benchmarks current model inference latency (ms) for input size [w] x [h].
      * Warms up 2 runs, measures [iterations] runs, and returns the median latency.
      */
-    fun benchmark(w: Int, h: Int, iterations: Int = 6): Float {
+    override fun benchmark(w: Int, h: Int, iterations: Int): Float {
         val packed = ByteBuffer.allocateDirect(7 * w * h * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
         val out = ByteBuffer.allocateDirect(3 * w * h * 4).order(ByteOrder.nativeOrder()).asFloatBuffer()
         RifePacking.fillPlane(packed, 6 * w * h, w, h, 0.5f)
@@ -277,7 +310,7 @@ class RifeAiEngine(private val context: Context) {
      * Closes the session once any inference in flight has finished (it waits on [sessionLock] on the engine's own
      * thread, so the caller is never blocked), and makes every later [infer] / [initialize] a no-op.
      */
-    fun release() {
+    override fun release() {
         if (closed) return
         closed = true
         try {
@@ -289,6 +322,7 @@ class RifeAiEngine(private val context: Context) {
                         Log.e(TAG, "Error closing RIFE AI session: ${e.message}")
                     } finally {
                         ortSession = null
+                        provider = null
                         isInitialized = false
                     }
                 }

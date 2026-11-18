@@ -647,17 +647,11 @@ class RifeRenderer(
     }
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
-        if (estimateLatency.smoothedNs > 2 * frameIntervalNs && frameIntervalNs > 0) {
-            consecutiveSlowWindows++
-            if (consecutiveSlowWindows >= 3) {
-                callbacks.onError(FallbackReason.RIFE_TOO_SLOW, "RIFE AI inference too slow on this device")
-                return
-            }
-        } else {
-            consecutiveSlowWindows = 0
-        }
-
         val win = statsAcc.poll(nowNs)
+        if (win != null && fallingBehind(win, sourceFps)) {
+            callbacks.onError(FallbackReason.RIFE_TOO_SLOW, "RIFE AI inference too slow on this device")
+            return
+        }
         if (win != null) {
             callbacks.onStats(
                 BoosterStats(
@@ -675,6 +669,24 @@ class RifeRenderer(
             )
             callbacks.onWindow(win, sourceFps, modelW, lastHoldNs / 1e6f)
         }
+    }
+
+    /**
+     * True when RIFE cannot keep up and should hand over to Optical flow. Judged once per statistics window (about one
+     * second), not per vsync. A window counts as "behind" when the model needs more than 90 % of a source interval
+     * (the same budget the planner uses) or when interpolation was expected but not one generated frame was shown:
+     * a result that arrives after the next real frame is stale and is never used, so the output would only be
+     * repeated real frames at the target rate (the counter says 60 while nothing is generated).
+     */
+    private fun fallingBehind(win: WindowStats, sourceFps: Float): Boolean {
+        val intervalNs = if (sourceFps > 0f) (1e9f / sourceFps).toLong() else frameIntervalNs
+        val expectsGenerated = intervalNs > 0 && win.sourceFrames >= 3 &&
+            !MotionBoostTiming.shouldBypass(sourceFps, cadence.effectiveTarget(targetFps))
+        if (!expectsGenerated) { consecutiveSlowWindows = 0; return false }
+        val tooSlow = estimateLatency.smoothedNs > (0.9f * intervalNs).toLong()
+        val nothingGenerated = win.generated == 0
+        consecutiveSlowWindows = if (tooSlow || nothingGenerated) consecutiveSlowWindows + 1 else 0
+        return consecutiveSlowWindows >= SLOW_WINDOWS_BEFORE_FALLBACK
     }
 
     private fun bindTarget(texture: Int, width: Int, height: Int) {
@@ -796,6 +808,8 @@ class RifeRenderer(
     companion object {
         private const val TAG = "RifeRenderer"
         private const val SLOT_COUNT = 4
+        /** Consecutive one-second windows RIFE may be behind before the renderer reports RIFE_TOO_SLOW. */
+        private const val SLOW_WINDOWS_BEFORE_FALLBACK = 4
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 
