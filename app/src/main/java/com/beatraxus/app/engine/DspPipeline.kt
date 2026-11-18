@@ -386,7 +386,13 @@ private class StemMixerProcessor(
     private var readerQuality: StemQuality? = null
     private var stemBuf = FloatArray(0)
     private var mixBuf = FloatArray(0)
+    private var rsBuf = FloatArray(0)
     private var gains = FloatArray(STEM_COUNT)
+
+    /** Stems are 44.1 kHz. Null when the stage runs at 44.1 kHz too (no resampling); built here, off the audio path. */
+    private val resampler: StemResampler? = (44_100.0 / inputSampleRate).let {
+        if (StemResampler.needsResampling(it)) StemResampler(it) else null
+    }
 
     /** 0 = the original song, 1 = the stem mix. Ramps up over [FADE_FRAMES] when the stems take over, so it never clicks. */
     private var blend = 1f
@@ -460,11 +466,16 @@ private class StemMixerProcessor(
         if (gains.size < stemCount) gains = FloatArray(stemCount)
         cfg.stemLinearGains(specs, gains)
 
-        // Stems are 44.1 kHz; the stage may run at another rate, so read ceil(n * ratio) frames and resample.
+        // Stems are 44.1 kHz; the stage may run at another rate. The position is tracked exactly (integer frame S plus
+        // a fraction) so the resampler stays phase-continuous from one buffer to the next.
         val ratio = 44_100.0 / inputSampleRate
-        val srcStart = (currentFrame * ratio).toLong()
-        val srcFrames = Math.ceil(numFrames * ratio).toInt() + 2
-        if (!coverage.contains(srcStart, srcStart + srcFrames)) {
+        val exact = currentFrame * ratio
+        val srcBase = exact.toLong()
+        val frac0 = exact - srcBase
+        val rs = resampler
+        val srcFrames = rs?.framesNeeded(frac0, numFrames) ?: numFrames
+        val readStart = srcBase - (rs?.padLeft ?: 0)          // may be < 0 at the very start of the song
+        if (!coverage.contains(maxOf(readStart, 0L), readStart + srcFrames)) {
             // This part is not separated yet (still running, or the playhead is ahead of it): play the original here.
             // When the separator has covered it, the stems fade in again.
             blend = 0f
@@ -480,7 +491,22 @@ private class StemMixerProcessor(
         }
         val r = reader ?: StemCache.openReader(context, s.id, quality).also { reader = it; readerQuality = quality }
         val any = StemMixMath.mixInto(gains, stemCount, srcFrames * 2, mixBuf, stemBuf) { stem, dst ->
-            r.read(stem, srcStart, srcFrames, dst)
+            if (readStart >= 0L) {
+                r.read(stem, readStart, srcFrames, dst)
+            } else {
+                // Before frame 0 the stems are silence: read from 0 and shift the audio right by the lead-in.
+                val lead = (-readStart).toInt().coerceAtMost(srcFrames)
+                if (lead >= srcFrames) {
+                    java.util.Arrays.fill(dst, 0, srcFrames * 2, 0f)
+                    true
+                } else if (!r.read(stem, 0L, srcFrames - lead, dst)) {
+                    false
+                } else {
+                    System.arraycopy(dst, 0, dst, lead * 2, (srcFrames - lead) * 2)
+                    java.util.Arrays.fill(dst, 0, lead * 2, 0f)
+                    true
+                }
+            }
         }
         // Stems from an old / broken cache must never push NaN into the filter chain (it would stay there forever).
         if (any) StemDsp.sanitize(mixBuf, 0, srcFrames * 2)
@@ -493,31 +519,24 @@ private class StemMixerProcessor(
             return input
         }
 
+        val mixed: FloatArray
+        if (rs != null) {
+            if (rsBuf.size < numFrames * 2) rsBuf = FloatArray(numFrames * 2)
+            rs.process(mixBuf, frac0, rsBuf, numFrames)
+            mixed = rsBuf
+        } else {
+            mixed = mixBuf
+        }
+
         val step = 1f / FADE_FRAMES
-        if (inputSampleRate == 44_100) {
-            if (blend >= 1f) {
-                System.arraycopy(mixBuf, 0, data, 0, numFrames * 2)
-            } else {
-                for (i in 0 until numFrames) {
-                    val t = blend
-                    blend = if (t + step > 1f) 1f else t + step
-                    data[i * 2] = data[i * 2] * (1f - t) + mixBuf[i * 2] * t
-                    data[i * 2 + 1] = data[i * 2 + 1] * (1f - t) + mixBuf[i * 2 + 1] * t
-                }
-            }
+        if (blend >= 1f) {
+            System.arraycopy(mixed, 0, data, 0, numFrames * 2)
         } else {
             for (i in 0 until numFrames) {
-                val pos = i * ratio
-                val i0 = pos.toInt()
-                val f = (pos - i0).toFloat()
                 val t = blend
-                if (t < 1f) blend = if (t + step > 1f) 1f else t + step
-                for (ch in 0..1) {
-                    val a = mixBuf[i0 * 2 + ch]
-                    val b = mixBuf[(i0 + 1) * 2 + ch]
-                    val m = a + (b - a) * f
-                    data[i * 2 + ch] = if (t >= 1f) m else data[i * 2 + ch] * (1f - t) + m * t
-                }
+                blend = if (t + step > 1f) 1f else t + step
+                data[i * 2] = data[i * 2] * (1f - t) + mixed[i * 2] * t
+                data[i * 2 + 1] = data[i * 2 + 1] * (1f - t) + mixed[i * 2 + 1] * t
             }
         }
         currentFrame += numFrames
