@@ -11,7 +11,10 @@ data class WindowStats(
     val maxEstimateMs: Float,
     val avgDrawMs: Float,
     /** Source frames whose motion estimate was not started because the GPU was still busy with the previous one. */
-    val skippedEstimates: Int = 0
+    val skippedEstimates: Int = 0,
+    /** Vsyncs between two presented frames (0 = unknown) and the panel rate it was computed for: see [CadenceGovernor]. */
+    val cadenceVsyncs: Int = 0,
+    val displayHz: Float = 0f
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -19,6 +22,8 @@ data class WindowStats(
     val renderedFps: Float get() = if (seconds > 0f) presented / seconds else 0f
     /** Synthesised frames per second. */
     val generatedFps: Float get() = if (seconds > 0f) generated / seconds else 0f
+    /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
+    val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
 }
 
 /** Live numbers shown in the settings sheet. Display refresh rate is reported separately and is NOT a frame rate we generate. */
@@ -35,8 +40,16 @@ data class BoosterStats(
     val addedDelayMs: Float = 0f,
     val workEdge: Int = 0,
     val qualityLabel: String = "",
-    val fallbackReason: String? = null
-)
+    val fallbackReason: String? = null,
+    /** Vsyncs each output frame is held (1 = every vsync) and the panel rate; 0 / 0 when not measured yet. */
+    val cadenceVsyncs: Int = 0,
+    val displayHz: Float = 0f,
+    /** False when the presenter had to use a rate other than the target to keep the cadence even. */
+    val cadenceExact: Boolean = true
+) {
+    /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
+    val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
+}
 
 /** Collects events for the current window and emits a [WindowStats] each time [windowNs] has elapsed. */
 class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
@@ -51,8 +64,12 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var drawSum = 0f
     private var drawN = 0
     private var skipped = 0
+    private var cadenceVsyncs = 0
+    private var displayHz = 0f
 
     fun onSourceFrame() { source++ }
+    /** Latest cadence of the presenter (see [CadenceGovernor]); reported with every window. */
+    fun onCadence(vsyncsPerFrame: Int, hz: Float) { cadenceVsyncs = vsyncsPerFrame; displayHz = hz }
     fun onPresented(generatedFrame: Boolean) { presented++; if (generatedFrame) generated++ }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
@@ -74,7 +91,9 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             avgEstimateMs = if (estN > 0) estSum / estN else 0f,
             maxEstimateMs = estMax,
             avgDrawMs = if (drawN > 0) drawSum / drawN else 0f,
-            skippedEstimates = skipped
+            skippedEstimates = skipped,
+            cadenceVsyncs = cadenceVsyncs,
+            displayHz = displayHz
         )
         reset(nowNs)
         return w

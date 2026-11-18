@@ -38,8 +38,9 @@ data class BoosterPlan(
  *  - OFF, HDR sources and devices without OpenGL ES 3 never run the booster. HDR is excluded because the
  *    interpolation pipeline works on 8-bit SDR frames and has no tone-mapping; claiming otherwise would be wrong.
  *  - A source already at (>= 95 % of) the target needs no interpolation.
- *  - The target must be an integer multiple of some panel rate, otherwise frames would be paced unevenly;
- *    in that case the next lower usable target is used and the user is told.
+ *  - The target must divide some panel rate into a whole number of vsyncs ([MotionBoostTiming.isCleanRate]),
+ *    otherwise frames would be shown unevenly (45 or 90 FPS on a 60 / 120 Hz panel); in that case the next lower
+ *    usable target is used and the user is told.
  *  - AUTO mode only acts on sources below 45 fps and picks the highest usable of 60 / 30 above 1.2x the source.
  *  - Battery saver caps the target at 60 and the quality at PERFORMANCE.
  */
@@ -62,7 +63,8 @@ object FpsBoosterPlanner {
         when (settings.engine) {
             BoosterEngine.AUTO -> {
                 engine = if (caps.floatRenderTargets) {
-                    if (rifeModelInstalled && rifeInferenceMs != null && rifeInferenceMs <= 35f) {
+                    if (rifeModelInstalled && rifeInferenceMs != null && rifeInferenceMs <= 35f &&
+                        HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps.takeIf { it > 0f } ?: 24f)) {
                         BoosterEngine.HYBRID
                     } else {
                         BoosterEngine.OPTICAL_FLOW
@@ -129,11 +131,11 @@ object FpsBoosterPlanner {
             }
             wanted = if (usable(caps, requested)) requested else {
                 val lower = BoosterTargets.ALL.filter { it < requested && usable(caps, it) }.maxOrNull()
-                    ?: return BoosterPlan.inactive("Display cannot show ${requested} FPS")
+                    ?: return BoosterPlan.inactive("Display cannot show $requested FPS evenly")
                 if (source.fps > 0f && MotionBoostTiming.shouldBypass(source.fps, lower)) {
-                    return BoosterPlan.inactive("Display cannot show $requested FPS and the video is already near $lower")
+                    return BoosterPlan.inactive("Display cannot show $requested FPS evenly and the video is already near $lower")
                 }
-                note = "Display cannot show $requested FPS: using $lower FPS"
+                note = "Display cannot show $requested FPS evenly: using $lower FPS"
                 lower
             }
         }
@@ -144,15 +146,29 @@ object FpsBoosterPlanner {
                 if (!is2x) {
                     engine = BoosterEngine.OPTICAL_FLOW
                     note = "RIFE supports 2x only: using Optical flow"
-                } else if (rifeInferenceMs != null && rifeInferenceMs > 1000f / source.fps) {
+                } else if (!HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps)) {
                     engine = BoosterEngine.OPTICAL_FLOW
                     note = String.format(Locale.US, "RIFE too slow on this device (%.0f ms per frame): using Optical flow", rifeInferenceMs)
                 }
             }
         }
 
+        // Hybrid runs the model on every pair or not at all: a model that only fits every 2nd / 3rd pair would alternate
+        // between AI-assisted and plain pairs, a quality flicker. Same rule as the RIFE engine, same budget as the renderer.
+        if (engine == BoosterEngine.HYBRID && source.fps > 0f && !HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps)) {
+            engine = BoosterEngine.OPTICAL_FLOW
+            note = String.format(
+                Locale.US, "RIFE needs %.0f ms per frame, more than the %.0f ms this video allows: using Optical flow",
+                rifeInferenceMs, 0.9f * 1000f / source.fps
+            )
+        }
+
         return BoosterPlan(true, wanted, engine, quality, note)
     }
 
-    private fun usable(caps: DeviceCaps, fps: Int) = MotionBoostTiming.isRateSupported(caps.panelRates, fps)
+    /**
+     * A target is usable when the panel has a mode that shows it evenly (a whole multiple of the target). 45 and 90 need
+     * a 90 Hz mode; on a 60 / 120 Hz panel they would be shown as an uneven mix (judder), so they are not offered.
+     */
+    private fun usable(caps: DeviceCaps, fps: Int) = MotionBoostTiming.isCleanRate(caps.panelRates, fps)
 }

@@ -20,6 +20,7 @@ import kotlin.math.max
  * so nothing is ever smoothed across a discontinuity.
  */
 class TimestampRegularizer(private val window: Int = WINDOW) {
+    private val pts = PtsLock()
     private val raw = LongArray(window)
     private var count = 0
     private var head = 0          // next write position
@@ -31,7 +32,31 @@ class TimestampRegularizer(private val window: Int = WINDOW) {
 
     fun reset() {
         count = 0; head = 0; intervalNs = 0L; lastOutNs = 0L
+        pts.reset(); lastPtsOutNs = 0L
     }
+
+    /**
+     * Stamp for a frame whose container presentation time is known ([ptsNs] >= 0, from [FramePts]). The container
+     * times are the exact spacing of the source frames (no vsync quantisation at all), so once they agree with the
+     * raw stamps over a few frames the output is `pts + offset` and every interval is the real one. Anything the
+     * model cannot explain (speed other than 1x, a seek, a pause, a missing time) uses the statistical path below.
+     * The statistical path is fed every frame, so it is warm whenever the container times are given up.
+     */
+    fun next(rawNs: Long, vsyncPeriodNs: Long, ptsNs: Long): Long {
+        val statistical = next(rawNs, vsyncPeriodNs)
+        if (ptsNs < 0L) { pts.reset(); return statistical }
+        val locked = pts.map(rawNs, ptsNs, vsyncPeriodNs)
+        if (locked == Long.MIN_VALUE) return statistical
+        // Monotonic, and never further from the raw stamp than the statistical path allows (A/V sync preserved).
+        val out = if (locked <= lastPtsOutNs) lastPtsOutNs + 1L else locked
+        lastPtsOutNs = out
+        return out
+    }
+
+    private var lastPtsOutNs = 0L
+
+    /** True while the output follows the container presentation times. */
+    val ptsLocked: Boolean get() = pts.locked
 
     /** Regularised stamp for [rawNs]; [vsyncPeriodNs] sets how far a stamp may deviate before it counts as a break. */
     fun next(rawNs: Long, vsyncPeriodNs: Long): Long {
@@ -89,5 +114,48 @@ class TimestampRegularizer(private val window: Int = WINDOW) {
         const val PHASE_DIV = 8L
         /** A raw step longer than this is a seek / pause, never a frame interval. */
         const val MAX_STEP_NS = 400_000_000L
+    }
+}
+
+/**
+ * Follows `raw - pts` (the offset between the renderer's clock and the container's) with a slow filter, so that
+ * `pts + offset` has the exact spacing of the container times and the average position of the raw stamps.
+ * Returns [Long.MIN_VALUE] until [LOCK_FRAMES] consecutive frames agreed with the model.
+ */
+internal class PtsLock {
+    private var offsetNs = 0.0
+    private var lastPtsNs = Long.MIN_VALUE
+    private var lastRawNs = 0L
+    private var agreeing = 0
+
+    val locked: Boolean get() = agreeing >= LOCK_FRAMES
+
+    fun reset() { agreeing = 0; lastPtsNs = Long.MIN_VALUE }
+
+    fun map(rawNs: Long, ptsNs: Long, vsyncPeriodNs: Long): Long {
+        val sample = (rawNs - ptsNs).toDouble()
+        val ptsStep = ptsNs - lastPtsNs
+        val rawStep = rawNs - lastRawNs
+        val first = lastPtsNs == Long.MIN_VALUE
+        lastPtsNs = ptsNs
+        lastRawNs = rawNs
+        if (first || ptsStep <= 0L || ptsStep > TimestampRegularizer.MAX_STEP_NS || rawStep <= 0L) {
+            offsetNs = sample; agreeing = 1
+            return Long.MIN_VALUE
+        }
+        val tolerance = vsyncPeriodNs * 3 / 2 + 2_000_000L
+        if (kotlin.math.abs(sample - offsetNs) > tolerance) {
+            // The two clocks disagree by more than vsync quantisation can explain: new run (seek, pause, speed change).
+            offsetNs = sample; agreeing = 1
+            return Long.MIN_VALUE
+        }
+        offsetNs += (sample - offsetNs) / OFFSET_DIV
+        if (agreeing < LOCK_FRAMES) agreeing++
+        return if (locked) ptsNs + Math.round(offsetNs) else Long.MIN_VALUE
+    }
+
+    companion object {
+        const val LOCK_FRAMES = 6
+        const val OFFSET_DIV = 16.0
     }
 }

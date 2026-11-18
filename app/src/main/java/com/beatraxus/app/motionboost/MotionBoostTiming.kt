@@ -70,6 +70,33 @@ object MotionBoostTiming {
     }
 
     /**
+     * Due time of the frame after the one drawn on [vsyncNs], when [stepNs] is a whole number of vsync periods (see
+     * [com.beatraxus.app.fpsbooster.CadenceGovernor]). Anchored to the vsync that really showed the frame, not to its
+     * due time: a measured vsync period that is a few microseconds off can no longer drift the cadence against the
+     * panel, and a frame that missed its vsync delays the cadence once instead of being "caught up" by a short hold.
+     */
+    fun nextDueOnGrid(vsyncNs: Long, stepNs: Long): Long = vsyncNs + stepNs
+
+    /**
+     * True when [hz] shows [targetFps] evenly: [hz] is a whole multiple of the target (within 2 %), so every output
+     * frame is held for the same number of vsyncs.
+     */
+    fun isCleanMultiple(hz: Float, targetFps: Int): Boolean {
+        if (targetFps <= 0 || hz <= 0f) return false
+        val ratio = hz / targetFps
+        val multiple = ratio.roundToInt()
+        return multiple >= 1 && abs(ratio - multiple) < 0.02f
+    }
+
+    /**
+     * Whether [targetFps] can be shown with an even cadence on a panel offering [modes] (Hz): some mode is a whole
+     * multiple of the target. 30 / 60 / 120 are clean on a 60 / 120 panel, 45 and 90 need a 90 Hz mode. Prefer this
+     * over [isRateSupported] (which only checks the panel's peak rate) when deciding which targets to offer.
+     */
+    fun isCleanRate(modes: List<Float>, targetFps: Int): Boolean =
+        targetFps > 0 && modes.any { isCleanMultiple(it, targetFps) }
+
+    /**
      * The panel refresh rate (Hz) to ask the system for when playing at [targetFps]: an exact match
      * first, then the lowest integer multiple (45 -> 90, 60 -> 120), then the lowest rate above the
      * target, then the highest the panel has. Null when there is nothing to choose.
@@ -99,11 +126,7 @@ object MotionBoostTiming {
     fun pickWindowRefreshRate(modes: List<Float>, targetFps: Int, uiHz: Float?): Float? {
         if (targetFps <= 0 || modes.isEmpty()) return null
         val want = uiHz ?: modes.max()
-        val multiples = modes.filter { hz ->
-            val ratio = hz / targetFps
-            val multiple = ratio.roundToInt()
-            multiple >= 1 && abs(ratio - multiple) < 0.02f
-        }
+        val multiples = modes.filter { isCleanMultiple(it, targetFps) }
         return multiples.ifEmpty { modes }.minWithOrNull(compareBy<Float>({ abs(it - want) }, { -it }))
     }
 

@@ -127,12 +127,16 @@ class RifeRenderer(
     private var pendingFrame = false
     private val texMatrix = FloatArray(16)
     private var frameIntervalNs = 0L
+    /** Hold (ns) applied to the picture on the last interpolated frame; 0 when playing source frames as they are. Reported as the added delay. */
+    private var lastHoldNs = 0L
     private var leadNs = 20_000_000L
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
     @Volatile private var orientationMatrix: FloatArray = VideoOrientation.NONE.videoFromScreen()
     @Volatile private var deinterlaceMode = 0
     private var nextDueNs = 0L
+    /** Exact n-vsync cadence for the presented frames (see [CadenceGovernor]). */
+    private val cadence = CadenceGovernor()
 
     // ---- Vsync Median Ring ----
     private val vsyncRing = LongArray(9)
@@ -364,9 +368,10 @@ class RifeRenderer(
 
         val now = System.nanoTime()
         var rawTs = st.timestamp
+        val ptsNs = FramePts.lookupNs(rawTs)
         if (abs(rawTs - now) > 2_000_000_000L) rawTs = now
 
-        val regTs = regularizer.next(rawTs, vsyncPeriodNs)
+        val regTs = regularizer.next(rawTs, vsyncPeriodNs, ptsNs)
 
         val newSlot = slots.firstOrNull { it !== cur && it !== prev && (synthFor == null || it !== synthFor) }
             ?: slots.first { it !== cur && it !== prev }
@@ -564,20 +569,23 @@ class RifeRenderer(
 
         val c = cur ?: return
         val fps = targetFps
-        val rawStepNs = (1_000_000_000.0 / fps).toLong()
-        val stepNs = MotionBoostTiming.stepNs(rawStepNs, vsyncPeriodNs)
+        // One output frame every n whole vsyncs: an even cadence, whatever target was asked for.
+        val stepNs = cadence.stepNs(fps, vsyncPeriodNs)
+        statsAcc.onCadence(cadence.vsyncsPerFrame, cadence.displayHz)
 
         if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) return
         val workStartNs = System.nanoTime()
 
         val p = prev
         val sourceFps = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
-        val interpolate = p != null && !MotionBoostTiming.shouldBypass(sourceFps, fps)
+        val interpolate = p != null && !MotionBoostTiming.shouldBypass(sourceFps, cadence.effectiveTarget(fps))
 
         var alpha = 1f
         var warp = false
+        if (!interpolate) lastHoldNs = 0L
         if (interpolate) {
             val hold = MotionBoostTiming.holdNs(frameIntervalNs, leadNs, vsyncPeriodNs, estimateLatency.smoothedNs)
+            lastHoldNs = hold
             val contentTime = vsyncNs + vsyncPeriodNs - hold
             alpha = MotionBoostTiming.alpha(contentTime, p!!.tsNs, c.tsNs)
             warp = synthFor === c && !flowSkipped
@@ -598,7 +606,7 @@ class RifeRenderer(
         statsAcc.onDrawMs(drawDurationMs)
         statsAcc.onPresented(warp)
 
-        nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, stepNs)
+        nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, stepNs)
         lastDrawnCur = c
         lastDrawnPrev = p
         lastDrawnAlpha = alpha
@@ -665,7 +673,7 @@ class RifeRenderer(
                     workEdge = modelW
                 )
             )
-            callbacks.onWindow(win, sourceFps, modelW, estimateLatency.smoothedNs / 1e6f)
+            callbacks.onWindow(win, sourceFps, modelW, lastHoldNs / 1e6f)
         }
     }
 

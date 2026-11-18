@@ -32,8 +32,12 @@ class BoosterBenchmarkTest {
         val r = BoosterRecommender.recommend(result(q = 25f, b = 12f, p = 7f, warp = 3f), panel60and120)
         assertEquals(BoosterEngine.OPTICAL_FLOW, r.engine)
         assertEquals(BoosterQuality.BALANCED, r.quality)
-        assertEquals(90, r.targetFps)
+        // 90 is not a whole divisor of a 60 / 120 Hz panel (it would judder), so 60 is the highest clean target.
+        assertEquals(60, r.targetFps)
         assertEquals(DeviceTier.MID, r.tier)
+        // With a 90 Hz mode, 90 is clean and is chosen.
+        val r90 = BoosterRecommender.recommend(result(q = 25f, b = 12f, p = 7f, warp = 3f), listOf(60f, 90f, 120f))
+        assertEquals(90, r90.targetFps)
     }
 
     @Test fun slowDeviceKeepsOpticalFlowOnPerformanceAt30() {

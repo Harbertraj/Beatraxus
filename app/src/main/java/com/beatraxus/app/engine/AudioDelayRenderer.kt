@@ -18,6 +18,9 @@ import androidx.media3.exoplayer.Renderer
  *
  * (The renderer is wrapped instead of subclassed because FfmpegAudioRenderer is final.)
  *
+ * On top of the user's delay the clock carries [VideoPlaybackTuning.autoDelayTargetMs], the FPS Booster's own hold
+ * (see [AutoDelayRamp]), so the picture the booster holds back is not behind the sound.
+ *
  * Side effect: the position the player reports is shifted by the same amount.
  */
 @UnstableApi
@@ -34,16 +37,21 @@ class AudioDelayRenderer(
         // DefaultMediaClock requires the same instance every time it asks, so build the wrapper once.
         if (offsetClock == null || innerClock !== inner) {
             innerClock = inner
-            offsetClock = OffsetMediaClock(inner, tuning)
+            offsetClock = OffsetMediaClock(inner, tuning, AutoDelayRamp())
         }
         return offsetClock
     }
 
     private class OffsetMediaClock(
         private val inner: MediaClock,
-        private val tuning: VideoPlaybackTuning
+        private val tuning: VideoPlaybackTuning,
+        private val ramp: AutoDelayRamp
     ) : MediaClock {
-        override fun getPositionUs(): Long = inner.positionUs + tuning.audioDelayMs * 1000L
+        override fun getPositionUs(): Long {
+            val auto = ramp.update(tuning.autoDelayTargetMs, System.nanoTime())
+            tuning.appliedAutoDelayMs = Math.round(auto).toInt()
+            return inner.positionUs + tuning.audioDelayMs * 1000L + Math.round(auto * 1000.0)
+        }
 
         override fun setPlaybackParameters(playbackParameters: PlaybackParameters) {
             inner.playbackParameters = playbackParameters

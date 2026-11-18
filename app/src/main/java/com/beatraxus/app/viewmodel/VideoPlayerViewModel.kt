@@ -41,6 +41,7 @@ import com.beatraxus.app.engine.ExternalAudioMediaSourceFactory
 import com.beatraxus.app.engine.ExternalAudioTrack
 import com.beatraxus.app.engine.VideoDecoderMode
 import com.beatraxus.app.fpsbooster.BenchmarkState
+import com.beatraxus.app.fpsbooster.BoosterAvSync
 import com.beatraxus.app.fpsbooster.BoosterBenchmarkRunner
 import com.beatraxus.app.fpsbooster.BoosterPlan
 import com.beatraxus.app.fpsbooster.BoosterRecommender
@@ -420,7 +421,10 @@ class VideoPlayerViewModel(
         upscaleMode = VideoUpscaleMode.fromName(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString(VideoUpscaleMode.PREF_KEY, null)),
         upscaleStrength = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getFloat(VideoUpscaleMode.STRENGTH_KEY, VideoUpscaleMode.DEFAULT_STRENGTH),
         playbackSpeed = playerOptions.defaultSpeed,
-        fpsBooster = FpsBoosterStore.load(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE)),
+        fpsBooster = FpsBoosterStore.load(
+            application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE),
+            runCatching { DisplayRefreshRate.supportedRates(application) }.getOrNull()
+        ),
         // A result from an earlier run is shown again instead of testing every time. Read synchronously so the
         // sheet never mistakes "not loaded yet" for "never tested" and starts the test a second time.
         fpsBoosterBenchmark = FpsBoosterStore.loadBenchmark(application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE))
@@ -592,7 +596,12 @@ class VideoPlayerViewModel(
                 rifeModelInstalled = RifeAiEngine.isModelInstalled(getApplication<Application>())
             )
         }
-        return if (plan == s.fpsBoosterPlan) s else s.copy(fpsBoosterPlan = plan, fpsBoosterStats = BoosterStats())
+        val result = if (plan == s.fpsBoosterPlan) s else s.copy(fpsBoosterPlan = plan, fpsBoosterStats = BoosterStats())
+        // Plan changed (booster switched off, fell back, new video): the compensation goes back to 0 right away.
+        tuning.autoDelayTargetMs = BoosterAvSync.targetMs(
+            result.fpsBooster.avSync, result.fpsBoosterPlan.active, result.fpsBoosterStats.running, result.fpsBoosterStats.addedDelayMs
+        )
+        return result
     }
 
     private fun loadIntroRange() {
@@ -1324,8 +1333,8 @@ class VideoPlayerViewModel(
 
         val player = exoPlayer ?: return
         if (_uiState.value.routeAudioToEngine || player.playbackState == Player.STATE_IDLE) return
-        // currentPosition includes the audio-delay clock shift, so take it back out.
-        val positionMs = (player.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L)
+        // currentPosition includes the clock shift (audio delay + booster A/V compensation), so take it back out.
+        val positionMs = (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
         val resumePlayback = player.playWhenReady
         player.stop()
         player.seekTo(player.currentMediaItemIndex, positionMs)
@@ -1366,6 +1375,21 @@ class VideoPlayerViewModel(
             stats
         }
         _uiState.update { it.copy(fpsBoosterStats = updatedStats) }
+        syncBoosterAv()
+    }
+
+    /**
+     * Moves the player's clock by the delay the booster really adds to the picture (A/V compensation). The audio
+     * renderer follows the value with a slew limit, so a changing hold never makes a visible or audible step.
+     */
+    private fun syncBoosterAv() {
+        val s = _uiState.value
+        tuning.autoDelayTargetMs = BoosterAvSync.targetMs(
+            enabled = s.fpsBooster.avSync,
+            planActive = s.fpsBoosterPlan.active,
+            running = s.fpsBoosterStats.running,
+            holdMs = s.fpsBoosterStats.addedDelayMs
+        )
     }
 
     /** The booster could not keep up / overheated / hit a GPU error: play normally for the rest of this video. */
@@ -1419,9 +1443,9 @@ class VideoPlayerViewModel(
             return null
         }
         val alreadyCasting = _uiState.value.castDeviceName != null
-        // currentPosition includes the audio-delay clock shift, so take it back out.
+        // currentPosition includes the clock shift (audio delay + booster A/V compensation), so take it back out.
         val positionMs = if (alreadyCasting) positionFlow.value
-        else (player.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L)
+        else (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
 
         // The Audio Engine route decodes the video file on the phone; it has no place while the TV plays it.
         if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) {
@@ -1571,7 +1595,7 @@ class VideoPlayerViewModel(
         val ep = ensureExternalPlayer()
         extVideoId = videoId
         activeExternalIndex = index
-        ep.setMediaItem(MediaItem.fromUri(file.uri), (main.currentPosition - tuning.audioDelayMs).coerceAtLeast(0L))
+        ep.setMediaItem(MediaItem.fromUri(file.uri), (main.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L))
         ep.playbackParameters = PlaybackParameters(main.playbackParameters.speed)
         ep.volume = 1f
         lastExtSeekAtMs = android.os.SystemClock.elapsedRealtime() // the start position above is already aligned
@@ -1621,7 +1645,7 @@ class VideoPlayerViewModel(
         // While the video plays on, the seek itself takes time: aim ahead by what the last seek needed,
         // otherwise the audio lands behind again every time.
         val lead = if (main.isPlaying) (extSeekLeadMs * speed).toLong() else 0L
-        val target = (main.currentPosition - tuning.audioDelayMs + lead).coerceAtLeast(0L)
+        val target = (main.currentPosition - tuning.clockShiftMs + lead).coerceAtLeast(0L)
         ep.seekTo((target * extScale).toLong())
     }
 

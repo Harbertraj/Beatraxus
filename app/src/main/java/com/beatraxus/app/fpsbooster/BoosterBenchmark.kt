@@ -127,7 +127,7 @@ object BoosterRecommender {
         s.aiFusion && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW
 
     fun recommend(r: BenchmarkResult, panelRates: List<Float>, rifeModelInstalled: Boolean = false): Recommendation {
-        val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isRateSupported(panelRates, it) }.ifEmpty { listOf(30) }
+        val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isCleanRate(panelRates, it) }.ifEmpty { listOf(30) }
         val weakCpu = r.cpuScore in 1 until WEAK_CPU_SCORE
         val ceiling = if (weakCpu) 60 else usableTargets.max()
 

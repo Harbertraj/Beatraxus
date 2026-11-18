@@ -21,6 +21,17 @@ object HybridScheduling {
         return avgInferenceNs * 10 <= sourceIntervalNs * 9
     }
 
+    /**
+     * Planner-side form of [canInjectMid]: does a model that takes [inferenceMs] per frame fit in 90 % of one interval of a
+     * [sourceFps] video? Unknown inference or source rate: yes (the runtime deadline protects playback). The planner uses
+     * it so that the engine it picks is one the renderer will really run on every pair: a model that only fits every 2nd
+     * or 3rd pair would alternate between AI-assisted and plain pairs, which looks like a flickering quality.
+     */
+    fun fitsEveryPair(inferenceMs: Float?, sourceFps: Float): Boolean {
+        if (inferenceMs == null || inferenceMs <= 0f || sourceFps <= 0f) return true
+        return canInjectMid(Math.round(inferenceMs * 1e6), Math.round(1e9 / sourceFps))
+    }
+
     /** Timestamp of the AI middle frame of real frames at [aTsNs] and [bTsNs]. */
     fun midTimestampNs(aTsNs: Long, bTsNs: Long): Long = aTsNs + (bTsNs - aTsNs) / 2
 

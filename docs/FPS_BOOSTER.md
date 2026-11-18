@@ -82,7 +82,7 @@ On the same synthetic ground-truth clips the old engine is no better than plain 
 ### Timestamps / sync
 - Output phase `alpha` is computed from the source frames' SurfaceTexture timestamps, so **playback-speed changes** and the audio-driven release schedule are followed automatically; sources that already run at ≥95 % of the target are bypassed.
 - A **seek, pause, > 1 s gap or new clip** breaks the pair (`MotionBoostTiming.isContinuous`); the stale flow is discarded; nothing is interpolated across it.
-- The presenter holds video back by `hold` ms (≈ source interval − decoder lead + one vsync + 4 ms). From the formula this is **expected to be roughly 25–35 ms at 24 fps; not measured on a device.** It is shown in the stats as *Video delay*. The audio pipeline was deliberately **not** modified to compensate; the existing *Audio delay* control can absorb it, and 25–35 ms is below the usual A/V detectability threshold.
+- The presenter holds video back by `hold` ms (≈ source interval − decoder lead + one vsync + 4 ms). From the formula this is **expected to be roughly 25–35 ms at 24 fps; not measured on a device.** It is shown in the stats as *Video delay*. Since step 2 (section 19) the player's clock is moved by this hold (setting *Keep sound in sync*, on by default), so the sound follows the picture.
 
 ### Settings and stats
 - Mode Off/On/Auto; target 30/45/60/90/120 (a target is only offered if some panel mode is an integer multiple of it, otherwise it is greyed out; the planner steps down to the next usable one and says so); Engine Auto/Optical flow/Classic; Quality Performance/Balanced/Quality; Adaptive resolution; Battery saver; Live statistics.
@@ -179,7 +179,7 @@ Reproduce: §8.
 | AI / RIFE engine | **Not implemented** (assessment below) |
 | HDR support | **Not implemented** (excluded by design) |
 | Motion-strength control | **Not implemented** (no such algorithm parameter) |
-| Automatic A/V compensation for the hold-back | **Not implemented** (deliberate: audio pipeline untouched) |
+| Automatic A/V compensation for the hold-back | Implemented in step 2 (section 19), default on, switchable |
 | Instrumentation / on-device benchmark tests; battery, thermal, memory, CPU/GPU measurements | **Not done** |
 | Gradle build and `testDebugUnitTest` run | **Not done** |
 
@@ -617,3 +617,142 @@ optical flow + AI fusion 37.0 -> 37.3 dB (SSIM 0.961 -> 0.964; fast motion 31.0 
 alone: 39.74 -> 39.94 dB (fast 34.05 -> 34.76). The gains are real but small and measured on a single clip.
 Classic is limited by its +-8 block search (about 32 px at this size): above that it falls back to a cross-fade, and
 loosening its confidence gates changed nothing measurable, so it is left as it was.
+
+## 18. Stability work, step 1: even cadence on the display
+
+Problem: a panel can show a video evenly only at `refresh / n` FPS for a whole n. 45 or 90 FPS on a 120 Hz mode, or 45 on
+60 Hz, is shown as an uneven mix of holds (for example 3-3-2 vsyncs). That is judder, whatever the interpolation quality.
+The planner used to offer every target up to the panel's peak rate, and nothing checked what the display really did.
+
+- **Clean targets only.** `MotionBoostTiming.isCleanRate(modes, target)` is true when some panel mode is a whole
+  multiple of the target. The planner, the benchmark recommender and the Target FPS chips use it (30 / 60 / 120 on a
+  60 / 120 Hz panel; 45 and 90 also need a 90 Hz mode). An impossible target falls to the next lower clean one, with a note.
+- **Exact n-vsync presenting.** `CadenceGovernor` (used by the Optical flow, RIFE / Hybrid and Classic presenters) turns
+  target + measured vsync period into a step of exactly n whole vsyncs. If the system did not grant the requested mode,
+  the output is the closest even rate (45 on 120 Hz -> 40 FPS, every 3rd vsync) instead of an uneven 45. The next due
+  time is anchored to the vsync that showed the frame (`nextDueOnGrid`), so a vsync period that is a few microseconds
+  off cannot drift the cadence, and a late frame delays the grid once instead of being caught up with a short hold.
+- **One display helper for all engines.** `BoosterDisplaySession` (used by both surface views) requests a better-fitting
+  mode only when the app's rate does not suit the target, votes the chosen panel rate on the video surface
+  (`Surface.setFrameRate`, seamless-only from API 31; never the target itself, so the UI rate cannot be dragged down)
+  and re-asserts the request (at most 3 times) when a `DisplayListener` reports a rate that does not fit.
+  The Classic view used to request no mode at all; it now behaves like the others.
+- **Visible.** Stats show "Display cadence: 120 Hz, a frame every 3 vsync = 40 FPS (target not possible evenly)".
+  The adaptive controller judges the presented rate against that cadence, not against the unreachable target.
+- Not done here (later steps): context priorities and thread split, duplicate frames. (Audio compensation and the PTS clock: section 19.)
+- Not run on a device. Unit tests: `CadenceGovernorTest`, `MotionBoostTimingTest`, `FpsBoosterPlannerTest`, `BoosterBenchmarkTest`.
+
+## 19. Stability work, step 2: sound in step with the picture, container timestamps
+
+Two causes of "it does not feel steady" that the picture alone cannot fix.
+
+- **A/V compensation.** The presenter holds every picture back by `hold` ms (section 3), the sound is not held, so the
+  lips lead the picture. `BoosterAvSync.targetMs` turns the *reported* hold (`BoosterStats.addedDelayMs`, about once per
+  second) into `VideoPlaybackTuning.autoDelayTargetMs`; `AudioDelayRenderer`'s clock adds it, followed by `AutoDelayRamp`
+  at no more than 2 % per unit of wall time (an 80 ms hold is reached in 4 s, so the player never sees a clock step
+  that would drop or repeat a frame). The user's own audio delay stays on top. `VideoPlaybackTuning.clockShiftMs`
+  (user delay + applied compensation) is what the ViewModel subtracts when it converts the player position back to
+  the media position (seek, snapshots, frame stepping). 0 whenever the booster is off, fell back or waits. Setting
+  *Keep sound in sync*, default on. RIFE / Hybrid / Classic now report the hold they really apply (they used to report
+  the estimate latency as "Video delay").
+- **Container timestamps.** `SurfaceTexture.timestamp` is the release time, snapped to a vsync (24 fps on 60 Hz arrives
+  as 33 / 50 ms), so the interpolation phase was derived from jittered stamps and `TimestampRegularizer` could only
+  estimate the true spacing. `FramePts` listens to ExoPlayer's `VideoFrameMetadataListener` (presentation time +
+  release time of each frame), the renderers look the container time up by the stamp they were given, and the regulariser
+  outputs `pts + offset`, where offset is a slow average of `raw - pts` (1/16 per frame). The spacing of the output is then
+  the real spacing (test: 24 fps on 60 Hz, interval jitter about 1 ms against 17 ms raw) and its average position still
+  follows the raw clock. It locks after 6 frames that agree with the model and gives up on any disagreement (seek, pause,
+  speed other than 1x, missing time), falling back to the previous statistical path, which is fed every frame.
+- **Moved to step 4: duplicate-frame handling.** Telecined / frame-doubled sources need a per-pair "this frame is a copy"
+  signal on the CPU side, which means a GPU readback. Step 4 builds a per-pair confidence readback anyway, so the
+  detection is added there rather than a second readback here.
+- **Assumptions, not verified on a device:** that the release time ExoPlayer passes to the metadata listener is the value
+  `SurfaceTexture.getTimestamp()` returns (matched within 1.5 ms; if not, the lookup returns nothing and behaviour is
+  as before); that the clock offset has no side effects on a particular device's audio sink (only the reported clock changes).
+- Unit tests: `AutoDelayRampTest`, `BoosterAvSyncTest`, `FramePtsTest`.
+
+## 20. Stability work, step 3: the analysis yields to the presenter
+
+Goal of this step: a heavy motion estimate must not make the presenting draw late. The full answer is two threads and two
+EGL contexts (a HIGH-priority presenter, a LOW-priority analysis) sharing textures through fences. **That split is not done
+here**: it moves the ownership of every slot texture between contexts, shared-context fence behaviour differs between GPU
+drivers, and it cannot be validated without a device. The renderer's own design already helps (the estimate is a chain of
+small passes, submitted after the presenting draw and spread over the vsyncs between two source frames), so this step
+fixes what was wrong inside that design instead:
+
+- **Analysis is paced by the presenter.** `EstimatePacer` takes the share of the planned slice that may be submitted on
+  this vsync. Frame drawn a whole vsync late, or draw + swap taking more than 60 % of a vsync -> the share halves (floor 25 %,
+  never two skipped vsyncs in a row so the estimate always finishes); eight clean presents give 25 % back. A slower estimate
+  costs only latency (covered by the hold and, since step 2, by the A/V compensation), a late frame costs visible judder.
+- **Slices are spent on every vsync.** The estimate used to be advanced only on presenting vsyncs, while the slice was
+  planned per vsync: with 30 / 40 / 60 FPS on a faster panel (n vsyncs per frame) it took n times longer than planned, which
+  inflated the hold. Non-presenting and idle vsyncs now advance it too. The work per vsync is smaller and more even.
+- **Context priority is unchanged** (LOW up to 60 FPS targets, default above). A HIGH presenter context is only safe once
+  the analysis runs in a separate LOW context, otherwise the whole motion search would be raised over the app's UI.
+- **Not done:** shared presenter helper for the three renderers (a refactor with no behaviour gain), thread split.
+- Applies to the Optical flow engine and to Hybrid (which uses it for the flow). RIFE inference and the Classic block
+  search are single-shot work, so they are not sliced.
+- Not run on a device. Tests: `EstimatePacerTest`.
+
+## 21. Stability work, step 4: quality changes without a reset
+
+Before: every adaptive quality step (and every change of the Quality preset) went through `applySourceSize`, which freed
+all textures, emptied the frame queue, forgot the hold, the timestamp model and the last drawn pair. The picture lost its
+history for one to two source intervals and the cadence was re-learned: a visible hiccup exactly when the device was
+already struggling.
+
+- **Analysis-only reconfigure.** The stored frame has the video's own size at every level of the ladder
+  (`FrameSizing.analysisOnlyChange`), so a level change replaces only what depends on the level: the luma pyramids, the
+  flow, global-motion, cut and risk textures and the AI-fusion map (`OpticalFlowRenderer.reconfigureAnalysis`). The
+  stored frames, the queue, the hold controller, the timestamp model and the last presented pair stay. Queued frames get
+  their luma rebuilt from the stored picture at the new size; they show as real frames until the next pair brings a new
+  estimate (at most one source interval, and no black frame). A different source size, or a level with a smaller frame
+  cap, still takes the full path.
+- **Per-pair fallback was already in place** and is unchanged: a pair without a finished estimate shows the nearest real
+  frame by phase; a scene cut shows the nearest real frame; a whip pan cross-fades; the risk map makes single regions fall
+  back to the blend. (All decided on the GPU, see `cut_detect.frag`, `risk_map.frag`.)
+- **Not done: duplicate-frame handling.** A frame-doubled or telecined source needs a CPU verdict "this frame is a copy"
+  (GPU readback) and then dropping the copy from the queue. Dropping it makes the unique frames arrive every 2nd source
+  interval, so the hold, the frame selection and the A/V compensation would all have to follow a changed cadence. A mistake
+  there shows as freezes, and it cannot be tuned without a device and real clips, so it is left out rather than shipped
+  untested.
+- Applies to the Optical flow engine and to Hybrid (whose level changes go to the same renderer). The Classic engine has
+  no analysis pyramid, the RIFE model size does not depend on the quality level.
+- Not run on a device. Tests: `FrameSizingTest`.
+
+## 22. Stability work, step 5: the AI engines are chosen by the same budget the renderer runs on
+
+State before this step: the RIFE engine was already limited to exactly 2x and fell back when the model was slower than one
+source interval; Hybrid already has a runtime cascade (`HybridScheduling.canInjectMid`: the model must fit in 90 % of an
+interval, a deadline per pair, a hallucination guard, a cut test) and, when it does not fit, runs the model on every 2nd / 3rd
+pair only. That last mode alternates between AI-assisted and plain pairs, which shows as a flickering quality, and the planner
+did not know about it (explicit Hybrid ignored the measured model time; Auto's cap was a fixed 35 ms; the RIFE engine used
+100 % of an interval where Hybrid uses 90 %).
+
+- **One budget.** `HybridScheduling.fitsEveryPair(inferenceMs, sourceFps)` is the planner-side form of `canInjectMid`
+  (90 % of the source interval; unknown cost or rate = fits, the runtime deadline protects playback).
+- **Explicit Hybrid** with a measured model time that does not fit the video's interval plays with Optical flow, with a note
+  ("RIFE needs 34 ms per frame, more than the 30 ms this video allows"). Not measured yet: Hybrid is kept.
+- **Auto** picks Hybrid only when the model is at most 35 ms **and** fits the source interval (a 33 ms model on a 30 fps video
+  used to qualify).
+- **RIFE engine** uses the same 90 % budget (was 100 %), keeping its exact-2x rule.
+- Unchanged and still valid: RIFE_TOO_SLOW runtime fallback in `RifeRenderer`, the Hybrid cascade, stride mode as a runtime
+  safety net (it can still occur when the measured cost grows after the plan was made).
+- Not run on a device; the model timing comes from the benchmark and varies with device load and temperature.
+  Tests: `FpsBoosterPlannerTest` (4 new).
+
+## 23. No device test on opening; full-potential defaults
+
+The first time the booster sheet opened, a ~3 s CPU + GPU test paused playback and then applied a recommendation that was
+conservative by design. It is gone: the sheet opens straight to the options and nothing is measured or paused.
+
+- A fresh install (nothing stored) starts at the **Quality** preset and at the **highest target the panel shows evenly**
+  (`BoosterTargets.maxCleanTarget`: 120 on a 120 Hz panel, 90 with a 90 Hz mode, 60, last resort 30). Mode stays Off until
+  the user turns the booster on. Saved settings are never changed.
+- **The safety net is runtime, not a test.** *Adaptive resolution* (on by default) lowers the motion-analysis size when the
+  device cannot keep up and raises it again when it can; since step 4 a change is invisible (no reset). Battery saver still
+  caps at 60 FPS / Performance.
+- Not changed: engine Auto only picks Hybrid when a measured model time exists (none is measured any more), so Auto means
+  Optical flow; RIFE AI and Hybrid stay selectable by hand and are protected by their runtime deadline (step 5). The
+  manual "Run device test" card is only shown after a failed run; stored old results still feed the AI fusion hint.
+- Not run on a device. Test: `FpsBoosterSettingsTest.freshInstallStartsAtTheDevicesFullPotential`.

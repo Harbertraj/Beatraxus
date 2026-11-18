@@ -148,6 +148,18 @@ class MotionBoostTimingTest {
     }
 
     @Test
+    fun cleanRateNeedsAModeThatIsAWholeMultipleOfTheTarget() {
+        val panel60 = listOf(60f); val p60120 = listOf(60f, 120f); val p90 = listOf(60f, 90f, 120f)
+        for (fps in listOf(30, 60)) assertTrue(MotionBoostTiming.isCleanRate(panel60, fps))
+        for (fps in listOf(45, 90, 120)) assertFalse(MotionBoostTiming.isCleanRate(panel60, fps))
+        for (fps in listOf(30, 60, 120)) assertTrue(MotionBoostTiming.isCleanRate(p60120, fps))
+        for (fps in listOf(45, 90)) assertFalse(MotionBoostTiming.isCleanRate(p60120, fps))
+        for (fps in listOf(30, 45, 60, 90, 120)) assertTrue(MotionBoostTiming.isCleanRate(p90, fps))
+        assertTrue(MotionBoostTiming.isCleanRate(listOf(119.88f), 60))
+        assertFalse(MotionBoostTiming.isCleanRate(emptyList(), 60))
+    }
+
+    @Test
     fun stepNsRoundsToVsyncPeriodMultiple() {
         assertEquals(2 * 8_333_333L, MotionBoostTiming.stepNs(16_666_667L, 8_333_333L))
         assertEquals(11_111_111L, MotionBoostTiming.stepNs(11_111_111L, 8_333_333L))

@@ -95,7 +95,8 @@ class OpticalFlowRenderer(
 
     @Volatile var rifeOverlayHook: RifeOverlayHook? = null
 
-    private class Slot(val full: Int, val luma: IntArray, val fw: Int, val bw: Int, val cut: Int, val glob: Int, val risk: Int) {
+    /** [full] is the stored frame; everything else is analysis data sized by the quality level, which [reconfigureAnalysis] replaces in place. */
+    private class Slot(val full: Int, var luma: IntArray, var fw: Int, var bw: Int, var cut: Int, var glob: Int, var risk: Int) {
         var tsNs: Long = 0L
         /** fw / bw / cut / glob / risk hold the flow from the previous queued frame to this one. */
         var hasFlow: Boolean = false
@@ -185,6 +186,8 @@ class OpticalFlowRenderer(
     private var vsyncPeriodNs = 8_333_333L
     private var lastVsyncNs = 0L
     private var nextDueNs = 0L
+    /** Exact n-vsync cadence for the presented frames (see [CadenceGovernor]). */
+    private val cadence = CadenceGovernor()
     private var lastDrawnA: Slot? = null
     private var lastDrawnB: Slot? = null
     private var lastDrawnTsA = 0L
@@ -203,6 +206,8 @@ class OpticalFlowRenderer(
     private var estArrivalNs = 0L
     private var estFirstSubmitNs = 0L
     private var estPerTick = 1
+    /** Keeps the analysis steps from delaying the presenter: fewer steps per vsync while presenting is late or slow. */
+    private val estimatePacer = EstimatePacer()
 
     // ---- vsync period estimation ----
     private val periodRing = LongArray(9)
@@ -431,48 +436,37 @@ class OpticalFlowRenderer(
         if (released || width <= 0 || height <= 0 || eglContext == EGL14.EGL_NO_CONTEXT) return
         val lv = level
         if (width == srcW && height == srcH && slots.isNotEmpty() && appliedLevel == lv) return
+        if (width == srcW && height == srcH && slots.isNotEmpty() && sameFrameSize(width, height, lv)) {
+            // Only the motion-search settings changed (the stored frame has the video's own size at every level): keep
+            // the frames, the queue and the timing state, and replace just the analysis data. No black frame, no lost
+            // history, no hold / timestamp re-learning on every adaptive step.
+            appliedLevel = lv
+            reconfigureAnalysis(lv, width, height)
+            return
+        }
         srcW = width
         srcH = height
         appliedLevel = lv
         cancelEstimate()
+        estimatePacer.reset()
         periodCount = 0; periodHead = 0
         freeResources()
 
-        val fs = min(1f, lv.frameEdge.toFloat() / max(width, height))
-        frameW = max(16, (width * fs).toInt() and 1.inv())
-        frameH = max(16, (height * fs).toInt() and 1.inv())
-        val ws = min(1f, lv.workEdge.toFloat() / max(width, height))
-        val wW = max(32, (width * ws).toInt() and 1.inv())
-        val wH = max(32, (height * ws).toInt() and 1.inv())
+        FrameSizing.frame(width, height, lv.frameEdge).let { frameW = it.first; frameH = it.second }
+        setupLevels(width, height, lv)
 
-        levels = FlowPyramid.levels(wW, wH)
-        levelW = levels.width
-        levelH = levels.height
-        gridW = levels.gridW
-        gridH = levels.gridH
-        val n = levels.count
-
-        val riskW = (levelW[0] + RISK_CELL - 1) / RISK_CELL
-        val riskH = (levelH[0] + RISK_CELL - 1) / RISK_CELL
         slots = Array(SLOT_COUNT + if (rifeOverlayHook?.supportsMidFrames() == true) MID_EXTRA_SLOTS else 0) {
             Slot(
                 full = newTexture(frameW, frameH, GLES30.GL_RGBA8),
-                luma = IntArray(n) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) },
+                luma = newLuma(),
                 fw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
                 bw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F),
                 cut = newTexture(1, 1, GLES30.GL_RGBA16F),
                 glob = newTexture(1, 1, GLES30.GL_RGBA16F),
-                risk = newTexture(riskW, riskH, GLES30.GL_RGBA16F)
+                risk = newTexture(riskW(), riskH(), GLES30.GL_RGBA16F)
             )
         }
-        flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
-        if (fuseProg != null) {
-            try { allocFuseTextures() } catch (t: Throwable) {
-                Log.w(TAG, "AI fusion map allocation failed, keeping the hand-tuned blend", t)
-                dropAiFusion()
-            }
-        }
-        globalCoarse = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F) }
+        allocFlowTextures()
         queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
         midChain.clear()
         holdCtl.reset()
@@ -510,6 +504,7 @@ class OpticalFlowRenderer(
 
         val now = System.nanoTime()
         var ts = st.timestamp
+        val ptsNs = FramePts.lookupNs(ts)
         // A codec that did not stamp a render time gives a value that is not on our clock: use arrival time.
         if (abs(ts - now) > 2_000_000_000L) ts = now
 
@@ -539,7 +534,7 @@ class OpticalFlowRenderer(
         }
         // The decoder releases frames on vsync, so the stamp is quantised to the panel grid (24 fps on 60 Hz
         // arrives as 33 / 50 ms steps). Evenly spaced source frames get evenly spaced stamps back.
-        ts = tsRegularizer.next(ts, vsyncPeriodNs)
+        ts = tsRegularizer.next(ts, vsyncPeriodNs, ptsNs)
         slot.tsNs = ts
         rifeOverlayHook?.onFrameCopied(slot.full, ts, frameW, frameH)
         if (continuous) holdCtl.onFrame(ts - now)
@@ -569,7 +564,7 @@ class OpticalFlowRenderer(
 
     private fun wantsInterpolation(): Boolean {
         val sourceFps = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
-        return !MotionBoostTiming.shouldBypass(sourceFps, targetFps)
+        return !MotionBoostTiming.shouldBypass(sourceFps, cadence.effectiveTarget(targetFps))
     }
 
     /** A free slot, or the oldest queued frame when every slot is in use (a slow GPU drops source frames). */
@@ -583,6 +578,75 @@ class OpticalFlowRenderer(
             }
         }
         return freeSlots.removeAt(freeSlots.size - 1)
+    }
+
+
+    private fun sameFrameSize(width: Int, height: Int, lv: QualityLevel): Boolean =
+        FrameSizing.frame(width, height, lv.frameEdge).let { it.first == frameW && it.second == frameH }
+
+    /** Pyramid, grid and work sizes of [lv] for a [width] x [height] source. */
+    private fun setupLevels(width: Int, height: Int, lv: QualityLevel) {
+        val (wW, wH) = FrameSizing.work(width, height, lv.workEdge)
+        levels = FlowPyramid.levels(wW, wH)
+        levelW = levels.width
+        levelH = levels.height
+        gridW = levels.gridW
+        gridH = levels.gridH
+    }
+
+    private fun riskW() = (levelW[0] + RISK_CELL - 1) / RISK_CELL
+    private fun riskH() = (levelH[0] + RISK_CELL - 1) / RISK_CELL
+    private fun newLuma() = IntArray(levels.count) { l -> newTexture(levelW[l], levelH[l], GLES30.GL_R8) }
+
+    /** Shared flow ping/pong textures, the global-motion textures and (when on) the AI fusion map. */
+    private fun allocFlowTextures() {
+        val n = levels.count
+        flowTex = Array(2) { Array(n) { l -> IntArray(2) { newTexture(gridW[l], gridH[l], GLES30.GL_RGBA16F) } } }
+        if (fuseProg != null) {
+            try { allocFuseTextures() } catch (t: Throwable) {
+                Log.w(TAG, "AI fusion map allocation failed, keeping the hand-tuned blend", t)
+                dropAiFusion()
+            }
+        }
+        globalCoarse = IntArray(2) { newTexture(1, 1, GLES30.GL_RGBA16F) }
+    }
+
+    /**
+     * Replaces the analysis textures for quality level [lv] and keeps everything about the frames. Queued frames get
+     * their luma pyramid rebuilt from the stored picture at the new work size; their old flow is gone, so they show
+     * as real frames until the next pair brings a new estimate (at most one source interval).
+     */
+    private fun reconfigureAnalysis(lv: QualityLevel, width: Int, height: Int) {
+        cancelEstimate()
+        estimatePacer.reset()
+        val old = ArrayList<Int>()
+        slots.forEach { sl -> sl.luma.forEach { old.add(it) }; old.add(sl.fw); old.add(sl.bw); old.add(sl.cut); old.add(sl.glob); old.add(sl.risk) }
+        flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { old.add(it) } } }
+        globalCoarse.forEach { old.add(it) }
+        fuseTex.forEach { old.add(it) }
+        fuseTex = IntArray(0)
+        if (old.isNotEmpty()) GLES30.glDeleteTextures(old.size, old.toIntArray(), 0)
+
+        setupLevels(width, height, lv)
+        for (sl in slots) {
+            sl.luma = newLuma()
+            sl.fw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F)
+            sl.bw = newTexture(gridW[0], gridH[0], GLES30.GL_RGBA16F)
+            sl.cut = newTexture(1, 1, GLES30.GL_RGBA16F)
+            sl.glob = newTexture(1, 1, GLES30.GL_RGBA16F)
+            sl.risk = newTexture(riskW(), riskH(), GLES30.GL_RGBA16F)
+            sl.hasFlow = false
+            sl.flowPending = false
+            sl.midPending = false
+        }
+        allocFlowTextures()
+        midChain.clear()
+        estimateLatency.reset()
+        for (sl in queue) {
+            buildLuma(sl)
+            sl.flowSkipped = true
+        }
+        dirty = true
     }
 
     /** OES frame -> slot.full (RGBA8), then luma level 0 at work size, then the pyramid. */
@@ -764,8 +828,10 @@ class OpticalFlowRenderer(
 
     private fun pumpEstimate() {
         if (estIdx >= estSteps.size) return
+        val slice = if (estFirstSubmitNs == 0L) estPerTick else estimatePacer.slice(estPerTick)   // the first slice is never held back
+        if (slice == 0) return
         if (estFirstSubmitNs == 0L) estFirstSubmitNs = System.nanoTime()
-        val end = min(estIdx + estPerTick, estSteps.size)
+        val end = min(estIdx + slice, estSteps.size)
         while (estIdx < end) {
             estSteps[estIdx].invoke()
             estIdx++
@@ -914,11 +980,16 @@ class OpticalFlowRenderer(
         serviceMid(vsyncNs)
 
         if (queue.isEmpty()) return
-        val fps = targetFps
-        val intervalNs = FramePacing.intervalNs(fps)
-        if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) return
+        // One output frame every n whole vsyncs: an even cadence, whatever target was asked for.
+        val step = cadence.stepNs(targetFps, vsyncPeriodNs)
+        acc.onCadence(cadence.vsyncsPerFrame, cadence.displayHz)
+        if (!MotionBoostTiming.isDue(vsyncNs, nextDueNs, vsyncPeriodNs)) {
+            // Not a presenting vsync (30 / 40 / 60 FPS on a faster panel): spend it on the analysis. The slice is
+            // planned per vsync, so the estimate used to take n times longer than planned with n vsyncs per frame.
+            pumpEstimate()
+            return
+        }
 
-        val step = MotionBoostTiming.stepNs(intervalNs, vsyncPeriodNs)
         val newest = queue.last()
         var a = newest
         var b = newest
@@ -965,6 +1036,7 @@ class OpticalFlowRenderer(
         ) {
             // paused / nothing new: leave the last presented frame; do not count the idle time as missed output
             nextDueNs = vsyncNs + step
+            pumpEstimate()
             return
         }
 
@@ -973,15 +1045,18 @@ class OpticalFlowRenderer(
             acc.onDropped(((vsyncNs - nextDueNs) / step).toInt().coerceIn(1, 8))
         }
 
+        val lateNs = if (nextDueNs != 0L) vsyncNs - nextDueNs else 0L
         val workStart = System.nanoTime()
         drawOutput(a = a, b = b, alpha = alpha, warp = warp)
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
             fail(FallbackReason.GPU_ERROR, "eglSwapBuffers failed (0x${Integer.toHexString(EGL14.eglGetError())})", null)
             return
         }
-        acc.onDrawMs((System.nanoTime() - workStart) / 1e6f)
+        val drawMs = (System.nanoTime() - workStart) / 1e6f
+        acc.onDrawMs(drawMs)
+        estimatePacer.onPresented(lateNs >= vsyncPeriodNs, drawMs, vsyncPeriodNs / 1e6f)
         pumpEstimate()
-        nextDueNs = MotionBoostTiming.nextDue(nextDueNs, vsyncNs, step)
+        nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, step)
         lastDrawnA = a; lastDrawnB = b; lastDrawnTsA = a.tsNs; lastDrawnTsB = b.tsNs
         lastDrawnAlpha = alpha; lastDrawnWarp = warp
         dirty = false

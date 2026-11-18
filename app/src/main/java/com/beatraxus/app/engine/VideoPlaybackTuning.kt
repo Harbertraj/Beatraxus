@@ -41,6 +41,24 @@ class VideoPlaybackTuning(
             field = clampAudioDelay(value)
         }
 
+    /**
+     * Automatic compensation (ms, >= 0) for the delay the FPS Booster adds to the picture. Set by the player while the
+     * booster runs with A/V sync on, followed with a slew limit by [AudioDelayRenderer]; 0 otherwise. It is separate
+     * from [audioDelayMs], which stays the user's own fine-tuning.
+     */
+    @Volatile
+    var autoDelayTargetMs: Int = 0
+        set(value) {
+            field = value.coerceIn(0, AutoDelayRamp.MAX_MS)
+        }
+
+    /** The automatic compensation the clock really carries right now (written by [AudioDelayRenderer], read by anyone converting player positions). */
+    @Volatile
+    var appliedAutoDelayMs: Int = 0
+
+    /** Total shift (ms) of the player's reported position against the media position: the user's delay plus the booster compensation. */
+    val clockShiftMs: Int get() = audioDelayMs + appliedAutoDelayMs
+
     companion object {
         const val MIN_AUDIO_DELAY_MS = -5000
         const val MAX_AUDIO_DELAY_MS = 5000

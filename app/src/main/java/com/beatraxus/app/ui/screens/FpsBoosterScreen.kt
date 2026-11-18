@@ -17,7 +17,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,27 +64,8 @@ fun FpsBoosterSheetContent(
     // The Quality presets only exist for Optical flow; Classic has a single fixed pipeline.
     val classicEngine = s.engine == BoosterEngine.CLASSIC || (plan.active && plan.engine == BoosterEngine.CLASSIC)
 
-    // First time the booster sheet is opened: measure the device once and pick settings it can sustain.
-    LaunchedEffect(Unit) {
-        if (bench is BenchmarkState.Idle && !uiState.fpsBoosterBenchmarkSkipped) onRunBenchmark()
-    }
-
-    // First use: the device test is the only thing shown. The moment it finishes the state becomes Done and the
-    // same sheet switches to the booster options (no need to close and reopen it).
-    val firstRunTest = bench is BenchmarkState.Running ||
-        (bench is BenchmarkState.Idle && !uiState.fpsBoosterBenchmarkSkipped)
-    if (firstRunTest) {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(
-                text = "Setting up FPS Booster for your device. This only happens once.",
-                color = Color.White.copy(alpha = 0.7f),
-                fontSize = 13.sp
-            )
-            DeviceTestCard(bench, onRunBenchmark, onSkipBenchmark)
-            Spacer(Modifier.height(4.dp))
-        }
-        return
-    }
+    // No device test on opening: the sheet goes straight to the options. A fresh install starts at the strongest clean
+    // target and the Quality preset; Adaptive resolution lowers the analysis size on its own if the device cannot keep up.
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -135,7 +115,7 @@ fun FpsBoosterSheetContent(
         SectionLabel("Target FPS")
         ChipRow {
             BoosterTargets.ALL.forEach { fps ->
-                val ok = MotionBoostTiming.isRateSupported(panelRates, fps)
+                val ok = MotionBoostTiming.isCleanRate(panelRates, fps)
                 Chip("$fps", s.targetFps == fps && s.mode != BoosterMode.AUTO, enabled = ok && s.mode != BoosterMode.AUTO) {
                     onSettingsChange(s.copy(targetFps = fps))
                 }
@@ -143,7 +123,9 @@ fun FpsBoosterSheetContent(
         }
         Hint(
             if (s.mode == BoosterMode.AUTO) "Auto picks the target for each video."
-            else "Your display supports up to $peakHz Hz; targets above that cannot be shown."
+            else "Your display runs at ${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz. " +
+                "Only targets it can show evenly are selectable: a target must divide one of these rates into whole frames " +
+                "(45 and 90 need a 90 Hz mode), otherwise motion judders."
         )
 
         SectionLabel("Engine")
@@ -192,6 +174,12 @@ fun FpsBoosterSheetContent(
             "Caps the target at 60 FPS and uses Performance quality.",
             s.batterySaver
         ) { onSettingsChange(s.copy(batterySaver = it)) }
+        ToggleRow(
+            "Keep sound in sync",
+            "The booster holds each picture back a few tens of milliseconds. On: the sound is moved by the same amount, " +
+                "so lips and voice stay together. Your own audio delay stays on top.",
+            s.avSync
+        ) { onSettingsChange(s.copy(avSync = it)) }
         ToggleRow("Live statistics", null, s.showStats) { onSettingsChange(s.copy(showStats = it)) }
 
         if (s.showStats) {
@@ -212,11 +200,20 @@ fun FpsBoosterSheetContent(
                     StatLine("Target", "${if (plan.active) plan.targetFps else stats.targetFps} FPS")
                     StatLine("Generated", "%.1f frames/s".format(stats.generatedFps))
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
+                    if (stats.cadenceVsyncs > 0) {
+                        StatLine(
+                            "Display cadence",
+                            "%.0f Hz, a frame every %d vsync = %.0f FPS%s".format(
+                                stats.displayHz, stats.cadenceVsyncs, stats.cadenceFps,
+                                if (stats.cadenceExact) "" else " (target not possible evenly)"
+                            )
+                        )
+                    }
                     StatLine("Dropped frames", stats.droppedFrames.toString())
                     if (stats.engine == BoosterEngine.OPTICAL_FLOW || stats.engine == BoosterEngine.AI_RIFE || stats.engine == BoosterEngine.HYBRID) {
                         StatLine("Processing latency", "%.1f ms / frame pair".format(stats.estimateLatencyMs))
                         StatLine("Motion analysis size", "${stats.workEdge} px")
-                        StatLine("Video delay", "%.0f ms".format(stats.addedDelayMs))
+                        StatLine("Video delay", "%.0f ms%s".format(stats.addedDelayMs, if (s.avSync) " (sound follows)" else ""))
                     }
                 }
                 StatLine("Display refresh", "%.0f Hz (not a generated rate)".format(DisplayRefreshRate.currentRate(context)))

@@ -73,7 +73,9 @@ class FpsBoosterManager(
             // The presenter can never show more frames than the panel is refreshing right now (the system may be
             // running 60 Hz while the target is 120): that is not GPU overload and must not be judged as such.
             val currentRate = runCatching { DisplayRefreshRate.currentRate(appContext) }.getOrDefault(60f)
-            val expected = minOf(
+            // When the presenter measured its own cadence, that is the rate it is trying to show (it may be below the
+            // target if the system did not grant the display mode): judge it against that, not against the target.
+            val expected = if (w.cadenceFps > 0f) minOf(w.cadenceFps, plan.targetFps.toFloat()) else minOf(
                 FramePacing.achievableFps(plan.targetFps, panelRates).toFloat(),
                 currentRate
             )
@@ -95,7 +97,10 @@ class FpsBoosterManager(
                 addedDelayMs = addedDelayMs,
                 workEdge = workEdge,
                 qualityLabel = controller.level.label,
-                fallbackReason = fallback?.message
+                fallbackReason = fallback?.message,
+                cadenceVsyncs = w.cadenceVsyncs,
+                displayHz = w.displayHz,
+                cadenceExact = w.cadenceFps <= 0f || kotlin.math.abs(w.cadenceFps - plan.targetFps) < 0.5f
             )
         )
         if (fallback != null) {

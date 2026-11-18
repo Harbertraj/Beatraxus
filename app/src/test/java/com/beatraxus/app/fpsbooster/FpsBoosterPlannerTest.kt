@@ -35,9 +35,20 @@ class FpsBoosterPlannerTest {
     @Test fun targetAboveThePanelRateFallsToNextUsable() {
         val p = FpsBoosterPlanner.plan(on(90), panel60, sdr24)
         assertTrue(p.active); assertEquals(60, p.targetFps); assertNotNull(p.note)
-        // 45 FPS is never unavailable: it is below every panel's rate.
+    }
+
+    @Test fun targetsThePanelCannotShowEvenlyFallToTheNextCleanOne() {
+        // 45 on a 60 Hz panel would be shown as a 2-1-1 mix (judder): 30 is the next target that divides 60.
         val p45 = FpsBoosterPlanner.plan(on(45), panel60, sdr24)
-        assertEquals(45, p45.targetFps)
+        assertTrue(p45.active); assertEquals(30, p45.targetFps)
+        assertTrue(p45.note!!.contains("evenly"))
+        // A 60 / 120 Hz panel has no 90 Hz mode: 90 is not a whole divisor of either, 60 is.
+        val panel60and120 = panel60.copy(panelRates = listOf(60f, 120f))
+        val p90 = FpsBoosterPlanner.plan(on(90), panel60and120, sdr24)
+        assertEquals(60, p90.targetFps); assertNotNull(p90.note)
+        assertEquals(45, FpsBoosterPlanner.plan(on(45), panel60and120.copy(panelRates = listOf(60f, 90f)), sdr24).targetFps)
+        // 120 / 90 / 60 / 45 / 30 are all clean on a 60 / 90 / 120 panel.
+        for (fps in listOf(30, 45, 60, 90, 120)) assertEquals(fps, FpsBoosterPlanner.plan(on(fps), panel120, sdr24).targetFps)
     }
 
     @Test fun sourceAlreadyAtTargetIsBypassed() {
@@ -160,4 +171,47 @@ class FpsBoosterPlannerTest {
 
     @Test fun ninetyOnNinetyHzPanel() =
         assertEquals(90, FpsBoosterPlanner.plan(on(90), panel90, sdr24).targetFps)
+
+    @Test fun hybridFallsBackToOpticalFlowWhenTheModelDoesNotFitEveryPair() {
+        // 30 fps: 90 % of the 33.3 ms interval is 30 ms. 34 ms would only fit every 2nd pair: flickering quality.
+        val sdr30 = SourceInfo(30f, 1920, 1080, false)
+        val slow = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 34f
+        )
+        assertEquals(BoosterEngine.OPTICAL_FLOW, slow.engine)
+        assertTrue(slow.note!!.contains("RIFE needs 34 ms"))
+        val fits = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 28f
+        )
+        assertEquals(BoosterEngine.HYBRID, fits.engine)
+        assertNull(fits.note)
+    }
+
+    @Test fun hybridIsKeptWhenInferenceOrSourceRateIsUnknown() {
+        // Not measured yet: the renderer's own deadline protects playback.
+        val unknownCost = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, SourceInfo(24f, 1920, 1080, false), rifeModelInstalled = true
+        )
+        assertEquals(BoosterEngine.HYBRID, unknownCost.engine)
+        val unknownRate = FpsBoosterPlanner.plan(
+            on(60).copy(engine = BoosterEngine.HYBRID), panel120, SourceInfo(0f, 1920, 1080, false), rifeModelInstalled = true, rifeInferenceMs = 80f
+        )
+        assertEquals(BoosterEngine.HYBRID, unknownRate.engine)
+    }
+
+    @Test fun autoPicksHybridOnlyWhenTheModelFitsTheSourceInterval() {
+        val sdr30 = SourceInfo(30f, 1920, 1080, false)
+        // 33 ms passes the absolute 35 ms cap but not 90 % of a 30 fps interval.
+        val auto = on(60).copy(mode = BoosterMode.AUTO, engine = BoosterEngine.AUTO)
+        assertEquals(BoosterEngine.OPTICAL_FLOW, FpsBoosterPlanner.plan(auto, panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 33f).engine)
+        assertEquals(BoosterEngine.HYBRID, FpsBoosterPlanner.plan(auto, panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 25f).engine)
+    }
+
+    @Test fun fitsEveryPairMatchesTheRuntimeBudget() {
+        assertTrue(HybridScheduling.fitsEveryPair(null, 24f))
+        assertTrue(HybridScheduling.fitsEveryPair(37f, 24f))      // 90 % of 41.7 ms = 37.5 ms
+        assertFalse(HybridScheduling.fitsEveryPair(38f, 24f))
+        assertEquals(HybridScheduling.canInjectMid(30_000_000L, 33_333_333L), HybridScheduling.fitsEveryPair(30f, 30f))
+        assertEquals(HybridScheduling.canInjectMid(31_000_000L, 33_333_333L), HybridScheduling.fitsEveryPair(31f, 30f))
+    }
 }

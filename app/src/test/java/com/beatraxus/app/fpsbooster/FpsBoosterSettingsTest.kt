@@ -6,10 +6,22 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FpsBoosterSettingsTest {
+    @Test fun freshInstallStartsAtTheDevicesFullPotential() {
+        assertEquals(120, BoosterTargets.maxCleanTarget(listOf(60f, 90f, 120f)))
+        assertEquals(90, BoosterTargets.maxCleanTarget(listOf(60f, 90f)))
+        assertEquals(60, BoosterTargets.maxCleanTarget(listOf(60f)))
+        assertEquals(30, BoosterTargets.maxCleanTarget(listOf(30f)))
+        assertEquals(30, BoosterTargets.maxCleanTarget(emptyList()))
+        // Nothing stored: strongest preset, adaptive resolution on as the safety net.
+        val s = FpsBoosterSettings.fromStored(null, null, null, null, null, null, null)
+        assertEquals(BoosterQuality.QUALITY, s.quality); assertTrue(s.adaptiveResolution)
+    }
+
+
     @Test fun defaultsAreOffAndSafe() {
         val s = FpsBoosterSettings()
         assertEquals(BoosterMode.OFF, s.mode); assertTrue(!s.isOn)
-        assertEquals(BoosterEngine.AUTO, s.engine); assertEquals(BoosterQuality.PERFORMANCE, s.quality)
+        assertEquals(BoosterEngine.AUTO, s.engine); assertEquals(BoosterQuality.QUALITY, s.quality)
         assertTrue(s.adaptiveResolution); assertTrue(!s.batterySaver)
         assertTrue("AI fusion ships off", !s.aiFusion)
     }

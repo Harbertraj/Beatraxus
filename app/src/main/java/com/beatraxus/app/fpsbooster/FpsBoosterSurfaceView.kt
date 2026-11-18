@@ -3,7 +3,6 @@ package com.beatraxus.app.fpsbooster
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -15,6 +14,7 @@ import com.beatraxus.app.model.DeinterlaceMode
 import com.beatraxus.app.model.VideoOrientation
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import com.beatraxus.app.motionboost.BoosterDisplaySession
 import com.beatraxus.app.motionboost.DisplayRefreshRate
 
 /**
@@ -49,6 +49,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     private var orientation = VideoOrientation.NONE
     private var deinterlace = DeinterlaceMode.OFF
     private var aiFusion = false
+    private val displaySession = BoosterDisplaySession(context, { findWindow() }, { holder.surface })
 
     private val playerListener = object : Player.Listener {
         override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -87,7 +88,6 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer?.setTargetFps(plan.targetFps)
         rifeRenderer?.setTargetFps(plan.targetFps)
         hybridRenderer?.setTargetFps(plan.targetFps)
-        applyFrameRateHint()
         applyDisplayMode()
         if (needsNewSession && (renderer != null || rifeRenderer != null || hybridRenderer != null)) {
             startManager()
@@ -158,6 +158,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     override fun surfaceCreated(holder: SurfaceHolder) {
         val p = plan ?: return
         if (manager == null) startManager()
+        FramePts.attach(player)
 
         when (p.engine) {
             BoosterEngine.HYBRID -> {
@@ -260,14 +261,14 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 created.start()
             }
         }
-        applyFrameRateHint()
         applyDisplayMode()
     }
 
-    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = applyFrameRateHint()
+    override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) = displaySession.onSurfaceChanged()
 
     override fun surfaceDestroyed(holder: SurfaceHolder) {
         val pl = player
+        FramePts.detach(pl)
         pl?.removeListener(playerListener)
         inputSurface?.let { pl?.clearVideoSurface(it) }
         inputSurface = null
@@ -289,40 +290,16 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
     }
 
     /**
-     * The window keeps the refresh rate chosen in Settings > Refresh Rate: the player controls, sheets and the rest of the
-     * app run at that rate. Only the video is paced to the target FPS (on the app's vsyncs); no display mode is requested.
+     * Keeps the panel on a refresh rate that shows the target evenly, votes for it on the video surface and watches
+     * that the system keeps it (see [BoosterDisplaySession]). The window keeps the refresh rate chosen in Settings >
+     * Refresh Rate unless the target needs another mode (45 / 90 FPS on a 120 Hz window, 120 FPS on a 60 Hz one).
      */
     private fun applyDisplayMode() {
-        val window = findWindow() ?: return
-        val target = plan?.targetFps
-        try {
-            val mgr = com.beatraxus.app.perf.RefreshRateManager
-            // Request a better-fitting panel mode only when the app's rate does not suit the target (45 / 90 FPS on a
-            // 120 Hz window, 120 FPS while the app is set to 60 Hz); it is released again in clearDisplayMode.
-            val choice = target?.let { DisplayRefreshRate.modeSwitchFor(context, it) }
-            if (choice != null) {
-                mgr.videoModeOverride = true
-                val lp = window.attributes
-                lp.preferredDisplayModeId = choice.modeId
-                lp.preferredRefreshRate = choice.refreshRate
-                window.attributes = lp
-                return
-            }
-            mgr.videoModeOverride = false
-            mgr.applyTo(window, context)
-        } catch (t: Throwable) { Log.w(TAG, "keeping the app refresh rate failed", t) }
+        val target = plan?.targetFps ?: return
+        displaySession.start(target)
     }
 
-    private fun clearDisplayMode() {
-        val window = findWindow() ?: return
-        try {
-            com.beatraxus.app.perf.RefreshRateManager.videoModeOverride = false
-            com.beatraxus.app.perf.RefreshRateManager.applyTo(window, context)
-        } catch (_: Throwable) {}
-    }
-
-    /** Intentionally empty: a frame-rate vote on the video surface could pull the whole display away from the app's rate. */
-    private fun applyFrameRateHint() {}
+    private fun clearDisplayMode() = displaySession.stop()
 
     private companion object { const val TAG = "FpsBoosterView" }
 }

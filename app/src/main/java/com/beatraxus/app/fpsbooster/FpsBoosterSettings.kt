@@ -55,8 +55,11 @@ enum class BoosterQuality(
     companion object {
         fun fromName(name: String?): BoosterQuality = entries.firstOrNull { it.name == name } ?: DEFAULT
 
-        /** Start light and let the user (or a benchmark) raise it: motion search at 640 px is the cheapest preset. */
-        val DEFAULT = PERFORMANCE
+        /**
+         * Start at the strongest preset (motion search at 1280 px). There is no device test any more: "Adaptive resolution"
+         * (on by default) lowers the motion-analysis size by itself on a device that cannot keep up, and raises it again.
+         */
+        val DEFAULT = QUALITY
     }
 }
 
@@ -65,6 +68,14 @@ object BoosterTargets {
     val ALL: List<Int> = listOf(30, 45, 60, 90, 120)
     const val DEFAULT = 60
     fun sanitize(fps: Int): Int = if (fps in ALL) fps else DEFAULT
+
+    /**
+     * The highest target the panel shows evenly (see [com.beatraxus.app.motionboost.MotionBoostTiming.isCleanRate]): 120 on a
+     * 120 Hz panel, 60 on 60 / 90 Hz (90 Hz shows 90 and 45 evenly too, so 90), 30 as the last resort. Used as the first
+     * target when nothing has been chosen yet, instead of a measured recommendation.
+     */
+    fun maxCleanTarget(panelRates: List<Float>): Int =
+        ALL.filter { com.beatraxus.app.motionboost.MotionBoostTiming.isCleanRate(panelRates, it) }.maxOrNull() ?: 30
 }
 
 /**
@@ -86,7 +97,13 @@ data class FpsBoosterSettings(
      * Learned fusion of the optical-flow candidates (see `docs/FPS_BOOSTER.md` section 13). Off by default and only
      * honoured when the device test says the GPU can afford it ([BoosterRecommender.aiFusionVerdict]).
      */
-    val aiFusion: Boolean = false
+    val aiFusion: Boolean = false,
+    /**
+     * Keep the sound in step with the picture: the booster holds every frame back by a few tens of milliseconds, and
+     * with this on the player's clock is moved by the same amount (see [com.beatraxus.app.engine.AutoDelayRamp]).
+     * On by default; the user's own audio delay stays on top of it.
+     */
+    val avSync: Boolean = true
 ) {
     val isOn: Boolean get() = mode != BoosterMode.OFF
 
@@ -94,7 +111,7 @@ data class FpsBoosterSettings(
         /** Builds settings from raw stored values; unknown / missing / corrupt values fall back to defaults. */
         fun fromStored(
             mode: String?, targetFps: Int?, engine: String?, quality: String?,
-            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null
+            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null, avSync: Boolean? = null
         ) = FpsBoosterSettings(
             mode = BoosterMode.fromName(mode),
             targetFps = BoosterTargets.sanitize(targetFps ?: BoosterTargets.DEFAULT),
@@ -103,7 +120,8 @@ data class FpsBoosterSettings(
             adaptiveResolution = adaptive ?: true,
             batterySaver = batterySaver ?: false,
             showStats = showStats ?: true,
-            aiFusion = aiFusion ?: false
+            aiFusion = aiFusion ?: false,
+            avSync = avSync ?: true
         )
 
         /**
@@ -138,6 +156,7 @@ object FpsBoosterPrefs {
     const val BATTERY = "fpsb_battery"
     const val SHOW_STATS = "fpsb_stats"
     const val AI_FUSION = "fpsb_ai_fusion"
+    const val AV_SYNC = "fpsb_av_sync"
     const val MIGRATED = "fpsb_migrated_v1"
     const val BENCH = "fpsb_bench"
     const val BENCH_SKIPPED = "fpsb_bench_skipped"
