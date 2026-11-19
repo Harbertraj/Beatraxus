@@ -1,6 +1,8 @@
 package com.beatraxus.app.ui.screens
 
 import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.themeAccentOr
+import com.beatraxus.app.ui.theme.themeCycle
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -66,7 +68,7 @@ const val VIDEO_SETTINGS_SUBTITLES = "Video Settings: Subtitles"
 const val VIDEO_SETTINGS_GESTURES = "Video Settings: Gestures & Controls"
 const val VIDEO_SETTINGS_PLAYBACK = "Video Settings: Playback & Audio"
 
-private val VsAccent = Color(0xFFFF8F00)
+private val VsAccent: Color get() = themeAccentOr(Color(0xFFFF8F00))
 
 /** Settings -> Video Settings: one entry per area, with every subtitle option living under "Subtitles". */
 @Composable
@@ -83,14 +85,14 @@ fun VideoSettingsContent(sectionStack: SnapshotStateList<String>) {
             title = "Gestures & Controls",
             subtitle = "Swipe gestures, double-tap seek, hold to fast-forward",
             icon = Icons.Rounded.TouchApp,
-            iconColor = Color(0xFF26C6DA),
+            iconColor = themeCycle(Color(0xFF26C6DA), 1),
             onClick = { sectionStack.add(VIDEO_SETTINGS_GESTURES) }
         )
         SettingMenuItem(
             title = "Playback & Audio",
             subtitle = "Default speed, resume, auto-play next, orientation, audio language",
             icon = Icons.Rounded.PlayCircle,
-            iconColor = Color(0xFF66BB6A),
+            iconColor = themeCycle(Color(0xFF66BB6A), 2),
             onClick = { sectionStack.add(VIDEO_SETTINGS_PLAYBACK) }
         )
         Text(

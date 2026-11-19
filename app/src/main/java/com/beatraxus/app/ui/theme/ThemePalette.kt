@@ -149,11 +149,61 @@ object ThemePalette {
     var current: AppPalette by mutableStateOf(AppPalette.Default)
         private set
 
+    /** True while a theme (not the Default look) is applied. Snapshot state, like [current]. */
+    var isThemed: Boolean by mutableStateOf(false)
+        private set
+
+    /** The applied theme's `shape.cornerScale` (1 under the Default look or when the theme sets none). */
+    var cornerScale: Float by mutableStateOf(1f)
+        private set
+
     fun apply(spec: ThemeSpec?) {
         val next = AppPalette.from(spec)
         if (next != current) current = next
+        val themed = spec != null
+        if (themed != isThemed) isThemed = themed
+        val scale = spec?.shape?.cornerScale ?: 1f
+        if (scale != cornerScale) cornerScale = scale
     }
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Screens that keep their own fixed colours (the video screens, the side drawer) call these instead of a literal
+// colour. Under the Default look every helper returns the colour it was given, so Default is pixel-identical to
+// before; under any applied theme the colour comes from the theme's palette instead.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** [default] under the Default look, [themed] under an applied theme. */
+fun themeOr(default: Color, themed: Color): Color = if (ThemePalette.isThemed) themed else default
+
+/** A screen's own accent (an orange, a cyan ...) becomes the theme accent under a theme. */
+fun themeAccentOr(default: Color): Color = if (ThemePalette.isThemed) ThemePalette.current.accent else default
+
+/** Same, for the lighter partner of an accent. */
+fun themeAccentSoftOr(default: Color): Color = if (ThemePalette.isThemed) ThemePalette.current.accentSoft else default
+
+/** Same, for the theme's secondary accent. */
+fun themeSecondaryOr(default: Color): Color = if (ThemePalette.isThemed) ThemePalette.current.secondary else default
+
+/**
+ * One colour of a multi-coloured set (the drawer's rows, a row of stat chips). Under a theme the set is
+ * recoloured from the theme: accent, secondary and soft accent in turn, so the screen stays lively but on-palette.
+ */
+fun themeCycle(default: Color, index: Int): Color {
+    if (!ThemePalette.isThemed) return default
+    val p = ThemePalette.current
+    return when (((index % 3) + 3) % 3) {
+        0 -> p.accent
+        1 -> p.secondary
+        else -> p.accentSoft
+    }
+}
+
+/** A corner radius scaled by the applied theme's corner scale (unchanged under the Default look). */
+fun themeCorner(radius: androidx.compose.ui.unit.Dp): androidx.compose.ui.unit.Dp = radius * ThemePalette.cornerScale
+
+/** Text colour: white (or whatever the screen used) under Default, the theme's text colour under a theme. */
+fun themeTextOr(default: Color): Color = if (ThemePalette.isThemed) ThemePalette.current.text else default
 
 /**
  * A dark surface shade that follows the theme. Screens pick slightly different near-black shades for

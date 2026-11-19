@@ -129,6 +129,9 @@ import java.util.*
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import com.beatraxus.app.ui.theme.Icon
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.themeAccentOr
+import com.beatraxus.app.ui.theme.themeAccentSoftOr
 
 enum class GestureType {
     NONE, BRIGHTNESS, VOLUME, SEEK, ZOOM, SUBTITLE
@@ -784,7 +787,7 @@ fun VideoPlayerScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFF0B0B0F)),
+                    .background(bgTone(0xFF0B0B0F)),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.Center
             ) {
@@ -823,7 +826,7 @@ fun VideoPlayerScreen(
             // Aspect Ratio Overlay
             uiState.aspectRatioMessage?.let { message ->
                 Surface(
-                    color = Color(0xE60E0E12),
+                    color = bgTone(0xE60E0E12),
                     shape = RoundedCornerShape(50),
                     border = androidx.compose.foundation.BorderStroke(1.dp, VpAmberSoft.copy(alpha = 0.55f)),
                     modifier = Modifier.padding(16.dp)
@@ -845,7 +848,7 @@ fun VideoPlayerScreen(
                 modifier = Modifier.align(Alignment.TopCenter).padding(top = 100.dp)
             ) {
                 Surface(
-                    color = Color(0xE60E0E12),
+                    color = bgTone(0xE60E0E12),
                     shape = RoundedCornerShape(50),
                     border = androidx.compose.foundation.BorderStroke(1.dp, VpAmberSoft.copy(alpha = 0.55f)),
                     modifier = Modifier.padding(16.dp)
@@ -1129,8 +1132,8 @@ fun VideoPlayerScreen(
                         .background(
                             brush = Brush.horizontalGradient(
                                 colors = listOf(
-                                    Color(0xCC141419),
-                                    Color(0xE61C1C22)
+                                    bgTone(0xCC141419),
+                                    bgTone(0xE61C1C22)
                                 )
                             )
                         )
@@ -1178,8 +1181,8 @@ fun VideoPlayerScreen(
 //  Video player UI  —  "Amber Glass" look
 //  UI only: every callback, state read and gesture is unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
-private val VpAmber = Color(0xFFFF8F00)
-private val VpAmberSoft = Color(0xFFFFB347)
+private val VpAmber: Color get() = themeAccentOr(Color(0xFFFF8F00))
+private val VpAmberSoft: Color get() = themeAccentSoftOr(Color(0xFFFFB347))
 
 /** Round frosted-glass button. [active] lights it up with an amber rim. */
 @Composable
@@ -1288,7 +1291,7 @@ private fun VpToolButton(
                         .padding(end = 4.dp, bottom = 4.dp)
                         .size(15.dp)
                         .clip(CircleShape)
-                        .background(Color(0xE6101014))
+                        .background(bgTone(0xE6101014))
                         .border(0.8.dp, tint.copy(alpha = 0.7f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1512,7 +1515,7 @@ fun GestureOverlay(type: GestureType, value: Float, subText: String? = null) {
             .size(134.dp)
             .shadow(20.dp, shape, ambientColor = Color.Black, spotColor = VpAmber)
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(Color(0xE61E1A14), Color(0xE60C0C10))))
+            .background(Brush.verticalGradient(listOf(bgTone(0xE61E1A14), bgTone(0xE60C0C10))))
             .border(
                 1.dp,
                 Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.55f), Color.White.copy(alpha = 0.06f))),
@@ -1929,7 +1932,7 @@ fun PlayerBottomBar(
                                 .width(160.dp)
                                 .shadow(16.dp, RoundedCornerShape(12.dp), ambientColor = Color.Black, spotColor = VpAmber)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xE60C0C10))
+                                .background(bgTone(0xE60C0C10))
                                 .border(
                                     1.dp,
                                     Brush.verticalGradient(listOf(VpAmberSoft.copy(alpha = 0.7f), Color.White.copy(alpha = 0.08f))),
@@ -2263,7 +2266,7 @@ fun VideoSettingsSheetContent(
             .verticalScroll(rememberScrollState())
             .navigationBarsPadding()
     ) {
-        val mxOrange = Color(0xFFFF8F00)
+        val mxOrange = themeAccentOr(Color(0xFFFF8F00))
 
         val lastActiveSheetTypeState = remember { mutableStateOf(if (sheetType != PlayerSheetType.NONE) sheetType else PlayerSheetType.AUDIO) }
         if (sheetType != PlayerSheetType.NONE) {
@@ -3049,7 +3052,7 @@ fun VideoQueueSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewMod
     val queue = viewModel.queue
     val currentId = uiState.currentVideo?.id
     val currentIndex = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-    val accent = Color(0xFFFF8F00)
+    val accent = themeAccentOr(Color(0xFFFF8F00))
 
     @Composable
     fun QueueRow(index: Int, video: Video, isCurrent: Boolean) {
@@ -3150,7 +3153,7 @@ fun VideoInfoSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewMode
 /** Night / blue-light filter choices (feature 17). The tint over the player changes live while this sheet is open. */
 @Composable
 fun VideoNightFilterSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     val filter = uiState.nightFilter
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingSectionHeader("When")
@@ -3210,7 +3213,7 @@ fun VideoNightFilterSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerV
 /** Deinterlacing choices (feature 15). The picture changes as soon as a row is tapped. */
 @Composable
 fun VideoDeinterlaceSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingSectionHeader("Interlaced video")
         DeinterlaceMode.entries.forEach { mode ->
@@ -3250,7 +3253,7 @@ fun VideoDeinterlaceSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerV
 /** Upscaler choices. The picture changes as soon as a row is tapped. */
 @Composable
 fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingSectionHeader("Upscaler")
         Row(
@@ -3319,7 +3322,7 @@ fun VideoUpscalerSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerView
 /** Rotate / flip / mirror controls of the "Rotate & Flip" sheet. Changes show on the picture straight away. */
 @Composable
 fun VideoOrientationSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     val o = uiState.videoOrientation
     val switchColors = SwitchDefaults.colors(checkedThumbColor = mxOrange, checkedTrackColor = mxOrange.copy(0.4f))
 
@@ -3403,7 +3406,7 @@ fun SleepTimerSheetContent(
     uiState: VideoPlayerUiState,
     viewModel: VideoPlayerViewModel
 ) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingSectionHeader("Auto-Stop Playback")
@@ -3493,7 +3496,7 @@ fun ChapterThumbnailStrip(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xE6181820), Color(0xF20C0C10))))
+            .background(Brush.verticalGradient(listOf(bgTone(0xE6181820), bgTone(0xF20C0C10))))
             .border(
                 1.dp,
                 Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.22f), Color.Transparent)),
@@ -3623,7 +3626,7 @@ private fun buildColorGradeMatrix(
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun ColorGradingSection(uiState: VideoPlayerUiState, viewModel: VideoPlayerViewModel) {
-    val mxOrange = Color(0xFFFF8F00)
+    val mxOrange = themeAccentOr(Color(0xFFFF8F00))
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         ColorSliderRow(
             label = "Brightness",

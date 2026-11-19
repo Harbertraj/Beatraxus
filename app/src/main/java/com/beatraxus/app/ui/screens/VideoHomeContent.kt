@@ -1,6 +1,10 @@
 package com.beatraxus.app.ui.screens
 
 import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.themeAccentOr
+import com.beatraxus.app.ui.theme.themeCycle
+import com.beatraxus.app.ui.theme.themeSecondaryOr
+import com.beatraxus.app.ui.theme.themeTextOr
 import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -82,10 +86,10 @@ private val CinemaAmber = Color(0xFFFFAB40)
 internal val LocalVideoMinimal = androidx.compose.runtime.staticCompositionLocalOf { false }
 
 @Composable
-private fun vCyan(): Color = if (LocalVideoMinimal.current) Color(0xFFFF4D9D) else CinemaCyan
+private fun vCyan(): Color = if (LocalVideoMinimal.current) Color(0xFFFF4D9D) else themeAccentOr(CinemaCyan)
 
 @Composable
-private fun vBlue(): Color = if (LocalVideoMinimal.current) Color(0xFF9B5CF6) else CinemaBlue
+private fun vBlue(): Color = if (LocalVideoMinimal.current) Color(0xFF9B5CF6) else themeSecondaryOr(CinemaBlue)
 
 /**
  * Video-mode home. The "play last video" button now lives INSIDE the hero card
@@ -133,7 +137,7 @@ fun LazyListScope.videoHomeItems(
             Spacer(Modifier.height(4.dp))
             Text(
                 text = "Your Cinema",
-                color = Color.White,
+                color = themeTextOr(Color.White),
                 fontSize = 32.sp,
                 fontWeight = FontWeight.Black,
                 letterSpacing = (-1).sp
@@ -217,17 +221,17 @@ fun LazyListScope.videoHomeItems(
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_ALL) }
                 ShortcutTile(
-                    "Folders", Icons.Rounded.FolderCopy, CinemaAmber,
+                    "Folders", Icons.Rounded.FolderCopy, themeCycle(CinemaAmber, 2),
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS) }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 ShortcutTile(
-                    "Recently Added", Icons.Rounded.NewReleases, Color(0xFFFF5E62),
+                    "Recently Added", Icons.Rounded.NewReleases, themeCycle(Color(0xFFFF5E62), 0),
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_ADDED) }
                 ShortcutTile(
-                    "Recently Played", Icons.Rounded.History, Color(0xFFBF5AF2),
+                    "Recently Played", Icons.Rounded.History, themeCycle(Color(0xFFBF5AF2), 2),
                     Modifier.weight(1f)
                 ) { viewModel.setLibraryView(LibraryView.VIDEO_RECENTLY_PLAYED) }
             }
@@ -258,7 +262,7 @@ fun LazyListScope.videoHomeItems(
                 viewModel.setLibraryView(LibraryView.VIDEO_FOLDERS)
             }
             val palette = listOf(
-                CinemaAmber, vBlue(), Color(0xFFBF5AF2), Color(0xFF30D158), Color(0xFFFF5E62)
+                themeCycle(CinemaAmber, 0), vBlue(), themeCycle(Color(0xFFBF5AF2), 2), themeCycle(Color(0xFF30D158), 1), themeCycle(Color(0xFFFF5E62), 0)
             )
             LazyRow(
                 contentPadding = PaddingValues(horizontal = 16.dp),
@@ -504,7 +508,7 @@ private fun SectionTitle(title: String, sub: String? = null, onClick: (() -> Uni
                     .background(Brush.verticalGradient(listOf(vCyan(), vBlue())), RoundedCornerShape(2.dp))
             )
             Spacer(Modifier.width(10.dp))
-            Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+            Text(title, color = themeTextOr(Color.White), fontSize = 20.sp, fontWeight = FontWeight.Black)
         }
         if (sub != null) {
             Text(
@@ -548,7 +552,7 @@ private fun ShortcutTile(
             text = label,
             baseFontSize = 13.sp,
             minFontSize = 11.sp,
-            color = Color.White,
+            color = themeTextOr(Color.White),
             fontWeight = FontWeight.Bold,
             modifier = Modifier.weight(1f)
         )

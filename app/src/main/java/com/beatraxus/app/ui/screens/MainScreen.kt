@@ -193,7 +193,14 @@ fun MainBackground(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                listOf(bgTone(0xFF000814), Color(0xFF001D3D), bgTone(0xFF000814))
+                                listOf(
+                                    bgTone(0xFF000814),
+                                    themeOr(
+                                        Color(0xFF001D3D),
+                                        androidx.compose.ui.graphics.lerp(ThemePalette.current.bgBase, ThemePalette.current.accent, 0.16f)
+                                    ),
+                                    bgTone(0xFF000814)
+                                )
                             )
                         )
                 )
@@ -215,7 +222,7 @@ fun MainBackground(
                     // Dynamic accent glow
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(Color(0xFF00E5FF).copy(0.08f), Color.Transparent),
+                            colors = listOf(themeAccentOr(Color(0xFF00E5FF)).copy(0.08f), Color.Transparent),
                             center = Offset(width * 0.8f, height * 0.2f),
                             radius = width * 0.6f
                         ),
@@ -361,7 +368,7 @@ fun MainScreen(
         }
     }
 
-    val targetAccentColor = when (uiState.currentView) {
+    val rawViewAccentColor = when (uiState.currentView) {
         LibraryView.HOME -> Color(0xFF40C4FF)
         LibraryView.ALL_SONGS -> Color(0xFFFF4081)
         LibraryView.ALBUMS, LibraryView.ALBUM_DETAIL -> Color(0xFFB2FF59)
@@ -385,11 +392,18 @@ fun MainScreen(
         LibraryView.VIDEO_RECENTLY_PLAYED -> Color(0xFF00E676)
         LibraryView.LIVE_TV -> Color(0xFFFF3B5C)
     }
+    // Video mode follows the applied theme (the Default look keeps its own per-view colours).
+    val targetAccentColor = if (uiState.playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
+        themeAccentOr(rawViewAccentColor)
+    } else rawViewAccentColor
     val viewAccentColor by animateColorAsState(
         targetValue = targetAccentColor,
         animationSpec = tween(500),
         label = "viewAccentColor"
     )
+
+    // The side drawer and the glass stack behind the page: the theme's accent under a theme, the view colour otherwise.
+    val drawerAccent = themeAccentOr(viewAccentColor)
 
     val songs   by viewModel.songs.collectAsStateWithLifecycle()
     val smartAllSongs by viewModel.allSongs.collectAsStateWithLifecycle()
@@ -808,7 +822,7 @@ fun MainScreen(
                         scaleY = grow
                         transformOrigin = TransformOrigin(0f, 0.5f)
                     }
-                    .clip(RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp))
+                    .clip(RoundedCornerShape(topEnd = themeCorner(32.dp), bottomEnd = themeCorner(32.dp)))
             ) {
                 if (uiState.appearance.isMinimal) MinimalDrawerMenu(
                     currentView = uiState.currentView,
@@ -836,7 +850,7 @@ fun MainScreen(
                     currentView = uiState.currentView,
                     libraryMode = uiState.libraryMode,
                     playbackMode = uiState.playbackMode,
-                    accentColor = viewAccentColor,
+                    accentColor = drawerAccent,
                     drawerProgress = menuProgressProvider,
                     isPlaying = uiState.isPlaying,
                     onSelectView = { view ->
@@ -908,9 +922,9 @@ fun MainScreen(
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    viewAccentColor.copy(alpha = if (depth == 1) 0.34f else 0.20f),
+                                    drawerAccent.copy(alpha = if (depth == 1) 0.34f else 0.20f),
                                     bgTone(0xFF0B0B12).copy(alpha = if (depth == 1) 0.74f else 0.86f),
-                                    Color.Black.copy(alpha = if (depth == 1) 0.90f else 0.95f)
+                                    themeOr(Color.Black, BgDeep).copy(alpha = if (depth == 1) 0.90f else 0.95f)
                                 )
                             )
                         )
@@ -934,7 +948,7 @@ fun MainScreen(
                             1.dp,
                             Brush.verticalGradient(
                                 listOf(
-                                    viewAccentColor.copy(alpha = if (depth == 1) 0.85f else 0.50f),
+                                    drawerAccent.copy(alpha = if (depth == 1) 0.85f else 0.50f),
                                     Color.White.copy(alpha = if (depth == 1) 0.10f else 0.05f)
                                 )
                             ),
@@ -971,8 +985,8 @@ fun MainScreen(
                     clip = true
                     // the page floats above the glass stack, casting an accent-coloured glow onto it
                     shadowElevation = with(density) { 28.dp.toPx() } * drawerProgress
-                    ambientShadowColor = if (minimalDrawerStyle) Color.Black else viewAccentColor
-                    spotShadowColor = if (minimalDrawerStyle) Color.Black else viewAccentColor
+                    ambientShadowColor = if (minimalDrawerStyle) Color.Black else drawerAccent
+                    spotShadowColor = if (minimalDrawerStyle) Color.Black else drawerAccent
                 }
                 .drawWithContent {
                     drawContent()
@@ -996,10 +1010,10 @@ fun MainScreen(
                         drawRoundRect(
                             brush = Brush.linearGradient(
                                 colorStops = arrayOf(
-                                    0.0f to viewAccentColor.copy(alpha = 0.95f * p),
+                                    0.0f to drawerAccent.copy(alpha = 0.95f * p),
                                     0.25f to Color.White.copy(alpha = 0.30f * p),
                                     0.60f to Color.Transparent,
-                                    1.0f to viewAccentColor.copy(alpha = 0.45f * p)
+                                    1.0f to drawerAccent.copy(alpha = 0.45f * p)
                                 ),
                                 start = Offset.Zero,
                                 end = Offset(size.width, size.height)
@@ -4152,7 +4166,7 @@ items(artistSongs, key = { it.id }) { song ->
                             drawRect(
                                 Brush.radialGradient(
                                     colors = listOf(
-                                        viewAccentColor.copy(alpha = 0.22f * p),
+                                        drawerAccent.copy(alpha = 0.22f * p),
                                         Color.Transparent
                                     ),
                                     center = Offset(size.width, size.height * 0.5f),
@@ -4176,7 +4190,7 @@ items(artistSongs, key = { it.id }) { song ->
                         .clip(RoundedCornerShape(50))
                         .background(
                             Brush.verticalGradient(
-                                listOf(viewAccentColor, Color.White.copy(alpha = 0.55f))
+                                listOf(drawerAccent, Color.White.copy(alpha = 0.55f))
                             )
                         )
                 )
@@ -6713,7 +6727,7 @@ fun SlideDrawerMenu(
         label = "gradientOffset"
     )
 
-    val menuItems = remember(libraryMode, playbackMode, PremiumTeal) {
+    val baseMenuItems = remember(libraryMode, playbackMode, PremiumTeal) {
         if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
             listOf(
                 DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF40C4FF)),
@@ -6749,6 +6763,15 @@ fun SlideDrawerMenu(
         }
     }
 
+    // Under a theme the rows are recoloured from the theme (accent, secondary, soft accent in turn); Default keeps
+    // its own colours.
+    val themed = ThemePalette.isThemed
+    val themePalette = ThemePalette.current
+    val menuItems = remember(baseMenuItems, themed, themePalette) {
+        if (!themed) baseMenuItems
+        else baseMenuItems.mapIndexed { i, item -> item.copy(color = themeCycle(item.color, i)) }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxHeight()
@@ -6768,11 +6791,11 @@ fun SlideDrawerMenu(
             ) {
                 Surface(
                     color = Color.Transparent,
-                    shape = RoundedCornerShape(26.dp),
+                    shape = RoundedCornerShape(themeCorner(26.dp)),
                     border = BorderStroke(
                         1.dp,
                         Brush.verticalGradient(
-                            listOf(accentColor.copy(0.55f), Color.White.copy(0.06f), accentColor.copy(0.20f))
+                            listOf(accentColor.copy(0.55f), themeTextOr(Color.White).copy(0.06f), accentColor.copy(0.20f))
                         )
                     ),
                     modifier = Modifier
@@ -6783,13 +6806,13 @@ fun SlideDrawerMenu(
                                 brush = Brush.linearGradient(
                                     colors = listOf(
                                         accentColor.copy(0.22f),
-                                        Color.White.copy(0.05f),
+                                        themeTextOr(Color.White).copy(0.05f),
                                         accentColor.copy(0.12f)
                                     ),
                                     start = Offset(o, o),
                                     end = Offset(o + 500f, o + 500f)
                                 ),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(26.dp.toPx())
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(themeCorner(26.dp).toPx())
                             )
                         }
                 ) {
@@ -6804,7 +6827,7 @@ fun SlideDrawerMenu(
                                 .graphicsLayer {
                                     alpha = if (hasCastDevices) 1f else 0f
                                 },
-                            tint = Color.White
+                            tint = themeTextOr(Color.White)
                         )
                         if (isPlaying) {
                             val notesTransition = rememberInfiniteTransition(label = "notes")
@@ -6836,7 +6859,7 @@ fun SlideDrawerMenu(
                                     }
                                     .blur(8.dp)
                                     .size(40.dp),
-                                tint = Color.White.copy(0.2f)
+                                tint = themeTextOr(Color.White).copy(0.2f)
                             )
                             Icon(
                                 Icons.Rounded.Audiotrack, null,
@@ -6873,9 +6896,9 @@ fun SlideDrawerMenu(
                                         Brush.linearGradient(
                                             listOf(accentColor.copy(0.38f), accentColor.copy(0.10f))
                                         ),
-                                        RoundedCornerShape(18.dp)
+                                        RoundedCornerShape(themeCorner(18.dp))
                                     )
-                                    .border(1.dp, accentColor.copy(0.45f), RoundedCornerShape(18.dp)),
+                                    .border(1.dp, accentColor.copy(0.45f), RoundedCornerShape(themeCorner(18.dp))),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
@@ -6889,7 +6912,7 @@ fun SlideDrawerMenu(
 
                             Text(
                                 if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "Video\nLibrary" else "Hello\nAudiophile",
-                                color = Color.White,
+                                color = themeTextOr(Color.White),
                                 fontSize = 22.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 letterSpacing = 0.4.sp,
@@ -6952,7 +6975,7 @@ fun SlideDrawerMenu(
                 item {
                     Text(
                         if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) "VIDEO LIBRARY" else "AUDIO LIBRARY",
-                        color = Color.White.copy(0.38f),
+                        color = themeTextOr(Color.White).copy(0.38f),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.6.sp,
@@ -6969,7 +6992,7 @@ fun SlideDrawerMenu(
                             (item.view == LibraryView.PLAYLISTS && currentView == LibraryView.PLAYLIST_DETAIL) ||
                             (item.view == LibraryView.VIDEO_FOLDERS && currentView == LibraryView.VIDEO_FOLDER_DETAIL)
 
-                    val rowShape = RoundedCornerShape(16.dp)
+                    val rowShape = RoundedCornerShape(themeCorner(16.dp))
                     val rowBg = if (isSelected) {
                         Brush.horizontalGradient(listOf(item.color.copy(0.30f), item.color.copy(0.04f)))
                     } else null
@@ -7002,7 +7025,7 @@ fun SlideDrawerMenu(
                                     .size(38.dp)
                                     .background(
                                         item.color.copy(if (isSelected) 0.28f else 0.12f),
-                                        RoundedCornerShape(12.dp)
+                                        RoundedCornerShape(themeCorner(12.dp))
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
@@ -7010,7 +7033,7 @@ fun SlideDrawerMenu(
                                     item.icon,
                                     null,
                                     modifier = Modifier.size(21.dp),
-                                    tint = if (isSelected) Color.White else item.color.copy(0.9f)
+                                    tint = if (isSelected) themeTextOr(Color.White) else item.color.copy(0.9f)
                                 )
                             }
                             Spacer(Modifier.width(10.dp))
@@ -7018,7 +7041,7 @@ fun SlideDrawerMenu(
                             var labelSize by remember(item.label) { mutableStateOf(15f) }
                             Text(
                                 item.label,
-                                color = if (isSelected) Color.White else Color.White.copy(0.72f),
+                                color = if (isSelected) themeTextOr(Color.White) else themeTextOr(Color.White).copy(0.72f),
                                 fontSize = labelSize.sp,
                                 maxLines = 1,
                                 softWrap = false,
@@ -7113,18 +7136,18 @@ private fun DrawerBottomIconButton(
     Box(
         modifier = modifier
             .height(48.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(themeCorner(16.dp)))
             .background(
-                Brush.verticalGradient(listOf(Color.White.copy(0.12f), Color.White.copy(0.04f)))
+                Brush.verticalGradient(listOf(themeTextOr(Color.White).copy(0.12f), themeTextOr(Color.White).copy(0.04f)))
             )
-            .border(1.dp, Color.White.copy(0.10f), RoundedCornerShape(16.dp))
+            .border(1.dp, themeTextOr(Color.White).copy(0.10f), RoundedCornerShape(themeCorner(16.dp)))
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = Color.White.copy(0.85f),
+            tint = themeTextOr(Color.White).copy(0.85f),
             modifier = Modifier.size(iconSize)
         )
     }

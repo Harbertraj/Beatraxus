@@ -17,6 +17,7 @@ import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.CalendarToday
 import androidx.compose.material.icons.rounded.AspectRatio
 import com.beatraxus.app.ui.theme.Icon
+import com.beatraxus.app.ui.theme.themeAccentOr
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -461,7 +462,7 @@ private fun VideoThumbnail(
                 contentAlignment = Alignment.Center
             ) {
                 if (isSelected) {
-                    Icon(Icons.Rounded.CheckCircle, null, tint = Color(0xFF00E5FF), modifier = Modifier.size(28.dp))
+                    Icon(Icons.Rounded.CheckCircle, null, tint = themeAccentOr(Color(0xFF00E5FF)), modifier = Modifier.size(28.dp))
                 } else {
                     Box(Modifier.size(20.dp).border(1.5.dp, Color.White.copy(alpha = 0.5f), CircleShape))
                 }
@@ -490,7 +491,7 @@ fun VideoItem(
             .background(Color.White.copy(alpha = 0.04f))
             .border(
                 1.dp,
-                if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.7f) else Color.White.copy(alpha = 0.07f),
+                if (isSelected) themeAccentOr(Color(0xFF00E5FF)).copy(alpha = 0.7f) else Color.White.copy(alpha = 0.07f),
                 cardShape
             )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
@@ -589,7 +590,7 @@ fun VideoListItem(
             )
             .border(
                 1.dp,
-                if (isSelected) Color(0xFF00E5FF).copy(alpha = 0.7f) else Color.White.copy(alpha = 0.08f),
+                if (isSelected) themeAccentOr(Color(0xFF00E5FF)).copy(alpha = 0.7f) else Color.White.copy(alpha = 0.08f),
                 cardShape
             )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)

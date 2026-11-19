@@ -1,6 +1,8 @@
 package com.beatraxus.app.ui.screens
 
 import androidx.compose.foundation.background
+import com.beatraxus.app.ui.theme.themeAccentOr
+import com.beatraxus.app.ui.theme.themeAccentSoftOr
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,8 +44,8 @@ import com.beatraxus.app.ui.components.dsp.SurroundStageCard
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import kotlin.math.roundToInt
 
-private val SurroundAmber = Color(0xFFFF8F00)
-private val SurroundAmberSoft = Color(0xFFFFB347)
+private val SurroundAmber: Color get() = themeAccentOr(Color(0xFFFF8F00))
+private val SurroundAmberSoft: Color get() = themeAccentSoftOr(Color(0xFFFFB347))
 
 /**
  * Surround simulator controls inside the video player. Same settings as Studio DSP > 5.1 / 7.1 (they are shared),

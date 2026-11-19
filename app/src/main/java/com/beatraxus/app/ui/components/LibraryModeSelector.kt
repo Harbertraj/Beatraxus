@@ -25,6 +25,7 @@ import androidx.compose.material.icons.rounded.Cloud
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Storage
 import com.beatraxus.app.ui.theme.Icon
+import com.beatraxus.app.ui.theme.themeAccentOr
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -50,7 +51,7 @@ fun LibraryModeSelector(
     val modes = listOf(LibraryMode.LOCAL, LibraryMode.CLOUD, LibraryMode.COMBINED)
     val selectedIndex = modes.indexOf(currentMode).coerceAtLeast(0)
 
-    val accent = Color(0xFFFFB300)
+    val accent = themeAccentOr(Color(0xFFFFB300))
     val trackShape = RoundedCornerShape(14.dp)
     val segmentShape = RoundedCornerShape(11.dp)
 
