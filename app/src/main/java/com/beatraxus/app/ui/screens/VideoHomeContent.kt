@@ -408,10 +408,19 @@ private fun VideoHeroCard(
                     if (isResume) "Resume ${formatClock(entity!!.lastPositionMs)}  ·  ${formatClock(leftMs)} left" else formatClock(video.durationMs),
                     color = Color.White.copy(0.7f),
                     fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
                 )
                 if (video.resolutionHeight > 0) {
-                    Text("  ·  ${qualityLabel(video.resolutionHeight)}", color = Color.White.copy(0.5f), fontSize = 12.sp)
+                    Text(
+                        "  ·  ${qualityLabel(video.resolutionHeight)}",
+                        color = Color.White.copy(0.5f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        softWrap = false
+                    )
                 }
             }
         }
@@ -511,12 +520,18 @@ private fun SectionTitle(title: String, sub: String? = null, onClick: (() -> Uni
             Text(title, color = themeTextOr(Color.White), fontSize = 20.sp, fontWeight = FontWeight.Black)
         }
         if (sub != null) {
-            Text(
-                sub,
+            Spacer(Modifier.width(8.dp))
+            // Takes only the room the title leaves and shrinks to fit it, so "Pick up where you left off" stays on
+            // one line next to a long title (wide fonts used to wrap it onto a second line).
+            com.beatraxus.app.ui.components.AutoFitText(
+                text = sub,
+                baseFontSize = 12.sp,
+                minFontSize = 8.sp,
                 color = if (onClick != null) vCyan() else Color.White.copy(0.5f),
-                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
-                modifier = if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             )
         }
     }
