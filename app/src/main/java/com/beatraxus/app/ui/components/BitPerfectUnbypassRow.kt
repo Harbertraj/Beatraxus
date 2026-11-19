@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.PremiumTeal
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -29,7 +30,7 @@ fun BitPerfectUnbypassRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
-    accentColor: Color = Color(0xFF00C2A8)
+    accentColor: Color = PremiumTeal
 ) {
     if (!bitPerfectEnabled) return
     Row(

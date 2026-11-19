@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.PremiumTeal
 import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -60,7 +61,7 @@ import com.beatraxus.app.model.AppearanceConfig
 import com.beatraxus.app.theme.ThemePlayer
 import com.beatraxus.app.theme.ThemeSurround
 import com.beatraxus.app.ui.theme.AccentBlue
-import com.beatraxus.app.ui.theme.AccentRed
+import com.beatraxus.app.ui.theme.AppPalette
 import com.beatraxus.app.theme.ThemeBackground
 import com.beatraxus.app.theme.ThemeCodec
 import com.beatraxus.app.theme.ThemeIndexEntry
@@ -69,7 +70,7 @@ import com.beatraxus.app.theme.ThemeSpec
 import com.beatraxus.app.theme.ThemeViewModel
 import com.beatraxus.app.ui.theme.DspPalette
 
-private val Teal = Color(0xFF00C2A8)
+private val Teal: Color get() = PremiumTeal
 private val CardBg = Color(0xFF111216).copy(alpha = 0.72f)
 
 /**
@@ -454,12 +455,13 @@ private fun DefaultThemeCard(onApply: () -> Unit) {
 private fun defaultThemeSpec(): ThemeSpec {
     val a = AppearanceConfig()
     val palette = DspPalette.from(a)
-    val accent = AccentBlue.toArgb()
-    val accent2 = AccentRed.toArgb()
+    // The Default look's own colours, not the live tokens (those follow whichever theme is applied).
+    val accent = AppPalette.Default.accent.toArgb()
+    val accent2 = AppPalette.Default.secondary.toArgb()
     return ThemeSpec(
         id = "default", name = "Default", author = "Beatraxus", version = 1, isDark = true,
         accent = accent, accentSecondary = accent2,
-        preview = listOf(0xFF0B0B14.toInt(), palette.primary.toArgb(), palette.secondary.toArgb()),
+        preview = listOf(AppPalette.Default.bgBase.toArgb(), accent, accent2, palette.primary.toArgb()),
         dspPaletteId = a.dspPaletteId,
         dspPrimary = palette.primary.toArgb(), dspSecondary = palette.secondary.toArgb(),
         seekbarStyle = a.seekbarStyle.name, fontId = a.selectedFontId,

@@ -1,5 +1,7 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.PremiumTeal
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -72,7 +74,7 @@ import coil.request.ImageRequest
 import com.beatraxus.app.repository.LyricsCandidate
 import com.beatraxus.app.repository.LyricsType
 
-private val WordColor = Color(0xFF00C2A8)
+private val WordColor: Color get() = PremiumTeal
 private val LineColor = Color(0xFF2196F3)
 private val PlainColor = Color(0xFF9E9E9E)
 private val FileColor = Color(0xFFFF9800)
@@ -153,7 +155,7 @@ fun LyricsSourcesPopup(
                         .fillMaxWidth(0.92f)
                         .heightIn(max = maxHeight)
                         .clip(cardShape)
-                        .background(Color(0xFF0E0E14))
+                        .background(bgTone(0xFF0E0E14))
                         .border(
                             BorderStroke(
                                 1.dp,

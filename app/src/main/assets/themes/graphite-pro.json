@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "graphite-pro",
+  "name": "Graphite Pro",
+  "author": "Beatraxus",
+  "version": 1,
+  "mode": "dark",
+  "colors": {
+    "accent": "#D4B06A",
+    "accentSecondary": "#6FA8A0",
+    "preview": ["#0B0D10", "#14181D", "#D4B06A", "#6FA8A0"],
+    "background": "#0B0D10",
+    "surface": "#14181D",
+    "text": "#ECEFF4"
+  },
+  "dsp": { "primary": "#D4B06A", "secondary": "#6FA8A0" },
+  "seekbar": "BEATRAXUS_THREAD",
+  "font": "plus_jakarta_sans",
+  "background": {
+    "mode": "BLACK",
+    "blurScale": 1.0,
+    "blurDarkness": 0.6,
+    "solidIntensity": 0.25,
+    "solidDarkness": 0.6
+  },
+  "shape": { "cornerScale": 0.6 },
+  "player": {
+    "albumArt": "SOFT_FADE",
+    "qualityBadge": "MINIMAL_OUTLINE",
+    "miniStyle": "CLASSIC",
+    "miniHeight": 64,
+    "miniCorner": 10,
+    "miniArtCorner": 4,
+    "miniProgressRing": false,
+    "miniShowTime": true,
+    "miniTintFromArt": false
+  },
+  "surround": {
+    "room": "studio",
+    "visualizer": "spectrum"
+  },
+  "icons": {
+    "color": "#E6E9EF",
+    "scale": 0.95
+  }
+}

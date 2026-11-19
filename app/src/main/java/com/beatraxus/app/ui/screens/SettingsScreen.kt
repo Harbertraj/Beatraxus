@@ -1,5 +1,14 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.BgCard
+import com.beatraxus.app.ui.theme.BgDialog
+import com.beatraxus.app.ui.theme.BgInk
+import com.beatraxus.app.ui.theme.BgInkWarm
+import com.beatraxus.app.ui.theme.PremiumTeal
+import com.beatraxus.app.ui.theme.PremiumTealDeep
+import com.beatraxus.app.ui.theme.ThemeTextDim
+import com.beatraxus.app.ui.theme.ThemeTextSoft
 import android.app.Application
 import com.beatraxus.app.theme.ThemeArea
 import com.beatraxus.app.theme.themeSubtitle
@@ -153,13 +162,13 @@ import com.beatraxus.app.viewmodel.PlayerViewModel
 import com.beatraxus.app.ui.theme.appFontFamily
 import com.beatraxus.app.ui.theme.Icon
 
-private val PremiumAccent = Color(0xFF00C2A8)
-private val PrimaryCyan = Color(0xFF00C2A8)
-private val SecondaryCyan = Color(0xFF00897B)
-private val TextWhite = Color(0xFFF4F6F8)
-private val SecondaryText = Color(0xFFAAB3BC)
-private val BgColor = Color(0xFF0A0A0C)
-private val CardSurface = Color(0xFF15161A)
+private val PremiumAccent: Color get() = PremiumTeal
+private val PrimaryCyan: Color get() = PremiumTeal
+private val SecondaryCyan: Color get() = PremiumTealDeep
+private val TextWhite: Color get() = ThemeTextSoft
+private val SecondaryText: Color get() = ThemeTextDim
+private val BgColor: Color get() = BgInk
+private val CardSurface: Color get() = BgCard
 
 /** Back-and-forth ramp 0..1..0 with the given period: what a linear Reverse-repeat animation produced. */
 private fun pingPong(seconds: Float, period: Float, startAtOne: Boolean): Float {
@@ -229,7 +238,7 @@ fun SettingsScreen(
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
     val currentDominantColor by animateColorAsState(
-        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: Color(0xFF2C2C2C),
+        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: bgTone(0xFF2C2C2C),
         animationSpec = tween(600),
         label = "dominantColor"
     )
@@ -342,7 +351,7 @@ fun SettingsScreen(
         RenderEffectHelper.createBlurEffect(uiState.appearance.settingsBlurIntensity, uiState.appearance.settingsBlurIntensity)
     }
 
-    val bgGradient = Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color(0xFF14110C)))
+    val bgGradient = Brush.verticalGradient(listOf(BgInk, BgInkWarm))
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedMeshBackground()
 
@@ -420,8 +429,8 @@ fun SettingsScreen(
                         )
                     },
                     colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                        containerColor = Color(0xFF0A0A0C).copy(0.55f),
-                        scrolledContainerColor = Color(0xFF0A0A0C).copy(0.8f)
+                        containerColor = BgInk.copy(0.55f),
+                        scrolledContainerColor = BgInk.copy(0.8f)
                     ),
                     title = {
                         val displayTitle = if (currentSection != null && currentSection.contains(": ")) {
@@ -592,7 +601,7 @@ fun SettingsScreen(
                             title = "Add-ons",
                             subtitle = "Manage your streaming plugins",
                             icon = Icons.Rounded.AddLink,
-                            iconColor = Color(0xFF00C2A8),
+                            iconColor = PremiumTeal,
                             onClick = onNavigateToStreamingAddons
                         )
                         SettingsGroupLabel("SYSTEM")
@@ -701,7 +710,7 @@ fun SettingsScreen(
                             .clip(RoundedCornerShape(24.dp))
                             .background(
                                 Brush.verticalGradient(
-                                    listOf(Color(0xFF141E30), Color(0xFF0C1018))
+                                    listOf(bgTone(0xFF141E30), bgTone(0xFF0C1018))
                                 )
                             )
                             .border(
@@ -799,7 +808,7 @@ private fun ValueEditDialog(
     var textValue by remember { mutableStateOf("%.1f".format(initialValue)) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A24),
+        containerColor = bgTone(0xFF1A1A24),
         titleContentColor = Color.White,
         textContentColor = Color.White,
         title = { Text("Edit $label", fontWeight = FontWeight.Bold) },
@@ -942,7 +951,7 @@ fun RefreshRateAppearanceContent() {
                     .fillMaxWidth()
                     .selectable(selected = isSelected, enabled = available, role = Role.RadioButton) { manager.set(context, hz) },
                 shape = RoundedCornerShape(18.dp),
-                color = if (isSelected) PrimaryCyan.copy(alpha = 0.16f) else Color(0xFF111216).copy(alpha = 0.70f),
+                color = if (isSelected) PrimaryCyan.copy(alpha = 0.16f) else bgTone(0xFF111216).copy(alpha = 0.70f),
                 border = BorderStroke(0.8.dp, if (isSelected) PrimaryCyan else Color.White.copy(alpha = 0.10f))
             ) {
                 Row(
@@ -1017,7 +1026,7 @@ fun FontsAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                 .clip(RoundedCornerShape(20.dp))
                 .background(
                     androidx.compose.ui.graphics.Brush.verticalGradient(
-                        listOf(Color(0xFF1E1E2C), Color(0xFF14141F))
+                        listOf(bgTone(0xFF1E1E2C), bgTone(0xFF14141F))
                     )
                 )
                 .border(
@@ -1111,8 +1120,8 @@ fun FontsAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = PrimaryCyan,
                 unfocusedBorderColor = Color.White.copy(0.12f),
-                focusedContainerColor = Color(0xFF14141F),
-                unfocusedContainerColor = Color(0xFF14141F),
+                focusedContainerColor = bgTone(0xFF14141F),
+                unfocusedContainerColor = bgTone(0xFF14141F),
                 focusedTextColor = Color.White,
                 unfocusedTextColor = Color.White,
                 cursorColor = PrimaryCyan
@@ -1139,7 +1148,7 @@ fun FontsAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = PrimaryCyan.copy(alpha = 0.25f),
                         selectedLabelColor = PrimaryCyan,
-                        containerColor = Color(0xFF1A1A26),
+                        containerColor = bgTone(0xFF1A1A26),
                         labelColor = Color.White.copy(0.7f)
                     ),
                     border = FilterChipDefaults.filterChipBorder(
@@ -1171,7 +1180,7 @@ fun FontsAppearanceContent(uiState: PlayerUiState, playerViewModel: PlayerViewMo
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
                         .background(
-                            if (isSelected) PrimaryCyan.copy(alpha = 0.12f) else Color(0xFF161622)
+                            if (isSelected) PrimaryCyan.copy(alpha = 0.12f) else bgTone(0xFF161622)
                         )
                         .border(
                             1.dp,
@@ -2226,7 +2235,7 @@ fun SettingMenuItem(
                 }
             ),
         shape = RoundedCornerShape(22.dp),
-        color = Color(0xFF111216).copy(alpha = 0.72f),
+        color = bgTone(0xFF111216).copy(alpha = 0.72f),
         border = BorderStroke(
             width = 0.8.dp,
             brush = Brush.linearGradient(
@@ -3411,7 +3420,7 @@ private fun SoxrQualityCard(uiState: PlayerUiState, viewModel: PlayerViewModel) 
                 val background = if (isSelected && canChange) {
                     Brush.linearGradient(listOf(Color.Black, Color.Black))
                 } else {
-                    Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+                    Brush.linearGradient(listOf(bgTone(0xFF1A232D), bgTone(0xFF1A232D)))
                 }
 
                 Box(
@@ -3638,7 +3647,7 @@ private fun DitherCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 val background = if (isSelected && canSelect) {
                     Brush.linearGradient(listOf(Color.Black, Color.Black))
                 } else {
-                    Brush.linearGradient(listOf(Color(0xFF1A232D), Color(0xFF1A232D)))
+                    Brush.linearGradient(listOf(bgTone(0xFF1A232D), bgTone(0xFF1A232D)))
                 }
 
                 Box(
@@ -4138,7 +4147,7 @@ fun FolderManagedItem(
                 DropdownMenu(
                     expanded = showMenu,
                     onDismissRequest = { showMenu = false },
-                    modifier = Modifier.background(Color(0xFF1E1E1E))
+                    modifier = Modifier.background(BgDialog)
                 ) {
                     DropdownMenuItem(
                         text = { Text("Remove Folder", color = Color.Red) },
@@ -5485,7 +5494,7 @@ private fun DropboxLoginOptionsDialog(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF1A1A1A))
+                .background(bgTone(0xFF1A1A1A))
                 .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(16.dp))
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -5922,7 +5931,7 @@ fun FullScanPopup(progress: Float, count: Int, albums: Int, artists: Int, onDism
                         spotColor = PremiumAccent.copy(0.2f)
                     ),
                 shape = RoundedCornerShape(32.dp),
-                color = Color(0xFF0E1116),
+                color = bgTone(0xFF0E1116),
                 border = BorderStroke(
                     0.8.dp,
                     Brush.verticalGradient(
@@ -6072,7 +6081,7 @@ fun SettingsSection(
                 spotColor = Color.Black.copy(0.5f)
             ),
         shape = RoundedCornerShape(24.dp),
-        color = Color(0xFF111216).copy(alpha = 0.70f),
+        color = bgTone(0xFF111216).copy(alpha = 0.70f),
         border = BorderStroke(
             0.8.dp,
             Brush.linearGradient(
@@ -6135,7 +6144,7 @@ fun SettingsSection(
                                     .align(Alignment.BottomEnd)
                                     .offset(x = 1.dp, y = 1.dp)
                                     .size(10.dp)
-                                    .background(Color(0xFF0A0A0C), CircleShape)
+                                    .background(BgInk, CircleShape)
                                     .padding(1.5.dp)
                             ) {
                                 Box(
@@ -6434,7 +6443,7 @@ private fun BackupPassphraseDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1A1A24),
+        containerColor = bgTone(0xFF1A1A24),
         titleContentColor = Color.White,
         textContentColor = Color.White,
         title = { Text(title, fontWeight = FontWeight.Bold) },
@@ -6745,7 +6754,7 @@ fun BufferSizeDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF15161A),
+        containerColor = BgCard,
         title = {
             Column {
                 Text("Buffer Size", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
@@ -6830,7 +6839,7 @@ fun NextcloudLoginDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF15161A),
+        containerColor = BgCard,
         title = { Text("Nextcloud Login", color = Color.White, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -7444,7 +7453,7 @@ private fun SongFiltersSection(uiState: PlayerUiState, viewModel: PlayerViewMode
     if (showHidden) {
         AlertDialog(
             onDismissRequest = { showHidden = false },
-            containerColor = Color(0xFF1A1A1A),
+            containerColor = bgTone(0xFF1A1A1A),
             titleContentColor = Color.White,
             textContentColor = Color.White.copy(0.7f),
             title = { Text("Hidden songs") },

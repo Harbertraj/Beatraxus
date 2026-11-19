@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.activity.compose.BackHandler
 import android.os.Build
 import androidx.compose.animation.core.RepeatMode
@@ -64,7 +65,7 @@ import com.beatraxus.app.ui.theme.Icon
  * screen reads as a set of distinct meters rather than one monotone surface.
  */
 private object InspectorPalette {
-    val Bg = Color(0xFF07060B)
+    val Bg: Color get() = bgTone(0xFF07060B)
     val Quality = Color(0xFFFFC94A)      // amber — overall score
     val Waveform = Color(0xFF29E1D6)     // cyan/teal
     val Spectrogram = Color(0xFFFF5FA8)  // magenta (label only; heatmap uses its own thermal scale)
@@ -735,7 +736,7 @@ private fun AuthenticityDetails(r: AudioSpectrumAnalyzer.SpectrumAnalysisResult)
 /** Classic thermal/spectrogram palette: near-black → blue → teal → green → yellow → red. */
 private fun thermalColor(mag: Float): Color {
     val stops = listOf(
-        0.00f to Color(0xFF07060B),
+        0.00f to bgTone(0xFF07060B),
         0.20f to Color(0xFF2A2A8C),
         0.40f to Color(0xFF1E9BD7),
         0.60f to Color(0xFF29E17A),

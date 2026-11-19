@@ -1,5 +1,6 @@
 package com.beatraxus.app.features
 
+import com.beatraxus.app.ui.theme.AccentBlue
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,7 +61,7 @@ object DlnaSession {
     var isPlaying by mutableStateOf(false)
 }
 
-private val Accent = com.beatraxus.app.ui.theme.AccentBlue
+private val Accent: Color get() = AccentBlue
 
 /**
  * DLNA / UPnP sheet.

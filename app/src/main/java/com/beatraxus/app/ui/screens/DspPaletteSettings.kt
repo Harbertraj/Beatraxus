@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -415,7 +416,7 @@ private fun PaletteChip(palette: DspPalette, selected: Boolean, onClick: () -> U
                     .size(24.dp)
                     .clip(CircleShape)
                     .background(palette.secondary)
-                    .border(1.5.dp, Color(0xFF121212), CircleShape)
+                    .border(1.5.dp, bgTone(0xFF121212), CircleShape)
             )
         }
         Text(

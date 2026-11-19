@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -158,7 +159,7 @@ private fun SubtitleEncodingDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1E1E),
+        containerColor = BgDialog,
         shape = RoundedCornerShape(16.dp),
         title = { Text("Text Encoding", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
         text = {

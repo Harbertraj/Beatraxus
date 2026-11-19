@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -364,7 +365,7 @@ fun AddonBrowseScreen(
     detailItem?.let { item ->
         AlertDialog(
             onDismissRequest = { detailItem = null },
-            containerColor = Color(0xFF1A1B1F),
+            containerColor = bgTone(0xFF1A1B1F),
             title = { Text(item.title, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

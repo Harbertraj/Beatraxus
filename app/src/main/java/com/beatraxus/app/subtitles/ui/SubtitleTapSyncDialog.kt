@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -60,7 +61,7 @@ fun SubtitleTapSyncDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1E1E),
+        containerColor = BgDialog,
         shape = RoundedCornerShape(16.dp),
         title = {
             Text(

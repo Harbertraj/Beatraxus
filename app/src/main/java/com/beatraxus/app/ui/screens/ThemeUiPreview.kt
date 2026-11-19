@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -62,6 +64,7 @@ import com.beatraxus.app.theme.ThemeIconKeys
 import com.beatraxus.app.theme.ThemeSpec
 import com.beatraxus.app.theme.ThemeSurface
 import com.beatraxus.app.theme.backgroundFor
+import com.beatraxus.app.ui.theme.AppPalette
 import com.beatraxus.app.ui.theme.FontRepository
 import com.beatraxus.app.ui.theme.rememberPackIcons
 import kotlin.math.PI
@@ -70,23 +73,50 @@ import kotlin.math.sin
 import androidx.compose.material3.Icon as M3Icon
 
 /**
- * A small picture of the app drawn with a theme's own settings: its colours, font, seekbar style, DSP palette,
- * backgrounds, corner roundness, mini player shape, quality badge and icons. This is what the gallery shows
- * instead of plain colour stripes, so a theme can be judged before it is applied.
+ * Small pictures of the app's screens drawn with a theme's own settings: its colours, font, seekbar style,
+ * DSP palette, backgrounds, corner roundness, mini player shape, quality badge and icons. The gallery shows
+ * these instead of plain colour stripes, so a theme can be judged before it is applied. Swipe sideways to
+ * see every screen: Home, Now Playing, Songs, Studio DSP and Settings.
  *
- * It is drawn here with the theme's numbers (not by switching the live app), so it never changes the
- * user's current look and works for themes that are not installed yet.
+ * The colours come from [AppPalette.from], the same palette the real screens read once the theme is applied,
+ * so the preview matches what the app will look like. It is drawn here with the theme's numbers (not by
+ * switching the live app), so it never changes the user's current look and works for themes that are not
+ * installed yet.
  */
 @Composable
 fun ThemeUiPreview(spec: ThemeSpec, modifier: Modifier = Modifier) {
     val packIcons by rememberPackIcons(spec, ThemeIconKeys.previewKeys)
     val look = remember(spec, packIcons) { PreviewLook(spec, packIcons) }
     Row(
-        modifier.fillMaxWidth(),
+        modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        PreviewFrame(look, ThemeSurface.HOME, Modifier.weight(1f)) { HomeMock(look) }
-        PreviewFrame(look, ThemeSurface.NOW_PLAYING, Modifier.weight(1f)) { NowPlayingMock(look) }
+        LabeledFrame("Home", look) {
+            PreviewFrame(look, ThemeSurface.HOME, Modifier.width(FrameWidth)) { HomeMock(look) }
+        }
+        LabeledFrame("Now Playing", look) {
+            PreviewFrame(look, ThemeSurface.NOW_PLAYING, Modifier.width(FrameWidth)) { NowPlayingMock(look) }
+        }
+        LabeledFrame("Songs", look) {
+            PreviewFrame(look, ThemeSurface.MAIN, Modifier.width(FrameWidth)) { LibraryMock(look) }
+        }
+        LabeledFrame("Studio DSP", look) {
+            BrushFrame(Brush.verticalGradient(listOf(look.p.gradTop, look.p.gradBottom)), Modifier.width(FrameWidth)) { DspMock(look) }
+        }
+        LabeledFrame("Settings", look) {
+            BrushFrame(Brush.verticalGradient(listOf(look.p.ink, look.p.inkWarm)), Modifier.width(FrameWidth)) { SettingsMock(look) }
+        }
+    }
+}
+
+private val FrameWidth = 112.dp
+
+@Composable
+private fun LabeledFrame(label: String, look: PreviewLook, content: @Composable () -> Unit) {
+    Column(Modifier.width(FrameWidth), horizontalAlignment = Alignment.CenterHorizontally) {
+        content()
+        Spacer(Modifier.height(4.dp))
+        Text(label, style = look.label(9f, FontWeight.Medium, Color.White.copy(alpha = 0.6f)))
     }
 }
 
@@ -96,9 +126,11 @@ private class PreviewLook(val spec: ThemeSpec, val icons: Map<String, ImageBitma
     val accent2 = Color(spec.accentSecondary)
     val dsp1 = Color(spec.dspPrimary)
     val dsp2 = Color(spec.dspSecondary)
-    val text = spec.surfaces.text?.let { Color(it) } ?: Color(0xFFF0F0FF)
+    /** The palette the real screens use once this theme is applied. */
+    val p = AppPalette.from(spec)
+    val text = p.text
     val subText = text.copy(alpha = 0.62f)
-    val card = spec.surfaces.surface?.let { Color(it) } ?: Color.White.copy(alpha = 0.08f)
+    val card = p.bgSurface
     val font: FontFamily = FontRepository.getFontFamily(spec.fontId)
     /** Material shape corners scale with the theme's cornerScale. */
     val cornerScale = spec.shape?.cornerScale ?: 1f
@@ -123,11 +155,25 @@ private fun PreviewFrame(look: PreviewLook, surface: ThemeSurface, modifier: Mod
     }
 }
 
+/** A frame whose background is a gradient of its own (the Studio DSP and Settings screens draw their own). */
+@Composable
+private fun BrushFrame(brush: Brush, modifier: Modifier, content: @Composable () -> Unit) {
+    Box(
+        modifier
+            .aspectRatio(0.52f)
+            .clip(RoundedCornerShape(16.dp))
+            .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.10f)), RoundedCornerShape(16.dp))
+            .background(brush)
+    ) {
+        content()
+    }
+}
+
 /** The background of a surface: black, a tinted solid, or a soft blurred-colour wash, with its darkness. */
 @Composable
 private fun Backdrop(look: PreviewLook, surface: ThemeSurface, modifier: Modifier) {
     val bg = look.spec.backgroundFor(surface)
-    val base = look.spec.surfaces.background?.let { Color(it) } ?: Color(0xFF0B0B14)
+    val base = look.p.bgBase
     Box(modifier) {
         when (bg.mode) {
             NowPlayingBackgroundMode.BLACK -> Box(Modifier.fillMaxSize().background(Color.Black))
@@ -226,6 +272,170 @@ private fun Bar(width: Dp, color: Color) {
 @Composable
 private fun NavIcon(key: String, fallback: ImageVector, selected: Boolean, look: PreviewLook) {
     PreviewIcon(key, fallback, if (selected) look.accent else look.subText, look, 14.dp)
+}
+
+// ------------------------------------------------------------------ songs, studio dsp, settings
+
+@Composable
+private fun BottomNav(look: PreviewLook, selected: String) {
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+        NavIcon("home", Icons.Rounded.Home, selected == "home", look)
+        NavIcon("search", Icons.Rounded.Search, selected == "search", look)
+        NavIcon("library", Icons.Rounded.LibraryMusic, selected == "library", look)
+        NavIcon("settings", Icons.Rounded.Settings, selected == "settings", look)
+    }
+}
+
+@Composable
+private fun LibraryMock(look: PreviewLook) {
+    val radius = (6f * look.cornerScale).dp
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Songs", style = look.label(10f, FontWeight.Bold), modifier = Modifier.weight(1f))
+            PreviewIcon("search", Icons.Rounded.Search, look.subText, look, 12.dp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Chip("All", true, look)
+            Chip("Hi-Res", false, look)
+        }
+        Spacer(Modifier.height(5.dp))
+        repeat(5) { i ->
+            val playing = i == 1
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(radius))
+                    .background(if (playing) look.accent.copy(alpha = 0.16f) else Color.Transparent).padding(3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(18.dp).clip(RoundedCornerShape((4f * look.cornerScale).dp))
+                        .background(
+                            Brush.linearGradient(
+                                if (i % 2 == 0) listOf(look.accent, look.accent2) else listOf(look.dsp2, look.dsp1)
+                            )
+                        )
+                )
+                Spacer(Modifier.width(5.dp))
+                Column(Modifier.weight(1f)) {
+                    Bar(30.dp, if (playing) look.accent else look.text.copy(alpha = 0.8f))
+                    Spacer(Modifier.height(2.dp))
+                    Bar(20.dp, look.subText)
+                }
+                Text(
+                    if (i % 2 == 0) "FLAC" else "MP3",
+                    style = look.label(5.5f, FontWeight.SemiBold, if (i % 2 == 0) look.accent else look.subText)
+                )
+            }
+        }
+        Spacer(Modifier.weight(1f))
+        MiniPlayerMock(look)
+        Spacer(Modifier.height(5.dp))
+        BottomNav(look, "library")
+    }
+}
+
+@Composable
+private fun DspChip(label: String, selected: Boolean, look: PreviewLook) {
+    val shape = RoundedCornerShape((8f * look.cornerScale).dp)
+    Box(
+        Modifier.clip(shape)
+            .background(if (selected) look.dsp1.copy(alpha = 0.22f) else Color.White.copy(alpha = 0.08f))
+            .border(BorderStroke(0.5.dp, if (selected) look.dsp1 else Color.Transparent), shape)
+            .padding(horizontal = 5.dp, vertical = 2.dp)
+    ) {
+        Text(label, style = look.label(6.5f, FontWeight.Medium, if (selected) look.dsp1 else look.text))
+    }
+}
+
+@Composable
+private fun DspMock(look: PreviewLook) {
+    val radius = (8f * look.cornerScale).dp
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
+        Text("Studio DSP", style = look.label(10f, FontWeight.Bold))
+        Spacer(Modifier.height(5.dp))
+        // The signal path: connected stages, the last one still off.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            repeat(4) { i ->
+                Box(Modifier.size(7.dp).clip(CircleShape).background(if (i < 3) look.dsp1 else look.dsp1.copy(alpha = 0.25f)))
+                if (i < 3) Box(Modifier.weight(1f).height(1.dp).background(look.dsp1.copy(alpha = 0.5f)))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            DspChip("EQ", true, look)
+            DspChip("Spatial", false, look)
+            DspChip("Bass", false, look)
+        }
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(radius))
+                .background(look.p.panel.copy(alpha = 0.9f)).padding(6.dp)
+        ) {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                listOf(0.5f, 0.7f, 0.4f, 0.8f, 0.6f, 0.45f, 0.75f).forEach { v ->
+                    Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Spacer(Modifier.weight(1f - v))
+                        Box(
+                            Modifier.size(8.dp).clip(CircleShape)
+                                .background(Brush.verticalGradient(listOf(look.dsp1, look.dsp2)))
+                        )
+                        Box(Modifier.width(2.dp).weight(v).background(look.dsp1.copy(alpha = 0.55f)))
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+            repeat(3) {
+                Box(
+                    Modifier.size(18.dp).clip(CircleShape).background(look.p.panelDeep)
+                        .border(BorderStroke(1.dp, look.dsp1.copy(alpha = 0.7f)), CircleShape)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ToggleMock(on: Boolean, look: PreviewLook) {
+    Box(
+        Modifier.size(14.dp, 8.dp).clip(CircleShape)
+            .background(if (on) look.p.premium else Color.White.copy(alpha = 0.2f)),
+        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart
+    ) {
+        Box(Modifier.padding(1.dp).size(6.dp).clip(CircleShape).background(Color.White))
+    }
+}
+
+@Composable
+private fun SettingsMock(look: PreviewLook) {
+    val radius = (8f * look.cornerScale).dp
+    Column(Modifier.fillMaxSize().padding(8.dp)) {
+        Text("Settings", style = look.label(10f, FontWeight.Bold, look.p.textSoft))
+        Spacer(Modifier.height(6.dp))
+        repeat(5) { i ->
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 2.dp).clip(RoundedCornerShape(radius))
+                    .background(look.p.card).padding(5.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier.size(14.dp).clip(RoundedCornerShape((4f * look.cornerScale).dp))
+                        .background(look.p.premium.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(look.p.premium))
+                }
+                Spacer(Modifier.width(5.dp))
+                Column(Modifier.weight(1f)) {
+                    Bar(28.dp, look.p.textSoft.copy(alpha = 0.9f))
+                    Spacer(Modifier.height(2.dp))
+                    Bar(18.dp, look.p.textDim)
+                }
+                ToggleMock(i % 2 == 0, look)
+            }
+        }
+    }
 }
 
 // ------------------------------------------------------------------ now playing screen

@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -619,7 +620,7 @@ fun LyricsTranslateDialog(
                         .fillMaxWidth(0.92f)
                         .heightIn(max = maxHeight)
                         .clip(cardShape)
-                        .background(Color(0xFF0E0E14))
+                        .background(bgTone(0xFF0E0E14))
                         .border(
                             BorderStroke(
                                 1.dp,

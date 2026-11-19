@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.app.Application
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -269,7 +270,7 @@ private fun SubtitlePreview(style: SubtitleStyle) {
             .fillMaxWidth()
             .height(120.dp)
             .clip(RoundedCornerShape(12.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF2B3A4A), Color(0xFF0E141B)))),
+            .background(Brush.verticalGradient(listOf(Color(0xFF2B3A4A), bgTone(0xFF0E141B)))),
         contentAlignment = Alignment.BottomCenter
     ) {
         Text(

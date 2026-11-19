@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -108,8 +109,8 @@ fun InfoStyleDialog(
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                Color(0xFF1B1C26).copy(alpha = 0.86f),
-                                Color(0xFF0E0F15).copy(alpha = 0.90f)
+                                bgTone(0xFF1B1C26).copy(alpha = 0.86f),
+                                bgTone(0xFF0E0F15).copy(alpha = 0.90f)
                             )
                         )
                     )

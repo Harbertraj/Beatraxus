@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -36,7 +37,7 @@ import kotlinx.coroutines.launch
 import com.beatraxus.app.ui.theme.appFontFamily
 import com.beatraxus.app.ui.theme.Icon
 
-private val SheetBg = Color(0xFF121316)
+private val SheetBg: Color get() = bgTone(0xFF121316)
 private val TextWhite = Color(0xFFF4F6F8)
 private val ErrorRed = Color(0xFFFF5252)
 

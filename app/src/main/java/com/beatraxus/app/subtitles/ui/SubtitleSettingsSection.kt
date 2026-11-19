@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -72,7 +73,7 @@ fun SubtitleSettingsSection(
     if (showClearCacheConfirm) {
         AlertDialog(
             onDismissRequest = { showClearCacheConfirm = false },
-            containerColor = Color(0xFF1E1E1E),
+            containerColor = BgDialog,
             shape = RoundedCornerShape(16.dp),
             title = { Text("Clear Subtitle Cache", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold) },
             text = { Text("Clear all downloaded and imported subtitle files from cache?", color = Color.White.copy(0.8f), fontSize = 14.sp) },

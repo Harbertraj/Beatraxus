@@ -129,6 +129,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.beatraxus.app.ui.components.*
 import com.beatraxus.app.ui.minimal.*
+import com.beatraxus.app.ui.pro.isPro
+import com.beatraxus.app.ui.pro.proHomeItems
+import com.beatraxus.app.ui.vinyl.isVinyl
+import com.beatraxus.app.ui.vinyl.vinylHomeItems
 import com.beatraxus.app.ui.theme.*
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import androidx.palette.graphics.Palette
@@ -148,7 +152,7 @@ fun DefaultAlbumArt(modifier: Modifier = Modifier) {
         in 5..11 -> listOf(Color(0xFF00F2FF).copy(0.15f), Color(0xFF0066FF).copy(0.05f))
         in 12..16 -> listOf(Color(0xFFFFD60A).copy(0.15f), Color(0xFFFF9F0A).copy(0.05f))
         in 17..20 -> listOf(Color(0xFFFF5E62).copy(0.15f), Color(0xFFB91D73).copy(0.05f))
-        else -> listOf(Color(0xFF5E5CE6).copy(0.18f), Color(0xFF131B2A).copy(0.08f))
+        else -> listOf(Color(0xFF5E5CE6).copy(0.18f), bgTone(0xFF131B2A).copy(0.08f))
     }
     Box(
         modifier = modifier.background(Brush.linearGradient(colors)),
@@ -189,7 +193,7 @@ fun MainBackground(
                         .fillMaxSize()
                         .background(
                             Brush.verticalGradient(
-                                listOf(Color(0xFF000814), Color(0xFF001D3D), Color(0xFF000814))
+                                listOf(bgTone(0xFF000814), Color(0xFF001D3D), bgTone(0xFF000814))
                             )
                         )
                 )
@@ -327,7 +331,7 @@ fun MainScreen(
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
     val currentDominantColor by animateColorAsState(
-        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: Color(0xFF2C2C2C),
+        targetValue = uiState.currentSong?.let { dominantColorsCache[it.id] } ?: bgTone(0xFF2C2C2C),
         animationSpec = tween(600),
         label = "dominantColor"
     )
@@ -905,7 +909,7 @@ fun MainScreen(
                             Brush.verticalGradient(
                                 colors = listOf(
                                     viewAccentColor.copy(alpha = if (depth == 1) 0.34f else 0.20f),
-                                    Color(0xFF0B0B12).copy(alpha = if (depth == 1) 0.74f else 0.86f),
+                                    bgTone(0xFF0B0B12).copy(alpha = if (depth == 1) 0.74f else 0.86f),
                                     Color.Black.copy(alpha = if (depth == 1) 0.90f else 0.95f)
                                 )
                             )
@@ -1885,7 +1889,7 @@ fun MainScreen(
                                                                         Text("Cancel", color = Color.White.copy(0.6f))
                                                                     }
                                                                 },
-                                                                containerColor = Color(0xFF1C1C1E),
+                                                                containerColor = bgTone(0xFF1C1C1E),
                                                                 titleContentColor = Color.White,
                                                                 textContentColor = Color.White.copy(0.7f)
                                                             )
@@ -3578,7 +3582,7 @@ items(artistSongs, key = { it.id }) { song ->
                                             val miniAnimated = miniAppearance.nowPlayingAnimatedBackground && miniAppearance.miniPlayerAnimatedBackground
                                             val miniStaticBackground: @Composable () -> Unit = {
                                                 if (miniMode == NowPlayingBackgroundMode.BLACK) {
-                                                    Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
+                                                    Box(Modifier.fillMaxSize().background(bgTone(0xFF121212)))
                                                 } else {
                                                     AnimatedContent(
                                                         targetState = uiState.currentSong,
@@ -3646,7 +3650,7 @@ items(artistSongs, key = { it.id }) { song ->
                                                     val miniFluidSupported = isFluidSupported()
                                                     val miniBlurMode = miniMode == NowPlayingBackgroundMode.BLUR
                                                     if (miniMode == NowPlayingBackgroundMode.BLACK && miniFluidSupported) {
-                                                        Box(Modifier.fillMaxSize().background(Color(0xFF121212)))
+                                                        Box(Modifier.fillMaxSize().background(bgTone(0xFF121212)))
                                                     } else {
                                                         // Level of the music is not used: the bar flows on its own.
                                                         FluidArtworkBackground(
@@ -3925,7 +3929,7 @@ items(artistSongs, key = { it.id }) { song ->
                                         Text("Cancel")
                                     }
                                 },
-                                containerColor = Color(0xFF1A1A1A),
+                                containerColor = bgTone(0xFF1A1A1A),
                                 titleContentColor = Color.White,
                                 textContentColor = Color.White.copy(0.7f)
                             )
@@ -4436,7 +4440,7 @@ items(artistSongs, key = { it.id }) { song ->
                         Text("Cancel")
                     }
                 },
-                containerColor = Color(0xFF1A1A1A),
+                containerColor = bgTone(0xFF1A1A1A),
                 titleContentColor = Color.White,
                 textContentColor = Color.White.copy(0.7f)
             )
@@ -5195,6 +5199,74 @@ fun HomeScreen(
                 onOpenDrawer = onOpenDrawer,
                 onNavigate = { viewModel.setLibraryView(it) },
                 onPlayHero = { heroSong?.let { viewModel.playSong(it) } },
+                onLiked = { viewModel.setLibraryView(LibraryView.FAVORITES) },
+                onShuffleAll = { viewModel.shuffleAndPlay() },
+                onRecentlyAdded = { viewModel.setLibraryView(LibraryView.RECENTLY_ADDED) },
+                onHiResVault = { if (hiResSongs.isNotEmpty()) viewModel.playList(hiResSongs, 0) },
+                onRediscover = { if (rediscoverSongs.isNotEmpty()) viewModel.playList(rediscoverSongs, 0) },
+                onPlayList = { list, index -> viewModel.playList(list, index) },
+                onMood = { label ->
+                    val mood = allMoods.firstOrNull { it.label == label }
+                    if (mood == null) showAllMoodsDialog = true else playMood(mood)
+                },
+                onArtist = { viewModel.setLibraryView(LibraryView.ARTIST_DETAIL, it) }
+            )
+        } else if (uiState.appearance.isPro) {
+            // Built-in "Graphite Pro" theme: its own Home layout (same data and actions as the other Home screens).
+            proHomeItems(
+                greeting = greeting,
+                songCount = allSongs.size,
+                favoriteCount = favorites.size,
+                albumCount = albums.size,
+                heroSong = heroSong,
+                heroIsCurrent = heroSong != null && uiState.currentSong?.id == heroSong.id,
+                heroIsPlaying = uiState.isPlaying,
+                quickPicks = quickPicks,
+                recentlyPlayed = recentlyPlayed,
+                hiResSongs = hiResSongs,
+                rediscoverSongs = rediscoverSongs,
+                artists = artists,
+                decades = decadeBuckets,
+                onNavigate = { viewModel.setLibraryView(it) },
+                onPlayHero = {
+                    heroSong?.let {
+                        if (uiState.currentSong?.id == it.id) viewModel.togglePlayPause() else viewModel.playSong(it)
+                    }
+                },
+                onLiked = { viewModel.setLibraryView(LibraryView.FAVORITES) },
+                onShuffleAll = { viewModel.shuffleAndPlay() },
+                onRecentlyAdded = { viewModel.setLibraryView(LibraryView.RECENTLY_ADDED) },
+                onHiResVault = { if (hiResSongs.isNotEmpty()) viewModel.playList(hiResSongs, 0) },
+                onRediscover = { if (rediscoverSongs.isNotEmpty()) viewModel.playList(rediscoverSongs, 0) },
+                onPlayList = { list, index -> viewModel.playList(list, index) },
+                onMood = { label ->
+                    val mood = allMoods.firstOrNull { it.label == label }
+                    if (mood == null) showAllMoodsDialog = true else playMood(mood)
+                },
+                onArtist = { viewModel.setLibraryView(LibraryView.ARTIST_DETAIL, it) }
+            )
+        } else if (uiState.appearance.isVinyl) {
+            // Built-in "Vinyl Lounge" theme: its own Home layout (same data and actions as the other Home screens).
+            vinylHomeItems(
+                greeting = greeting,
+                songCount = allSongs.size,
+                favoriteCount = favorites.size,
+                albumCount = albums.size,
+                heroSong = heroSong,
+                heroIsCurrent = heroSong != null && uiState.currentSong?.id == heroSong.id,
+                heroIsPlaying = uiState.isPlaying,
+                quickPicks = quickPicks,
+                recentlyPlayed = recentlyPlayed,
+                hiResSongs = hiResSongs,
+                rediscoverSongs = rediscoverSongs,
+                artists = artists,
+                decades = decadeBuckets,
+                onNavigate = { viewModel.setLibraryView(it) },
+                onPlayHero = {
+                    heroSong?.let {
+                        if (uiState.currentSong?.id == it.id) viewModel.togglePlayPause() else viewModel.playSong(it)
+                    }
+                },
                 onLiked = { viewModel.setLibraryView(LibraryView.FAVORITES) },
                 onShuffleAll = { viewModel.shuffleAndPlay() },
                 onRecentlyAdded = { viewModel.setLibraryView(LibraryView.RECENTLY_ADDED) },
@@ -6641,7 +6713,7 @@ fun SlideDrawerMenu(
         label = "gradientOffset"
     )
 
-    val menuItems = remember(libraryMode, playbackMode) {
+    val menuItems = remember(libraryMode, playbackMode, PremiumTeal) {
         if (playbackMode == com.beatraxus.app.model.PlaybackMode.VIDEO) {
             listOf(
                 DrawerMenuItem("Home", LibraryView.HOME, Icons.Rounded.Home, Color(0xFF40C4FF)),
@@ -6651,7 +6723,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Recently Played", LibraryView.VIDEO_RECENTLY_PLAYED, Icons.Rounded.History, Color(0xFF00E676)),
                 DrawerMenuItem("Video Playlists", LibraryView.PLAYLISTS, Icons.AutoMirrored.Rounded.PlaylistPlay, Color(0xFFFDD835)),
                 DrawerMenuItem("Playlists", LibraryView.LIVE_TV, Icons.Rounded.LiveTv, Color(0xFFFF3B5C)),
-                DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
+                DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, PremiumTeal)
             )
         } else {
             listOf(
@@ -6670,7 +6742,7 @@ fun SlideDrawerMenu(
                 DrawerMenuItem("Radio", LibraryView.RADIO, Icons.Rounded.Radio, Color(0xFF00B8D4)),
                 DrawerMenuItem("SMB / NAS", LibraryView.SMB_NAS, Icons.Rounded.Storage, Color(0xFF546E7A)),
                 DrawerMenuItem("FTP / SFTP", LibraryView.FTP_SFTP, Icons.Rounded.Dns, Color(0xFF8D6E63)),
-                DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, Color(0xFF00C2A8))
+                DrawerMenuItem("Add-ons", LibraryView.ADDONS, Icons.Rounded.Extension, PremiumTeal)
             ).filter { item ->
                 !(item.view == LibraryView.FOLDERS && libraryMode == LibraryMode.CLOUD)
             }
@@ -7326,7 +7398,7 @@ fun DensityDropdownContent(
 }
 
 /** ONE calm accent for the selected library top icon (sort / cloud / layout). */
-private val LibraryStripActive = AccentBlue
+private val LibraryStripActive: Color get() = AccentBlue
 
 @Composable
 fun SortSheetContent(

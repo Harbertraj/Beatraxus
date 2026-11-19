@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -90,7 +91,7 @@ internal val AudioPink = Color(0xFFFF4D9D)
 internal val AudioCyan = Color(0xFF00F2FF)
 internal val AudioAmber = Color(0xFFFFB84D)
 internal val AudioGold = Color(0xFFFFD54F)
-private val AudioInk = Color(0xFF0A0A12)
+private val AudioInk: Color get() = bgTone(0xFF0A0A12)
 
 /** "FLAC · 24-bit / 96 kHz" style label for a song, or null when nothing is known. */
 internal fun audioQualityLabel(song: Song): String? {
@@ -516,7 +517,7 @@ private fun VinylDisc(
                 val r = size.minDimension / 2f
                 drawCircle(
                     brush = Brush.radialGradient(
-                        listOf(Color(0xFF2B2B35), Color(0xFF0B0B10)),
+                        listOf(bgTone(0xFF2B2B35), bgTone(0xFF0B0B10)),
                         center = center,
                         radius = r
                     ),

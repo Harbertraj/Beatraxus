@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
@@ -248,7 +249,7 @@ fun StreamingAddonsScreen(
         if (showAddSheet) {
             ModalBottomSheet(
                 onDismissRequest = { showAddSheet = false },
-                containerColor = Color(0xFF121316),
+                containerColor = bgTone(0xFF121316),
                 scrimColor = Color.Black.copy(alpha = 0.6f),
                 dragHandle = { BottomSheetDefaults.DragHandle(color = Color.White.copy(alpha = 0.1f)) }
             ) {
@@ -316,7 +317,7 @@ fun StreamingAddonsScreen(
         addonToRemove?.let { addon ->
             AlertDialog(
                 onDismissRequest = { addonToRemove = null },
-                containerColor = Color(0xFF1A1B1F),
+                containerColor = bgTone(0xFF1A1B1F),
                 title = {
                     Text("Remove Addon?", color = TextWhite)
                 },

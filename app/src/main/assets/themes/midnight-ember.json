@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "id": "midnight-ember",
+  "name": "Midnight Ember",
+  "author": "Beatraxus",
+  "version": 1,
+  "mode": "dark",
+  "colors": {
+    "accent": "#FF8A4C",
+    "accentSecondary": "#FF4D6D",
+    "preview": ["#0C0A0B", "#FF8A4C", "#FF4D6D", "#FFD166"],
+    "background": "#0C0A0B",
+    "surface": "#1A1314",
+    "text": "#FFF4EC"
+  },
+  "dsp": { "primary": "#FF8A4C", "secondary": "#FF4D6D" },
+  "seekbar": "BEATRAXUS_COMET",
+  "font": "outfit",
+  "background": {
+    "mode": "BLUR",
+    "blurScale": 1.0,
+    "blurDarkness": 0.5,
+    "solidIntensity": 0.6,
+    "solidDarkness": 0.4
+  },
+  "shape": { "cornerScale": 1.25 },
+  "player": {
+    "albumArt": "DEPTH",
+    "qualityBadge": "NEON_PULSE",
+    "miniStyle": "PILL",
+    "miniHeight": 64,
+    "miniCorner": 36,
+    "miniArtCorner": 18,
+    "miniProgressRing": true,
+    "miniShowTime": true,
+    "miniTintFromArt": true
+  }
+}

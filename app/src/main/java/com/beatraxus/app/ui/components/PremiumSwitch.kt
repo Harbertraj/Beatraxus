@@ -1,5 +1,7 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.PremiumTeal
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -33,7 +35,7 @@ fun PremiumSwitch(
     onCheckedChange: ((Boolean) -> Unit)?,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
-    accentColor: Color = Color(0xFF00C2A8) // Default Teal
+    accentColor: Color = PremiumTeal // Default Teal
 ) {
     val haptic = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
@@ -44,7 +46,7 @@ fun PremiumSwitch(
         label = "thumbOffset"
     )
     
-    val indicatorColor = if (checked) accentColor else Color(0xFF1A1D24)
+    val indicatorColor = if (checked) accentColor else bgTone(0xFF1A1D24)
     val indicatorGlow by animateFloatAsState(
         targetValue = if (checked) 1f else 0f,
         animationSpec = tween(300),
@@ -56,7 +58,7 @@ fun PremiumSwitch(
             .width(64.dp)
             .height(36.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF0A0C10)) // Onyx Black
+            .background(bgTone(0xFF0A0C10)) // Onyx Black
             .border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(18.dp))
             .clickable(
                 interactionSource = interactionSource,
@@ -104,7 +106,7 @@ fun PremiumSwitch(
                 .clip(CircleShape)
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color(0xFF2C323D), Color(0xFF161921))
+                        listOf(Color(0xFF2C323D), bgTone(0xFF161921))
                     )
                 )
                 .border(1.dp, Color.White.copy(alpha = 0.08f), CircleShape),

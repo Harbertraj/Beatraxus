@@ -1,5 +1,7 @@
 package com.beatraxus.app.ui.components.dsp
 
+import com.beatraxus.app.ui.theme.BgGradBottom
+import com.beatraxus.app.ui.theme.BgGradTop
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -77,7 +79,7 @@ private const val TEST_NOISE_SECONDS = 6
 private fun Modifier.extrasCard(accent: Color): Modifier = this
     .fillMaxWidth()
     .clip(RoundedCornerShape(16.dp))
-    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+    .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
     .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
     .padding(12.dp)
 

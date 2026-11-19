@@ -1163,6 +1163,7 @@ class PlayerViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             appearancePreferences.appearanceConfig.collect { config ->
                 com.beatraxus.app.ui.theme.DspPaletteState.apply(config)
+                com.beatraxus.app.ui.theme.ThemePalette.apply(config.activeTheme)
                 _uiState.update { it.copy(appearance = config) }
             }
         }

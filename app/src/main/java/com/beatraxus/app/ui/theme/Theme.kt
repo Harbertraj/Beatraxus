@@ -22,22 +22,23 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.core.view.WindowCompat
 
-private val BeatraxusDarkColorScheme = darkColorScheme(
-    primary             = AccentBlue,
-    onPrimary           = TextOnAccent,
-    primaryContainer    = BgElevated,
-    onPrimaryContainer  = TextPrimary,
-    secondary           = AccentRed,
-    onSecondary         = TextOnAccent,
-    secondaryContainer  = BgHighlight,
-    onSecondaryContainer= TextPrimary,
-    background          = BgBase,
-    onBackground        = TextPrimary,
-    surface             = BgSurface,
-    onSurface           = TextPrimary,
-    surfaceVariant      = BgElevated,
-    onSurfaceVariant    = TextSecondary,
-    outline             = Divider,
+/** The Material colour scheme for a palette (the Default look or the applied theme). */
+private fun baseColorScheme(p: AppPalette) = darkColorScheme(
+    primary             = p.accent,
+    onPrimary           = p.onAccent,
+    primaryContainer    = p.bgElevated,
+    onPrimaryContainer  = p.text,
+    secondary           = p.secondary,
+    onSecondary         = p.onSecondary,
+    secondaryContainer  = p.bgHighlight,
+    onSecondaryContainer= p.text,
+    background          = p.bgBase,
+    onBackground        = p.text,
+    surface             = p.bgSurface,
+    onSurface           = p.text,
+    surfaceVariant      = p.bgElevated,
+    onSurfaceVariant    = p.textSecondary,
+    outline             = p.divider,
     error               = AccentRed,
     onError             = TextOnAccent
 )
@@ -79,13 +80,16 @@ fun BeatraxusTheme(
     val typography = remember(fontFamily) {
         getBeatraxusTypography(fontFamily)
     }
+    // Share the theme's colours with every screen (the tokens in Color.kt read from this).
+    SideEffect { ThemePalette.apply(activeTheme) }
+    val palette = remember(activeTheme) { AppPalette.from(activeTheme) }
     val surfaces = activeTheme?.surfaces
-    val colorScheme = remember(themeAccent, themeAccentSecondary, surfaces) {
-        var scheme = if (themeAccent == null) BeatraxusDarkColorScheme
+    val colorScheme = remember(palette, themeAccent, themeAccentSecondary, surfaces) {
+        var scheme = if (themeAccent == null) baseColorScheme(palette)
         else {
             val primary = Color(themeAccent)
             val secondary = Color(themeAccentSecondary ?: themeAccent)
-            BeatraxusDarkColorScheme.copy(
+            baseColorScheme(palette).copy(
                 primary = primary,
                 // Keep text readable on the accent whether it is pale or dark.
                 onPrimary = if (primary.luminance() > 0.5f) Color.Black else Color.White,

@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import com.beatraxus.app.ui.components.LyricsSourcesPopup
 import com.beatraxus.app.ui.components.LyricsTranslateDialog
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -219,7 +220,7 @@ fun NowPlayingScreen(
     val context = LocalContext.current
     val dominantColorsCache = remember { mutableStateMapOf<String, Color>() }
     val currentDominantColor by animateColorAsState(
-        targetValue = dominantColorsCache[song.id] ?: Color(0xFF2C2C2C),
+        targetValue = dominantColorsCache[song.id] ?: bgTone(0xFF2C2C2C),
         animationSpec = tween(250),
         label = "dominantColor"
     )
@@ -2615,7 +2616,7 @@ internal fun SleepTimerSheet(
 ) {
     val palette = coverPalette?.value
     val accent = palette?.accent ?: Color(0xFFFFB2AD)
-    val onAccent = if (palette != null) Color(0xFF14110F) else Color(0xFF2C1817)
+    val onAccent = if (palette != null) bgTone(0xFF14110F) else bgTone(0xFF2C1817)
     val glassFill = if (palette != null) 0.09f else 0.04f
     val presets = listOf(0, 15, 30, 45, 60, 120, 180, 240) // in minutes
     var timerValue by remember { mutableFloatStateOf(0f) }
@@ -2648,7 +2649,7 @@ internal fun SleepTimerSheet(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(topStart = 42.dp, topEnd = 42.dp))
                 // Same panel look as the Lyrics Sources popup: solid dark card, glass edge, blurred art backdrop.
-                .background(Color(0xFF0E0E14))
+                .background(bgTone(0xFF0E0E14))
                 .border(
                     BorderStroke(
                         1.dp,
@@ -3015,7 +3016,7 @@ fun CustomTimePickerDialog(
                 .fillMaxWidth(0.85f)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(32.dp),
-            color = Color(0xFF1E1B1B),
+            color = bgTone(0xFF1E1B1B),
             border = BorderStroke(1.dp, Color.White.copy(0.1f))
         ) {
             Column(
@@ -3060,7 +3061,7 @@ fun CustomTimePickerDialog(
                         shape = RoundedCornerShape(18.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFB2AD))
                     ) {
-                        Text("Set Timer", color = Color(0xFF331D1B), fontWeight = FontWeight.Bold)
+                        Text("Set Timer", color = bgTone(0xFF331D1B), fontWeight = FontWeight.Bold)
                     }
                 }
             }

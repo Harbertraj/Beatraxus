@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.net.Uri
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -328,7 +329,7 @@ private fun VideoHeroCard(
             .shadow(if (LocalVideoMinimal.current) 0.dp else 20.dp, RoundedCornerShape(30.dp), ambientColor = vCyan(), spotColor = vBlue())
             .clip(RoundedCornerShape(30.dp))
             .aspectRatio(16f / 10.5f)
-            .background(Color(0xFF0B1220))
+            .background(bgTone(0xFF0B1220))
             .border(
                 BorderStroke(
                     1.dp,

@@ -223,25 +223,24 @@ class OpticalFlowRenderer(
 
     // ---- stats ----
     private val acc = StatsAccumulator()
-    private val fencePoll = object : Runnable {
-        override fun run() {
-            if (released || fence == 0L) return
-            if (gpuBusy()) handler.postDelayed(this, 1L)
-        }
-    }
-
     /**
      * True while the previous motion estimate has not finished on the GPU. When the fence has signalled, its
      * latency (frame arrival -> flow ready) is recorded here, for the stats and for the hold.
+     *
+     * The fence is checked from [tick] (once per vsync) and from the intake paths; there is no timer polling it.
+     * [detectionLagNs] is how long ago the fence may already have signalled when it is found by a vsync check
+     * (on average half a vsync); it is taken off the measured latency so that the quantised check does not
+     * make the estimate - and through it the video hold - look longer than it was.
      */
-    private fun gpuBusy(): Boolean {
+    private fun gpuBusy(detectionLagNs: Long = 0L): Boolean {
         if (estIdx < estSteps.size) return true
         if (fence == 0L) return false
         return when (GLES30.glClientWaitSync(fence, 0, 0L)) {
             GLES30.GL_ALREADY_SIGNALED, GLES30.GL_CONDITION_SATISFIED -> {
                 val now = System.nanoTime()
-                acc.onEstimateMs((now - estFirstSubmitNs) / 1e6f)
-                estimateLatency.onSample(now - fenceStartNs)
+                val doneNs = max(fenceStartNs, now - detectionLagNs)
+                acc.onEstimateMs(max(0L, doneNs - estFirstSubmitNs) / 1e6f)
+                estimateLatency.onSample(doneNs - fenceStartNs)
                 GLES30.glDeleteSync(fence); fence = 0L
                 false
             }
@@ -947,7 +946,6 @@ class OpticalFlowRenderer(
             fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
             fenceStartNs = estArrivalNs
             GLES30.glFlush()
-            handler.postDelayed(fencePoll, 1L)
             estA = null
             estB = null
         }
@@ -975,6 +973,8 @@ class OpticalFlowRenderer(
             }
         }
         lastVsyncNs = vsyncNs
+        // Retire the finished motion estimate (records its latency) with one non-blocking check per vsync.
+        if (fence != 0L) gpuBusy(vsyncPeriodNs / 2)
         rifeOverlayHook?.onTick()
         emitWindow(vsyncNs)
         serviceMid(vsyncNs)

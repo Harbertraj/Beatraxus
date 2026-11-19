@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.app.Activity
 import android.content.Intent
 import android.os.Build
@@ -89,7 +90,7 @@ import com.beatraxus.app.features.PtStatus
 import com.beatraxus.app.ui.theme.AccentBlue
 import com.beatraxus.app.viewmodel.PlayerViewModel
 
-private val PtBg = Color(0xFF08070D)
+private val PtBg: Color get() = bgTone(0xFF08070D)
 private val PtGreen = Color(0xFF43E97B)
 private val PtAmber = Color(0xFFFFC94A)
 
@@ -632,7 +633,7 @@ private fun RoomCard(
             .clip(heroShape)
             .background(
                 Brush.linearGradient(
-                    listOf(AccentBlue.copy(alpha = 0.42f), AccentBlue.copy(alpha = 0.10f), Color(0xFF0E0D16))
+                    listOf(AccentBlue.copy(alpha = 0.42f), AccentBlue.copy(alpha = 0.10f), bgTone(0xFF0E0D16))
                 )
             )
             .border(1.dp, Brush.verticalGradient(listOf(AccentBlue.copy(0.55f), Color.White.copy(0.06f))), heroShape)

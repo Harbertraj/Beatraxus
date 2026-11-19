@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -38,7 +39,7 @@ fun PlaylistSelectionDialog(
                 .fillMaxWidth(0.9f)
                 .wrapContentHeight(),
             shape = RoundedCornerShape(28.dp),
-            color = Color(0xFF121212)
+            color = bgTone(0xFF121212)
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),

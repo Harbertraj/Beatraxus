@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -139,7 +140,7 @@ fun CloudVideoConnectCard(
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clip(shape)
-            .background(Color(0xFF0A0A12))
+            .background(bgTone(0xFF0A0A12))
             .background(Brush.linearGradient(listOf(Color(0xFF3D8BFF).copy(0.28f), Color(0xFF8E6BFF).copy(0.12f), Color.Transparent)))
             .border(BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(0.22f), Color.White.copy(0.04f)))), shape)
             .padding(18.dp)

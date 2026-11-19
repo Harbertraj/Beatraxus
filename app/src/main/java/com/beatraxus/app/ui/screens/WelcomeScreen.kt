@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
@@ -79,9 +80,9 @@ import com.beatraxus.app.ui.theme.AccentBlueSoft
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import kotlinx.coroutines.delay
 
-private val WelcomeBg = Color(0xFF07070D)
-private val WelcomeAccent = AccentBlue
-private val WelcomeAccentAlt = AccentBlueSoft
+private val WelcomeBg: Color get() = bgTone(0xFF07070D)
+private val WelcomeAccent: Color get() = AccentBlue
+private val WelcomeAccentAlt: Color get() = AccentBlueSoft
 private val WelcomeSurface = Color.White.copy(alpha = 0.05f)
 private val WelcomeHairline = Color.White.copy(alpha = 0.08f)
 

@@ -1,5 +1,10 @@
 package com.beatraxus.app.ui.components.dsp
 
+import com.beatraxus.app.ui.theme.BgGradBottom
+import com.beatraxus.app.ui.theme.BgGradTop
+import com.beatraxus.app.ui.theme.BgInk
+import com.beatraxus.app.ui.theme.BgPanel
+import com.beatraxus.app.ui.theme.BgPanelDeep
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.lerp
 import android.graphics.Shader
@@ -143,7 +148,7 @@ private val EqLineEnd get() = Pal.secondary
  */
 private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 24.dp): Modifier = this
     .clip(RoundedCornerShape(radius))
-    .background(Brush.verticalGradient(listOf(Color(0xFF0B1424).copy(alpha = 0.88f), Color(0xFF070B14).copy(alpha = 0.92f))))
+    .background(Brush.verticalGradient(listOf(BgPanel.copy(alpha = 0.88f), BgPanelDeep.copy(alpha = 0.92f))))
     .background(Brush.radialGradient(listOf(PremiumAccent.copy(alpha = 0.07f), Color.Transparent), radius = 700f))
     .border(
         1.dp,
@@ -157,7 +162,7 @@ private fun Modifier.dspPanel(radius: androidx.compose.ui.unit.Dp = 24.dp): Modi
  */
 private fun Modifier.dspSubPanel(): Modifier = this
     .clip(RoundedCornerShape(16.dp))
-    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+    .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
     .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
     .padding(12.dp)
 
@@ -191,7 +196,7 @@ private fun DspPageHeader(
 /** Pill button used for the Reverb preset picker and its quick actions (Surround's layout-button look). */
 private fun Modifier.dspPill(enabled: Boolean = true): Modifier = this
     .clip(RoundedCornerShape(50))
-    .background(Color(0xFF0B1424).copy(0.9f))
+    .background(BgPanel.copy(0.9f))
     .border(1.dp, Color.White.copy(if (enabled) 0.12f else 0.06f), RoundedCornerShape(50))
 
 /**
@@ -484,7 +489,7 @@ fun DspScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF0A0A0C), Color.Black)))
+            .background(Brush.verticalGradient(listOf(BgInk, Color.Black)))
     ) {
         // Faint palette glows only - the base stays neutral black so the screen sits with Settings, Library, Now Playing.
         Box(
@@ -525,7 +530,7 @@ fun DspScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF0A0A0C).copy(alpha = 0.55f))
+                        .background(BgInk.copy(alpha = 0.55f))
                         .windowInsetsPadding(WindowInsets.statusBars)
                         .padding(bottom = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
@@ -1935,7 +1940,7 @@ private fun PremiumGraphicCard(
                 .fillMaxWidth()
                 .height(170.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+                .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
                 .border(1.dp, Brush.verticalGradient(listOf(PremiumAccent.copy(0.30f), Color.White.copy(0.05f))), RoundedCornerShape(18.dp))
         ) {
             // dB scale on the left
@@ -2160,7 +2165,7 @@ private fun PremiumPreampSlider(
             .fillMaxWidth()
             .padding(horizontal = 6.dp, vertical = 4.dp)
             .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xFF050912).copy(alpha = 0.75f))
+            .background(BgGradTop.copy(alpha = 0.75f))
             .border(1.dp, Color.White.copy(0.07f), RoundedCornerShape(18.dp))
             .padding(horizontal = 14.dp, vertical = 10.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.4f }

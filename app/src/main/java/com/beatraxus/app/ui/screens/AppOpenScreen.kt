@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -144,7 +145,7 @@ fun AppOpenScreen(onFinished: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF07070D))
+            .background(bgTone(0xFF07070D))
             // Swallow touches so nothing underneath is tapped while this screen is up.
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

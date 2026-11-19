@@ -1,5 +1,11 @@
 package com.beatraxus.app.ui.components.dsp
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.BgGradBottom
+import com.beatraxus.app.ui.theme.BgGradTop
+import com.beatraxus.app.ui.theme.BgInk
+import com.beatraxus.app.ui.theme.BgPanel
+import com.beatraxus.app.ui.theme.BgPanelDeep
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -538,7 +544,7 @@ private fun StemFader(valueDb: Float, active: Boolean, color: Color, modifier: M
 
         // Recessed capsule track with scale ticks
         val capH = 14.dp.toPx()
-        drawRoundRect(Color(0xFF050912), Offset(0f, cy - capH / 2), Size(size.width, capH), CornerRadius(capH / 2))
+        drawRoundRect(BgGradTop, Offset(0f, cy - capH / 2), Size(size.width, capH), CornerRadius(capH / 2))
         drawRoundRect(Color.White.copy(0.08f), Offset(0f, cy - capH / 2), Size(size.width, capH), CornerRadius(capH / 2), style = Stroke(1.dp.toPx()))
         for (i in 0..4) {
             val tx = left + (right - left) * i / 4f
@@ -560,7 +566,7 @@ private fun StemFader(valueDb: Float, active: Boolean, color: Color, modifier: M
         val knobW = 16.dp.toPx()
         val knobH = 28.dp.toPx()
         drawRoundRect(
-            Brush.horizontalGradient(listOf(Color(0xFF6B7380), Color(0xFF3A404B), Color(0xFF1E222A)), thumbX - knobW / 2, thumbX + knobW / 2),
+            Brush.horizontalGradient(listOf(Color(0xFF6B7380), Color(0xFF3A404B), bgTone(0xFF1E222A)), thumbX - knobW / 2, thumbX + knobW / 2),
             Offset(thumbX - knobW / 2, cy - knobH / 2), Size(knobW, knobH), CornerRadius(7.dp.toPx())
         )
         drawLine(tint, Offset(thumbX, cy - knobH / 2 + 4.dp.toPx()), Offset(thumbX, cy + knobH / 2 - 4.dp.toPx()), 2.dp.toPx())
@@ -574,13 +580,13 @@ private fun StemToggle(label: String, description: String, on: Boolean, color: C
         modifier = Modifier
             .size(width = 44.dp, height = 40.dp)
             .clip(shape)
-            .background(if (on) color else Color(0xFF0B1424).copy(0.9f))
+            .background(if (on) color else BgPanel.copy(0.9f))
             .border(1.dp, if (on) color else Color.White.copy(0.12f), shape)
             .semantics { contentDescription = description }
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
     ) {
-        Text(label, color = if (on) Color(0xFF0A0A0C) else Color.White.copy(0.8f), fontSize = 13.sp, fontWeight = FontWeight.Black)
+        Text(label, color = if (on) BgInk else Color.White.copy(0.8f), fontSize = 13.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -599,7 +605,7 @@ private fun StemMixChip(name: String, selected: Boolean, accent: Color, modifier
             .height(38.dp)
             .then(if (selected) Modifier.shadow(8.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
             .clip(shape)
-            .background(if (selected) accent.copy(0.18f) else Color(0xFF0B1424).copy(0.9f))
+            .background(if (selected) accent.copy(0.18f) else BgPanel.copy(0.9f))
             .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(0.10f), shape)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -619,7 +625,7 @@ private fun StemActionButton(label: String, icon: ImageVector, accent: Color, on
         modifier = Modifier
             .height(36.dp)
             .clip(shape)
-            .background(Color(0xFF0B1424).copy(0.9f))
+            .background(BgPanel.copy(0.9f))
             .border(1.dp, Color.White.copy(0.12f), shape)
             .clickable(role = Role.Button, onClick = onClick)
             .padding(horizontal = 12.dp),
@@ -634,7 +640,7 @@ private fun StemActionButton(label: String, icon: ImageVector, accent: Color, on
 
 private fun Modifier.stemGlassPanel(primary: Color, secondary: Color, radius: androidx.compose.ui.unit.Dp): Modifier = this
     .clip(RoundedCornerShape(radius))
-    .background(Brush.verticalGradient(listOf(Color(0xFF0B1424).copy(alpha = 0.88f), Color(0xFF070B14).copy(alpha = 0.92f))))
+    .background(Brush.verticalGradient(listOf(BgPanel.copy(alpha = 0.88f), BgPanelDeep.copy(alpha = 0.92f))))
     .background(Brush.radialGradient(listOf(primary.copy(alpha = 0.07f), Color.Transparent), radius = 700f))
     .border(
         1.dp,
@@ -644,6 +650,6 @@ private fun Modifier.stemGlassPanel(primary: Color, secondary: Color, radius: an
 
 private fun Modifier.stemSubPanel(accent: Color): Modifier = this
     .clip(RoundedCornerShape(16.dp))
-    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+    .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
     .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
     .padding(12.dp)

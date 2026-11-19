@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -57,7 +58,7 @@ fun LanguagePickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1E1E),
+        containerColor = BgDialog,
         shape = RoundedCornerShape(16.dp),
         title = {
             Text("Select Subtitle Languages", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)

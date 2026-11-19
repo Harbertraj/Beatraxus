@@ -1,5 +1,10 @@
 package com.beatraxus.app.ui.components.dsp
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.BgGradBottom
+import com.beatraxus.app.ui.theme.BgGradTop
+import com.beatraxus.app.ui.theme.BgPanel
+import com.beatraxus.app.ui.theme.BgPanelDeep
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -390,7 +395,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+                    .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
                     .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -440,7 +445,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+                    .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
                     .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
                     .padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -613,8 +618,8 @@ private fun SurroundStageView(
     val bgInner: Color
     val bgOuter: Color
     when (look.surroundRoomTheme) {
-        "studio" -> { bgInner = Color(0xFF2B3340); bgOuter = Color(0xFF10141B) }
-        "living" -> { bgInner = Color(0xFF4A3322); bgOuter = Color(0xFF170E08) }
+        "studio" -> { bgInner = Color(0xFF2B3340); bgOuter = bgTone(0xFF10141B) }
+        "living" -> { bgInner = Color(0xFF4A3322); bgOuter = bgTone(0xFF170E08) }
         else -> { bgInner = lerp(Color.Black, pal.secondary, 0.20f); bgOuter = lerp(Color.Black, pal.primary, 0.04f) }
     }
 
@@ -634,7 +639,7 @@ private fun SurroundStageView(
             .fillMaxWidth()
             .aspectRatio(1.02f)
             .clip(shape)
-            .background(Color(0xFF07090D))
+            .background(bgTone(0xFF07090D))
             .border(1.dp, Brush.verticalGradient(listOf(glow.copy(0.40f), Color.White.copy(0.05f))), shape)
             .then(
                 if (move != null) {
@@ -689,7 +694,7 @@ private fun SurroundStageView(
             val me = Offset(cx, cy)
 
             // Room floor: a lit pool of the room theme, fading to black at the walls
-            drawRect(Brush.radialGradient(listOf(bgInner.copy(0.85f), bgOuter, Color(0xFF07090D)), me, wPx * 0.72f))
+            drawRect(Brush.radialGradient(listOf(bgInner.copy(0.85f), bgOuter, bgTone(0xFF07090D)), me, wPx * 0.72f))
 
             // Seating zone and the ring the speakers stand on (dashed)
             drawOval(
@@ -721,7 +726,7 @@ private fun SurroundStageView(
             // Listener: a soft sweet-spot halo and a top-down head that faces the screen
             val phase = if (look.surroundAnimated) (t * 0.6f) % 1f else 0.35f
             if (look.surroundShowScreen) drawCircle(glow.copy((1f - phase) * 0.26f * (0.4f + level)), (14f + phase * 30f) * k, me, style = Stroke(1.4f))
-            drawCircle(Color(0xFF10161F), 10f * k, me)
+            drawCircle(bgTone(0xFF10161F), 10f * k, me)
             drawCircle(glow.copy(0.9f), 10f * k, me, style = Stroke(1.8f * k))
             drawLine(glow.copy(0.9f), Offset(cx, cy - 10f * k), Offset(cx, cy - 15f * k), 2f * k)
 
@@ -905,7 +910,7 @@ private fun PositionPanel(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+            .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
             .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1035,7 +1040,7 @@ private fun UpmixLabPanel(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(Brush.verticalGradient(listOf(Color(0xFF050912), Color(0xFF0A1322))))
+            .background(Brush.verticalGradient(listOf(BgGradTop, BgGradBottom)))
             .border(1.dp, Brush.verticalGradient(listOf(accent.copy(0.28f), Color.White.copy(0.05f))), RoundedCornerShape(16.dp))
             .padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1140,7 +1145,7 @@ private fun DrawScope.drawSpeaker(
     if (channel == SurroundChannel.SW) {
         val s = 26f * k
         val tl = Offset(c.x - s / 2, c.y - s / 2)
-        drawRoundRect(Color(0xFF0E1118), tl, Size(s, s), CornerRadius(8f * k))
+        drawRoundRect(bgTone(0xFF0E1118), tl, Size(s, s), CornerRadius(8f * k))
         drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(s, s), CornerRadius(8f * k), style = Stroke(1.6f * k))
         drawCircle(color.copy(if (playing) 0.30f else 0.12f), s * 0.34f, c)
         drawCircle(color, s * 0.34f, c, style = Stroke(1.4f * k))
@@ -1151,7 +1156,7 @@ private fun DrawScope.drawSpeaker(
     val h = 16f * k
     rotate(angleDeg, c) {
         val tl = Offset(c.x - w / 2, c.y - h / 2)
-        drawRoundRect(Color(0xFF0E1118), tl, Size(w, h), CornerRadius(5f * k))
+        drawRoundRect(bgTone(0xFF0E1118), tl, Size(w, h), CornerRadius(5f * k))
         drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(w, h), CornerRadius(5f * k), style = Stroke(1.5f * k))
         // driver cone on the baffle that faces the listener (unrotated: the bottom half)
         val dc = Offset(c.x, c.y + 1.5f * k)
@@ -1195,7 +1200,7 @@ private fun DrawScope.drawVisualizer(style: String, color: Color, centre: Offset
 
 private fun Modifier.glassPanel(primary: Color, secondary: Color, radius: androidx.compose.ui.unit.Dp): Modifier = this
     .clip(RoundedCornerShape(radius))
-    .background(Brush.verticalGradient(listOf(Color(0xFF0B1424).copy(alpha = 0.88f), Color(0xFF070B14).copy(alpha = 0.92f))))
+    .background(Brush.verticalGradient(listOf(BgPanel.copy(alpha = 0.88f), BgPanelDeep.copy(alpha = 0.92f))))
     .background(Brush.radialGradient(listOf(primary.copy(alpha = 0.07f), Color.Transparent), radius = 700f))
     .border(
         1.dp,
@@ -1211,7 +1216,7 @@ internal fun LayoutButton(label: String, icon: ImageVector, selected: Boolean, a
             .height(46.dp)
             .then(if (selected) Modifier.shadow(10.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
             .clip(shape)
-            .background(if (selected) accent.copy(0.18f) else Color(0xFF0B1424).copy(0.9f))
+            .background(if (selected) accent.copy(0.18f) else BgPanel.copy(0.9f))
             .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(0.12f), shape)
             .clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically,
@@ -1231,7 +1236,7 @@ internal fun PresetChip(name: String, selected: Boolean, enabled: Boolean, accen
             .height(38.dp)
             .then(if (selected && enabled) Modifier.shadow(8.dp, shape, ambientColor = accent, spotColor = accent) else Modifier)
             .clip(shape)
-            .background(if (selected) accent.copy(0.18f) else Color(0xFF0B1424).copy(0.9f))
+            .background(if (selected) accent.copy(0.18f) else BgPanel.copy(0.9f))
             .border(if (selected) 1.5.dp else 1.dp, if (selected) accent else Color.White.copy(0.10f), shape)
             .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center
@@ -1306,7 +1311,7 @@ private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: 
 
         // Recessed capsule track with scale ticks
         val capW = 16.dp.toPx()
-        drawRoundRect(Color(0xFF050912), Offset(x - capW / 2, 0f), Size(capW, size.height), CornerRadius(capW / 2))
+        drawRoundRect(BgGradTop, Offset(x - capW / 2, 0f), Size(capW, size.height), CornerRadius(capW / 2))
         drawRoundRect(Color.White.copy(0.08f), Offset(x - capW / 2, 0f), Size(capW, size.height), CornerRadius(capW / 2), style = Stroke(1.dp.toPx()))
         for (i in 0..4) {
             val ty = top + (bottom - top) * i / 4f
@@ -1325,7 +1330,7 @@ private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: 
         val capH = 16.dp.toPx()
         val knobW = 28.dp.toPx()
         drawRoundRect(
-            Brush.verticalGradient(listOf(Color(0xFF6B7380), Color(0xFF3A404B), Color(0xFF1E222A)), thumbY - capH / 2, thumbY + capH / 2),
+            Brush.verticalGradient(listOf(Color(0xFF6B7380), Color(0xFF3A404B), bgTone(0xFF1E222A)), thumbY - capH / 2, thumbY + capH / 2),
             Offset(x - knobW / 2, thumbY - capH / 2), Size(knobW, capH), CornerRadius(7.dp.toPx())
         )
         drawRoundRect(tint.copy(0.8f), Offset(x - knobW / 2, thumbY - capH / 2), Size(knobW, capH), CornerRadius(7.dp.toPx()), style = Stroke(1.dp.toPx()))

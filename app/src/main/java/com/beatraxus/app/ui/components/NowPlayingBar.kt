@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.components
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -302,7 +303,7 @@ private fun NowPlayingBarBackground(
     appearance: AppearanceConfig,
     dominantColor: Color
 ) {
-    Box(Modifier.fillMaxSize().background(Color(0xFF101014))) {
+    Box(Modifier.fillMaxSize().background(bgTone(0xFF101014))) {
         when (appearance.miniPlayerBackgroundMode) {
             NowPlayingBackgroundMode.BLACK -> Unit
 

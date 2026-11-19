@@ -200,7 +200,7 @@ fun SongOptionsSheet(
                 Spacer(Modifier.height(8.dp))
 
                 // Options Grid
-                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive, showDlnaOption, onHide != null) {
+                val options = remember(showPlayNext, showMark, song.id, abLoopLabel, abLoopActive, showDlnaOption, onHide != null, AccentBlue) {
                     buildList {
                         add(OptionItem(Icons.AutoMirrored.Rounded.PlaylistAdd, "Playlist", onAddToPlaylist))
                         if (showPlayNext) {

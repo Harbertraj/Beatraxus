@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,7 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.beatraxus.app.ui.theme.Icon
 
-private val OttBg = Color(0xFF0B0B0F)
+private val OttBg: Color get() = bgTone(0xFF0B0B0F)
 private val OttAccent = Color(0xFFFF8A00)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -108,7 +109,7 @@ fun OttHomeScreen(addon: StremioAddon, playerViewModel: PlayerViewModel, onBack:
     }
 
     selected?.let { t ->
-        ModalBottomSheet(onDismissRequest = { selected = null }, containerColor = Color(0xFF15151C)) {
+        ModalBottomSheet(onDismissRequest = { selected = null }, containerColor = bgTone(0xFF15151C)) {
             DetailSheet(addon, t) { stream, vid, title ->
                 scope.launch {
                     selected = null
@@ -144,7 +145,7 @@ private fun Hero(t: OttTitle, onOpen: () -> Unit) {
 @Composable
 private fun Poster(t: OttTitle, onClick: () -> Unit) {
     Column(Modifier.width(112.dp).clickable(onClick = onClick)) {
-        AsyncImage(t.poster, t.name, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(Color(0xFF22222B)), contentScale = ContentScale.Crop)
+        AsyncImage(t.poster, t.name, Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(bgTone(0xFF22222B)), contentScale = ContentScale.Crop)
         Text(t.name, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
     }
 }
@@ -152,7 +153,7 @@ private fun Poster(t: OttTitle, onClick: () -> Unit) {
 @Composable
 private fun SearchRow(t: OttTitle, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick), verticalAlignment = Alignment.CenterVertically) {
-        AsyncImage(t.poster, null, Modifier.width(56.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(Color(0xFF22222B)), contentScale = ContentScale.Crop)
+        AsyncImage(t.poster, null, Modifier.width(56.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(8.dp)).background(bgTone(0xFF22222B)), contentScale = ContentScale.Crop)
         Column(Modifier.padding(start = 12.dp)) {
             Text(t.name, color = Color.White, fontWeight = FontWeight.SemiBold)
             Text(listOfNotNull(t.type.replaceFirstChar { it.uppercase() }, t.year).joinToString(" · "), color = Color.White.copy(0.6f), fontSize = 12.sp)
@@ -197,7 +198,7 @@ private fun DetailSheet(addon: StremioAddon, t: OttTitle, onPlay: (OttStream, St
             }
             items(d.episodes.filter { it.season == season }) { ep ->
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { scope.launch { loadStreams(ep.id, "${t.name} S${ep.season}E${ep.episode}") } }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(ep.thumbnail, null, Modifier.width(96.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(Color(0xFF22222B)), contentScale = ContentScale.Crop)
+                    AsyncImage(ep.thumbnail, null, Modifier.width(96.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(6.dp)).background(bgTone(0xFF22222B)), contentScale = ContentScale.Crop)
                     Text("${ep.episode}. ${ep.title}", color = Color.White, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 10.dp))
                 }
             }
@@ -209,7 +210,7 @@ private fun DetailSheet(addon: StremioAddon, t: OttTitle, onPlay: (OttStream, St
                 s == null -> item { CircularProgressIndicator(color = OttAccent, modifier = Modifier.size(24.dp)) }
                 s.isEmpty() -> item { Text("No directly playable streams from this addon for this title.", color = Color.White.copy(0.6f), fontSize = 13.sp) }
                 else -> items(s) { st ->
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Color(0xFF22222B)).clickable { onPlay(st, streamsFor!!, streamTitle) }.padding(12.dp)) {
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(bgTone(0xFF22222B)).clickable { onPlay(st, streamsFor!!, streamTitle) }.padding(12.dp)) {
                         Text(st.label, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         if (st.detail.isNotBlank()) Text(st.detail, color = Color.White.copy(0.6f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     }

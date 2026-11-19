@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.minimal
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.net.Uri
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -98,9 +99,9 @@ const val MINIMAL_THEME_ID = "minimal"
 
 internal val MinPink = Color(0xFFFF4D9D)
 internal val MinViolet = Color(0xFF9B5CF6)
-internal val MinBg = Color(0xFF0A0A12)
-internal val MinCard = Color(0xFF1A1A24)
-internal val MinChip = Color(0xFF1C1C26)
+internal val MinBg: Color get() = bgTone(0xFF0A0A12)
+internal val MinCard: Color get() = bgTone(0xFF1A1A24)
+internal val MinChip: Color get() = bgTone(0xFF1C1C26)
 internal val MinMuted = Color(0xFFA9A7B8)
 internal val MinGold = Color(0xFFFFC83D)
 internal val MinCyan = Color(0xFF22D3EE)
@@ -923,7 +924,7 @@ fun MinimalDrawerMenu(
     Column(
         Modifier
             .fillMaxSize()
-            .background(Brush.verticalGradient(listOf(Color(0xFF3A2064), Color(0xFF14102A), MinBg)))
+            .background(Brush.verticalGradient(listOf(Color(0xFF3A2064), bgTone(0xFF14102A), MinBg)))
             .statusBarsPadding()
             .navigationBarsPadding()
             .padding(horizontal = 14.dp, vertical = 12.dp)
@@ -1283,7 +1284,7 @@ private fun JumpBackInCard(song: Song, onClick: () -> Unit) {
         Box(Modifier.align(Alignment.CenterEnd).offset(x = 70.dp).size(250.dp), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val r = size.minDimension / 2f
-                drawCircle(Color(0xFF14121B), radius = r)
+                drawCircle(bgTone(0xFF14121B), radius = r)
                 var ring = r * 0.93f
                 while (ring > r * 0.45f) {
                     drawCircle(Color.White.copy(alpha = 0.06f), radius = ring, style = Stroke(width = 1.5f))

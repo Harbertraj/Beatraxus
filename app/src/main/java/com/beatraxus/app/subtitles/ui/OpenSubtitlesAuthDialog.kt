@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,7 +44,7 @@ fun OpenSubtitlesAuthDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1E1E),
+        containerColor = BgDialog,
         shape = RoundedCornerShape(16.dp),
         title = {
             Text("OpenSubtitles Account", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)

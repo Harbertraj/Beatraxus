@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "id": "vinyl-lounge",
+  "name": "Vinyl Lounge",
+  "author": "Beatraxus",
+  "version": 1,
+  "mode": "dark",
+  "colors": {
+    "accent": "#E8913A",
+    "accentSecondary": "#C8553D",
+    "preview": ["#17100C", "#261A14", "#E8913A", "#C8553D"],
+    "background": "#17100C",
+    "surface": "#261A14",
+    "text": "#F6EBDD"
+  },
+  "dsp": { "primary": "#E8913A", "secondary": "#C8553D" },
+  "seekbar": "WAVY_GLASS",
+  "font": "playfair_display",
+  "background": {
+    "mode": "BLUR",
+    "blurScale": 1.0,
+    "blurDarkness": 0.5,
+    "solidIntensity": 0.6,
+    "solidDarkness": 0.4
+  },
+  "shape": { "cornerScale": 1.8 },
+  "player": {
+    "albumArt": "DEPTH",
+    "qualityBadge": "GOLDEN_SHIMMER",
+    "miniStyle": "PILL",
+    "miniHeight": 68,
+    "miniCorner": 34,
+    "miniArtCorner": 34,
+    "miniProgressRing": true,
+    "miniShowTime": false,
+    "miniTintFromArt": true
+  },
+  "surround": {
+    "room": "living",
+    "visualizer": "circle"
+  },
+  "icons": {
+    "color": "#F6EBDD",
+    "scale": 1.05
+  }
+}

@@ -1,5 +1,6 @@
 package com.beatraxus.app.subtitles.ui
 
+import com.beatraxus.app.ui.theme.BgDialog
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -128,7 +129,7 @@ fun SubtitlePlayerSheetSection(
     deleteCandidate?.let { entry ->
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
-            containerColor = Color(0xFF1E1E1E),
+            containerColor = BgDialog,
             shape = RoundedCornerShape(16.dp),
             title = { Text("Delete subtitle?", color = Color.White, fontWeight = FontWeight.Bold) },
             text = {

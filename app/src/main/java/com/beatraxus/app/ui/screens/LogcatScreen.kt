@@ -1,5 +1,7 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
+import com.beatraxus.app.ui.theme.PremiumTeal
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
@@ -172,8 +174,8 @@ object LogcatReader {
     val ALL_LEVELS: Set<Char> = setOf('V', 'D', 'I', 'W', 'E')
 }
 
-private val LogBg = Color(0xFF0B0B10)
-private val LogAccent = Color(0xFF00C2A8)
+private val LogBg: Color get() = bgTone(0xFF0B0B10)
+private val LogAccent: Color get() = PremiumTeal
 private val LogText = Color(0xFFF4F6F8)
 
 private fun levelColor(level: Char?): Color = when (level) {

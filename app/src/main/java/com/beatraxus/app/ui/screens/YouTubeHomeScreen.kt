@@ -1,5 +1,6 @@
 package com.beatraxus.app.ui.screens
 
+import com.beatraxus.app.ui.theme.bgTone
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.Context
@@ -64,9 +65,9 @@ import com.beatraxus.app.addons.ottCatching
 import com.beatraxus.app.viewmodel.PlayerViewModel
 import com.beatraxus.app.ui.theme.Icon
 
-private val YtBg = Color(0xFF0F0F0F)
+private val YtBg: Color get() = bgTone(0xFF0F0F0F)
 private val YtRed = Color(0xFFFF0000)
-private val YtChip = Color(0xFF272727)
+private val YtChip: Color get() = bgTone(0xFF272727)
 private val YtSub = Color(0xFFAAAAAA)
 
 private val ytCategories = listOf(
