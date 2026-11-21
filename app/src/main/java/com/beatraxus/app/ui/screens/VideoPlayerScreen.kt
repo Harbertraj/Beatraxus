@@ -169,9 +169,13 @@ fun VideoPlayerScreen(
                 if (uiState.isPlaying && !uiState.isBackgroundPlayEnabled && !isInPiP && !isReconfiguring && uiState.castDeviceName == null) {
                     viewModel.togglePlayPause()
                 }
+            } else if (event == Lifecycle.Event.ON_START) {
+                // Coming back to the player (app switch, screen on): bring the viewer's own brightness back.
+                applySavedPlayerBrightness(context, activity?.window)
             } else if (event == Lifecycle.Event.ON_STOP) {
                 if (!isReconfiguring && !isInPiP) {
                     activity?.window?.let { window ->
+                        savePlayerBrightness(context, window)
                         val layoutParams = window.attributes
                         layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                         window.attributes = layoutParams
@@ -326,6 +330,8 @@ fun VideoPlayerScreen(
             controller.hide(WindowInsetsCompat.Type.systemBars())
             controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
             if (playerOptions.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            // The brightness the viewer last set in the player is used again; the system value returns on exit.
+            applySavedPlayerBrightness(context, window)
         }
 
         onDispose {
@@ -337,7 +343,8 @@ fun VideoPlayerScreen(
                 controller.show(WindowInsetsCompat.Type.systemBars())
                 controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_DEFAULT
                 window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                
+
+                savePlayerBrightness(context, window)
                 val layoutParams = window.attributes
                 layoutParams.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
                 window.attributes = layoutParams
@@ -1181,6 +1188,26 @@ fun VideoPlayerScreen(
 //  Video player UI  —  "Amber Glass" look
 //  UI only: every callback, state read and gesture is unchanged.
 // ─────────────────────────────────────────────────────────────────────────────
+private const val PREF_PLAYER_BRIGHTNESS = "video_player_brightness"
+
+/** Remembers the brightness the viewer set with the swipe gesture (only when the window has its own value). */
+private fun savePlayerBrightness(context: android.content.Context, window: android.view.Window?) {
+    val brightness = window?.attributes?.screenBrightness ?: return
+    if (brightness >= 0f) {
+        VideoPlayerPrefs.prefs(context).edit().putFloat(PREF_PLAYER_BRIGHTNESS, brightness).apply()
+    }
+}
+
+/** Puts the remembered player brightness on the window; does nothing if the viewer never changed it. */
+private fun applySavedPlayerBrightness(context: android.content.Context, window: android.view.Window?) {
+    if (window == null) return
+    val saved = VideoPlayerPrefs.prefs(context).getFloat(PREF_PLAYER_BRIGHTNESS, -1f)
+    if (saved < 0f) return
+    val params = window.attributes
+    params.screenBrightness = saved.coerceIn(0.01f, 1f)
+    window.attributes = params
+}
+
 private val VpAmber: Color get() = themeAccentOr(Color(0xFFFF8F00))
 private val VpAmberSoft: Color get() = themeAccentSoftOr(Color(0xFFFFB347))
 

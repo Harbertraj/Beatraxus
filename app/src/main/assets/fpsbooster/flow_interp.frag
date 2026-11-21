@@ -97,6 +97,9 @@ const float RISK_LO = 0.03;
 const float RISK_HI = 0.12;
 #endif
 const float AI_MIN_WEIGHT = 0.02;     // a candidate with less weight than this is not fetched at all
+// Hand-tuned path only: minimum weight of a warp for a pixel that moves against the picture's dominant motion (a walking
+// person in a static shot). Plateau 0.35..0.40 on real pedestrian footage; 0.2 does nothing, 0.5 and above starts to smear.
+const float SUBJECT_TRUST_FLOOR = 0.38;
 
 // Bilinear fetch of a flow field with the VECTOR weighted by how trustworthy each of the 4 neighbouring blocks
 // is. Plain bilinear blends the vectors of two different objects at a motion edge into a third vector that
@@ -455,6 +458,18 @@ void main() {
                * (1.0 - smoothstep(0.25, 0.50, b.b))
                * (1.0 - smoothstep(1.0 * sb, 3.5 * sb, length(b.xy - b0.xy)));
 
+      // A subject moving against the dominant (camera) motion keeps a minimum trust in its own vectors. Without it a
+      // moving person whose vectors fail the strict checks above is drawn as a double exposure (cross-fade of both
+      // frames), with speckled holes where single pixels pass the checks and their neighbours do not. Measured on real
+      // pedestrian footage (tools/fpsbooster_harness, vtest.avi): +1.0 dB and about 3x less tearing in the moving regions.
+      // Off on rigid camera pans: per-pixel vectors are unreliable at very large motion and the dominant-motion
+      // fill-in below handles those pans exactly (check_regression.py "interior pan 140/200/60,30" guards this).
+      vec4 gDom = texelFetch(uGlobal, ivec2(0), 0);
+      vec2 gRef = gDom.xy * smoothstep(GLOBAL_MIN_SHARE, GLOBAL_MIN_SHARE + 0.25, gDom.z);
+      float subjMove = smoothstep(0.8, 2.5, max(length(f0.xy - gRef), length(b0.xy + gRef)));
+      subjMove *= 1.0 - smoothstep(0.50, 0.75, gDom.z) * smoothstep(2.0, 6.0, length(gDom.xy));
+      wf = max(wf, SUBJECT_TRUST_FLOOR * subjMove);
+      wb = max(wb, SUBJECT_TRUST_FLOOR * subjMove);
       // Averaging two resampled frames (A and B) blurs anything the flow did not match to the pixel. With uSharp
       // the colour comes from ONE frame, the one nearer in time, resampled bicubically; fa/fb/ba/bb above are only
       // used for the trust checks.

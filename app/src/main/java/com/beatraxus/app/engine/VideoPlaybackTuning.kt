@@ -32,6 +32,14 @@ class VideoPlaybackTuning(
     var decoderMode: VideoDecoderMode = decoderMode
 
     /**
+     * Names of video decoders that failed while decoding in this player session (for example a vendor HEVC
+     * decoder that cannot handle a 4K 10-bit Dolby Vision stream). They are skipped when the next codec is
+     * created so playback can continue on another decoder. Never saved; cleared when the player is rebuilt.
+     */
+    @Volatile
+    var blockedVideoDecoders: Set<String> = emptySet()
+
+    /**
      * Audio delay in milliseconds. Positive values play the audio later than the video,
      * negative values play it earlier.
      */

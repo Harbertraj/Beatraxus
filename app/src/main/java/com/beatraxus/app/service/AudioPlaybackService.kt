@@ -194,8 +194,24 @@ class AudioPlaybackService : Service() {
             isActive = true
         }
 
-        // Call startForeground ASAP to satisfy the system 5s timeout
-        startForeground(NOTIFICATION_ID, createNotification())
+        // Call startForeground ASAP to satisfy the system 5s timeout. Declare only the mediaPlayback type:
+        // dataSync has a time limit on Android 15+ (the system then calls onTimeout() and crashes the app
+        // if the service does not stop), and music playback must run for as long as the user listens.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification(),
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification())
+            }
+        } catch (e: Exception) {
+            // e.g. ForegroundServiceStartNotAllowedException. Stay alive as a bound service instead of
+            // taking the whole app down; the notification is retried on the next playback command.
+            Log.e(TAG, "startForeground failed", e)
+        }
 
         // 2. Heavy initializations happen AFTER the service is foregrounded
         val prefs = getSharedPreferences("beatraxus", Context.MODE_PRIVATE)
@@ -2448,6 +2464,15 @@ class AudioPlaybackService : Service() {
         }
 
         super.onTaskRemoved(rootIntent)
+    }
+
+    /** Android 15+: called when a time limited foreground service type (dataSync, mediaProcessing) runs out. */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timeout for type $fgsType; stopping foreground state")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+        stopSelf(startId)
     }
 
     override fun onDestroy() {

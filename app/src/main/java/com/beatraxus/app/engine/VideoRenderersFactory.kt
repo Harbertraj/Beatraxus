@@ -48,7 +48,16 @@ class VideoRenderersFactory(
             val decoderInfos = mediaCodecSelector.getDecoderInfos(
                 mimeType, requiresSecureDecoder, requiresTunnelingDecoder
             )
-            if (MimeTypes.isVideo(mimeType)) applyDecoderMode(decoderInfos, tuning.decoderMode) else decoderInfos
+            if (MimeTypes.isVideo(mimeType)) {
+                // Drop decoders that already crashed on this stream, so the retry lands on the next one
+                // (e.g. the software HEVC decoder). ExoPlayer's own decoder fallback only covers codec
+                // creation failures, not a codec that dies after it started.
+                val blocked = tuning.blockedVideoDecoders
+                val usable = if (blocked.isEmpty()) decoderInfos else decoderInfos.filter { it.name !in blocked }
+                applyDecoderMode(usable, tuning.decoderMode)
+            } else {
+                decoderInfos
+            }
         }
         super.buildVideoRenderers(
             context,

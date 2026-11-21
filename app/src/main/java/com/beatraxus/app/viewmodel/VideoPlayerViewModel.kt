@@ -454,7 +454,27 @@ class VideoPlayerViewModel(
         subtitlePositionPreset = SubtitlePositionPreset.entries.find {
             it.name == application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getString("video_subtitle_pos_preset", SubtitlePositionPreset.BOTTOM.name)
         } ?: SubtitlePositionPreset.BOTTOM,
-        subtitleSizePercent = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_size_percent", 100)
+        subtitleSizePercent = application.getSharedPreferences("beatraxus", Application.MODE_PRIVATE).getInt("video_subtitle_size_percent", 100),
+        // Player settings that are remembered for the next time the player opens (volume is deliberately not one).
+        colorBrightness = prefs.getFloat(KEY_COLOR_BRIGHTNESS, 0f).coerceIn(-1f, 1f),
+        colorContrast = prefs.getFloat(KEY_COLOR_CONTRAST, 1f).coerceIn(0f, 2f),
+        colorSaturation = prefs.getFloat(KEY_COLOR_SATURATION, 1f).coerceIn(0f, 2f),
+        colorGamma = prefs.getFloat(KEY_COLOR_GAMMA, 1f).coerceIn(0.5f, 2f),
+        colorHue = prefs.getFloat(KEY_COLOR_HUE, 0f).coerceIn(-180f, 180f),
+        colorTemperature = prefs.getFloat(KEY_COLOR_TEMPERATURE, 0f).coerceIn(-1f, 1f),
+        colorSharpness = prefs.getFloat(KEY_COLOR_SHARPNESS, 0f).coerceIn(0f, 1f),
+        forceSdrToneMapping = prefs.getBoolean(KEY_FORCE_SDR, false),
+        videoOrientation = VideoOrientation(
+            quarterTurns = prefs.getInt(KEY_ORIENT_TURNS, 0),
+            flipHorizontal = prefs.getBoolean(KEY_ORIENT_FLIP_H, false),
+            flipVertical = prefs.getBoolean(KEY_ORIENT_FLIP_V, false)
+        ),
+        isBackgroundPlayEnabled = prefs.getBoolean(KEY_BACKGROUND_PLAY, false),
+        surroundSimulatorEnabled = prefs.getBoolean(KEY_SURROUND_SIMULATOR, false),
+        eqGains = prefs.getString(KEY_EQ_GAINS, null)
+            ?.split(',')?.mapNotNull { it.toFloatOrNull() }
+            ?.takeIf { it.size == 10 } ?: List(10) { 0f },
+        selectedPreset = prefs.getString(KEY_EQ_PRESET, null) ?: "Manual"
     ))
     val uiState: StateFlow<VideoPlayerUiState> = _uiState.asStateFlow()
 
@@ -735,8 +755,9 @@ class VideoPlayerViewModel(
                             else -> ratioName
                         }
                         VideoAspectRatio.entries.find { it.name == mappedName }
-                    } ?: VideoAspectRatio.FIT
-                    
+                        // A video never played before opens with the shape the viewer used last.
+                    } ?: withContext(Dispatchers.Main) { _uiState.value.aspectRatio }
+
                     val lastAudio = recentlyPlayed?.lastAudioTrackIndex ?: -1
                     val lastSubtitle = recentlyPlayed?.lastSubtitleTrackIndex ?: -1
 
@@ -823,6 +844,8 @@ class VideoPlayerViewModel(
                     reportStreamedVideoMetadata(player)
                     updateTracks()
                     setupLoudnessEnhancer(player.audioSessionId)
+                    finishEngineReroute(player)
+                    restoreSavedAudioRoute()
                 } else if (playbackState == Player.STATE_ENDED) {
                     if (_uiState.value.sleepTimerMode == SleepTimerMode.END_OF_VIDEO) {
                         player.pause()
@@ -837,6 +860,9 @@ class VideoPlayerViewModel(
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                // A video decoder that dies mid-stream (4K HEVC / Dolby Vision on some MediaTek chips)
+                // leaves playback stuck. Block that decoder and restart on the next one.
+                if (retryOnAnotherVideoDecoder(player, error)) return
                 // Only Live TV gets special handling; every other video behaves exactly as before.
                 val live = _uiState.value.currentVideo
                     ?.takeIf { it.source == com.beatraxus.app.model.VideoSource.LIVE_TV } ?: return
@@ -934,6 +960,8 @@ class VideoPlayerViewModel(
             }
             // Audio delay is tuned per file, so a new video starts back in sync.
             if (tuning.audioDelayMs != 0) setAudioDelayMs(0)
+            // The engine route plays one specific file: a new video (Up next, next, previous) needs it restarted.
+            if (_uiState.value.routeAudioToEngine && video != null) rerouteEngineForNewVideo()
             video?.let { v ->
                 // Putting the viewer's saved subtitle back on a video (and clearing a stale one) is done in one place only,
                 // SubtitleViewModel.onVideoChanged. It looks the subtitles up under the video's content-hash key; this class
@@ -1342,6 +1370,53 @@ class VideoPlayerViewModel(
         player.playWhenReady = resumePlayback
     }
 
+    private var decoderRetryMediaId: String? = null
+    private var decoderRetryCount = 0
+
+    /**
+     * Handles a video decoder failure by blocking the decoder that failed and preparing the player again at
+     * the same position. Returns true when a retry was started. Gives up after [MAX_DECODER_RETRIES] tries
+     * per video so a stream no decoder can play still ends in the normal error state.
+     */
+    private fun retryOnAnotherVideoDecoder(
+        player: ExoPlayer,
+        error: androidx.media3.common.PlaybackException
+    ): Boolean {
+        val isDecoderError = error.errorCode ==
+            androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED
+        if (!isDecoderError) return false
+        val rendererFormat = (error as? androidx.media3.exoplayer.ExoPlaybackException)
+            ?.takeIf { it.type == androidx.media3.exoplayer.ExoPlaybackException.TYPE_RENDERER }
+            ?.rendererFormat
+        if (rendererFormat == null || !androidx.media3.common.MimeTypes.isVideo(rendererFormat.sampleMimeType)) {
+            return false
+        }
+        val failed = generateSequence<Throwable>(error) { it.cause }
+            .filterIsInstance<androidx.media3.exoplayer.mediacodec.MediaCodecDecoderException>()
+            .firstOrNull()?.codecInfo?.name
+            ?: generateSequence<Throwable>(error) { it.cause }
+                .filterIsInstance<androidx.media3.exoplayer.mediacodec.MediaCodecRenderer.DecoderInitializationException>()
+                .firstOrNull()?.codecInfo?.name
+            ?: return false
+
+        val mediaId = player.currentMediaItem?.mediaId
+        if (mediaId != decoderRetryMediaId) {
+            decoderRetryMediaId = mediaId
+            decoderRetryCount = 0
+        }
+        if (decoderRetryCount >= MAX_DECODER_RETRIES) return false
+        decoderRetryCount++
+
+        Log.w(TAG, "Video decoder $failed failed (${error.errorCodeName}); retrying on another decoder")
+        tuning.blockedVideoDecoders = tuning.blockedVideoDecoders + failed
+        val positionMs = (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
+        player.seekTo(player.currentMediaItemIndex, positionMs)
+        player.prepare()
+        player.playWhenReady = true
+        return true
+    }
+
     /** Switches to the next decoder mode (HW -> HW+ -> SW -> HW) and returns it. */
     fun cycleVideoDecoderMode(): VideoDecoderMode {
         val modes = VideoDecoderMode.entries
@@ -1414,10 +1489,16 @@ class VideoPlayerViewModel(
     private fun changeVideoOrientation(change: (VideoOrientation) -> VideoOrientation) {
         val next = change(_uiState.value.videoOrientation)
         _uiState.update { it.copy(videoOrientation = next, aspectRatioMessage = next.describe()) }
+        prefs.edit()
+            .putInt(KEY_ORIENT_TURNS, next.turns)
+            .putBoolean(KEY_ORIENT_FLIP_H, next.flipHorizontal)
+            .putBoolean(KEY_ORIENT_FLIP_V, next.flipVertical)
+            .apply()
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
 
     fun setAspectRatio(ratio: VideoAspectRatio) {
+        prefs.edit().putString(KEY_ASPECT_RATIO, ratio.name).apply()
         _uiState.update { it.copy(aspectRatio = ratio, aspectRatioMessage = ratio.displayName) }
         viewModelScope.launch { delay(2000); _uiState.update { it.copy(aspectRatioMessage = null) } }
     }
@@ -1906,6 +1987,8 @@ class VideoPlayerViewModel(
      * OFF: routing stops, except that a simulator that is still ON keeps working on the soundtrack alone.
      */
     fun setAudioMode(enabled: Boolean) {
+        // Only the viewer's own switch is remembered; internal stops (errors, speed change, cast) are not.
+        prefs.edit().putBoolean(KEY_AUDIO_MODE, enabled).apply()
         val state = _uiState.value
         when {
             enabled -> setEngineRoute(true, surroundEngine = false)
@@ -2080,6 +2163,7 @@ class VideoPlayerViewModel(
     fun setSurroundSimulatorEnabled(enabled: Boolean) {
         val state = _uiState.value
         if (state.isConnectingEngineRoute) return
+        prefs.edit().putBoolean(KEY_SURROUND_SIMULATOR, enabled).apply()
         _uiState.update { it.copy(surroundSimulatorEnabled = enabled) }
         when {
             state.routeAudioToEngine && !state.surroundEngineRoute ->
@@ -2087,6 +2171,49 @@ class VideoPlayerViewModel(
             enabled -> setEngineRoute(true, surroundEngine = true)
             state.surroundEngineRoute -> setEngineRoute(false, surroundEngine = true)
         }
+    }
+
+    private var audioRouteRestoreDone = false
+    private var pendingEngineReroute = false
+
+    /**
+     * Puts "Connect to audio mode" / the surround simulator back the way the viewer left them, once, when the first
+     * video of the session is ready (its audio tracks are known by then). Routes the engine can't serve (cloud
+     * video, an added audio file, a speed other than 1x) are skipped quietly instead of showing an error.
+     */
+    private fun restoreSavedAudioRoute() {
+        if (audioRouteRestoreDone) return
+        audioRouteRestoreDone = true
+        val wantAudioMode = prefs.getBoolean(KEY_AUDIO_MODE, false)
+        val wantSurround = prefs.getBoolean(KEY_SURROUND_SIMULATOR, false)
+        if (!wantAudioMode && !wantSurround) return
+        val state = _uiState.value
+        if (state.routeAudioToEngine || state.isConnectingEngineRoute || state.castDeviceName != null) return
+        if (state.currentVideo?.isCloud == true || state.availableAudioTracks.isEmpty()) return
+        if (state.availableAudioTracks.any { it.isExternal && it.isSelected }) return
+        if (state.playbackSpeed != 1.0f) return
+        _uiState.update { it.copy(surroundSimulatorEnabled = wantSurround) }
+        setEngineRoute(true, surroundEngine = !wantAudioMode)
+    }
+
+    /** The queue moved to another video while the Audio Engine route runs: it must follow to the new file. */
+    private fun rerouteEngineForNewVideo() {
+        pendingEngineReroute = true
+        // Stop the old file's sound right away; the route is started again for the new video once its tracks are known.
+        VideoAudioBridge.getAudioEngine()?.stopVideoAudio()
+    }
+
+    private fun finishEngineReroute(player: ExoPlayer) {
+        if (!pendingEngineReroute) return
+        pendingEngineReroute = false
+        val state = _uiState.value
+        if (!state.routeAudioToEngine) return
+        val engine = VideoAudioBridge.getAudioEngine()
+        if (engine == null || state.currentVideo?.isCloud == true || state.availableAudioTracks.isEmpty()) {
+            setRouteAudioToEngine(false)
+            return
+        }
+        startEngineRouting(engine, resumeAfter = player.playWhenReady)
     }
 
     fun setSurroundLayout(layout: SurroundLayout) = applySurroundConfig { it.copy(surroundLayout = layout) }
@@ -2107,7 +2234,7 @@ class VideoPlayerViewModel(
         )
     }
 
-    private fun startEngineRouting(engine: AudioEngine) {
+    private fun startEngineRouting(engine: AudioEngine, resumeAfter: Boolean? = null) {
         val player = exoPlayer ?: run {
             _uiState.update { it.copy(routeAudioToEngine = false, isConnectingEngineRoute = false, surroundEngineRoute = false) }
             return
@@ -2144,8 +2271,8 @@ class VideoPlayerViewModel(
             .build()
 
         val currentPosMs = player.currentPosition
-        val wasPlaying = player.isPlaying
-        if (wasPlaying) {
+        val wasPlaying = resumeAfter ?: player.isPlaying
+        if (player.isPlaying) {
             player.pause()
         }
 
@@ -2364,7 +2491,10 @@ class VideoPlayerViewModel(
         if (index < 0) return
         exoPlayer?.let {
             if (index >= it.mediaItemCount) return
+            // A player that stopped (ended, or stopped after an error) must be prepared again, or the tap does nothing.
+            if (it.playbackState == Player.STATE_IDLE) it.prepare()
             it.seekTo(index, 0L)
+            it.playWhenReady = true
             if (_uiState.value.castDeviceName != null) castCurrentVideo() else it.play()
         }
     }
@@ -2494,7 +2624,8 @@ class VideoPlayerViewModel(
     fun toggleTimeDisplay() {
         _uiState.update { 
             val next = !it.showTotalTime
-            it.copy(showTotalTime = next) 
+            prefs.edit().putBoolean(KEY_SHOW_REMAINING, next).apply()
+            it.copy(showTotalTime = next)
         }
     }
 
@@ -2511,7 +2642,16 @@ class VideoPlayerViewModel(
             val newGains = s.eqGains.toMutableList().apply { this[band] = gain }
             s.copy(eqGains = newGains, selectedPreset = "Manual")
         }
+        persistEq()
         applyEqGains()
+    }
+
+    private fun persistEq() {
+        val s = _uiState.value
+        prefs.edit()
+            .putString(KEY_EQ_GAINS, s.eqGains.joinToString(","))
+            .putString(KEY_EQ_PRESET, s.selectedPreset)
+            .apply()
     }
 
     fun setEqPreset(preset: SavedEqPreset) {
@@ -2520,6 +2660,7 @@ class VideoPlayerViewModel(
         if (_uiState.value.routeAudioToEngine || _uiState.value.isConnectingEngineRoute) return
         prefs.edit().putBoolean("video_eq_enabled", true).apply()
         _uiState.update { it.copy(eqGains = newGains, selectedPreset = preset.name, isEqEnabled = true) }
+        persistEq()
         applyEqGains()
     }
 
@@ -2637,7 +2778,11 @@ class VideoPlayerViewModel(
         _uiState.update { it.copy(orientation = next) }
     }
 
-    fun toggleBackgroundPlay() = _uiState.update { it.copy(isBackgroundPlayEnabled = !it.isBackgroundPlayEnabled) }
+    fun toggleBackgroundPlay() {
+        val next = !_uiState.value.isBackgroundPlayEnabled
+        prefs.edit().putBoolean(KEY_BACKGROUND_PLAY, next).apply()
+        _uiState.update { it.copy(isBackgroundPlayEnabled = next) }
+    }
 
     fun skipIntro() {
         cachedIntroRange?.let { range ->
@@ -2720,7 +2865,21 @@ class VideoPlayerViewModel(
             colorContrast = contrast,
             colorSaturation = saturation
         ) }
+        persistColorGrade()
         updateVideoEffects()
+    }
+
+    private fun persistColorGrade() {
+        val s = _uiState.value
+        prefs.edit()
+            .putFloat(KEY_COLOR_BRIGHTNESS, s.colorBrightness)
+            .putFloat(KEY_COLOR_CONTRAST, s.colorContrast)
+            .putFloat(KEY_COLOR_SATURATION, s.colorSaturation)
+            .putFloat(KEY_COLOR_GAMMA, s.colorGamma)
+            .putFloat(KEY_COLOR_HUE, s.colorHue)
+            .putFloat(KEY_COLOR_TEMPERATURE, s.colorTemperature)
+            .putFloat(KEY_COLOR_SHARPNESS, s.colorSharpness)
+            .apply()
     }
 
     fun resetColorGrading() {
@@ -2731,6 +2890,7 @@ class VideoPlayerViewModel(
     /** Gamma, hue, colour temperature and sharpness (the second group of sliders in Color Grading). */
     fun setColorExtras(gamma: Float, hue: Float, temperature: Float, sharpness: Float) {
         _uiState.update { it.copy(colorGamma = gamma, colorHue = hue, colorTemperature = temperature, colorSharpness = sharpness) }
+        persistColorGrade()
         updateVideoEffects()
     }
 
@@ -2741,6 +2901,7 @@ class VideoPlayerViewModel(
     }
 
     fun setForceSdrToneMapping(force: Boolean) {
+        prefs.edit().putBoolean(KEY_FORCE_SDR, force).apply()
         _uiState.update { it.copy(forceSdrToneMapping = force) }
         updateVideoEffects()
     }
@@ -2973,6 +3134,27 @@ class VideoPlayerViewModel(
 }
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
+private const val MAX_DECODER_RETRIES = 2
+
+// Remembered player settings (SharedPreferences "beatraxus").
+private const val KEY_COLOR_BRIGHTNESS = "video_color_brightness"
+private const val KEY_COLOR_CONTRAST = "video_color_contrast"
+private const val KEY_COLOR_SATURATION = "video_color_saturation"
+private const val KEY_COLOR_GAMMA = "video_color_gamma"
+private const val KEY_COLOR_HUE = "video_color_hue"
+private const val KEY_COLOR_TEMPERATURE = "video_color_temperature"
+private const val KEY_COLOR_SHARPNESS = "video_color_sharpness"
+private const val KEY_FORCE_SDR = "video_force_sdr"
+private const val KEY_ORIENT_TURNS = "video_orient_turns"
+private const val KEY_ORIENT_FLIP_H = "video_orient_flip_h"
+private const val KEY_ORIENT_FLIP_V = "video_orient_flip_v"
+private const val KEY_BACKGROUND_PLAY = "video_background_play"
+private const val KEY_SURROUND_SIMULATOR = "video_surround_simulator_on"
+private const val KEY_AUDIO_MODE = "video_audio_mode_on"
+private const val KEY_EQ_GAINS = "video_eq_gains"
+private const val KEY_EQ_PRESET = "video_eq_preset"
+private const val KEY_ASPECT_RATIO = "video_aspect_ratio"
+private const val KEY_SHOW_REMAINING = "video_show_remaining_time"
 
 class VideoPlayerViewModelFactory(private val application: Application, private val videoQueue: List<Video>, private val initialVideoId: String) : ViewModelProvider.Factory {
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
