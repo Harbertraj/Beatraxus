@@ -3,17 +3,17 @@ package com.beatraxus.app.colorgrade
 import androidx.media3.common.util.GlProgram
 import androidx.media3.common.util.GlUtil
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.SingleFrameGlShaderProgram
+import androidx.media3.effect.BaseGlShaderProgram
 import androidx.media3.common.util.Size
 
 /**
- * A [SingleFrameGlShaderProgram] that applies color grading (brightness, contrast, saturation).
+ * A [BaseGlShaderProgram] that applies color grading (brightness, contrast, saturation).
  */
 @UnstableApi
 class ColorGradeShaderProgram(
     useHdr: Boolean,
     private val effect: ColorGradeEffect
-) : SingleFrameGlShaderProgram(useHdr) {
+) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram: GlProgram
     private var texelWidth = 0f

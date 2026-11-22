@@ -186,8 +186,16 @@ configure<ApplicationExtension> {
     packaging {
         jniLibs {
             useLegacyPackaging = true
-            // ffmpeg-kit and NextLib each ship the C++ runtime.
+            // ffmpeg-kit and NextLib each ship the C++ runtime and FFmpeg native libraries.
             pickFirsts += "**/libc++_shared.so"
+            pickFirsts += "**/libavcodec.so"
+            pickFirsts += "**/libavformat.so"
+            pickFirsts += "**/libavutil.so"
+            pickFirsts += "**/libswresample.so"
+            pickFirsts += "**/libswscale.so"
+            pickFirsts += "**/libavfilter.so"
+            pickFirsts += "**/libavdevice.so"
+            pickFirsts += "**/libpostproc.so"
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"

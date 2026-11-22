@@ -4,7 +4,7 @@ import androidx.media3.common.util.GlProgram
 import androidx.media3.common.util.GlUtil
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.effect.SingleFrameGlShaderProgram
+import androidx.media3.effect.BaseGlShaderProgram
 import com.beatraxus.app.model.UpscaleSizing
 
 /** Single-pass upscaler: bicubic (Catmull-Rom, 9 taps) + optional edge-directed smoothing + limited sharpen. */
@@ -13,7 +13,7 @@ class VideoUpscaleShaderProgram(
     useHdr: Boolean,
     private val effect: VideoUpscaleEffect,
     private val displayLongSide: Int
-) : SingleFrameGlShaderProgram(useHdr) {
+) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram: GlProgram
     private var inW = 1f
