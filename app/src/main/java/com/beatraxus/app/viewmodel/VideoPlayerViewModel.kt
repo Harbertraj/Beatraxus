@@ -863,9 +863,21 @@ class VideoPlayerViewModel(
                 // A video decoder that dies mid-stream (4K HEVC / Dolby Vision on some MediaTek chips)
                 // leaves playback stuck. Block that decoder and restart on the next one.
                 if (retryOnAnotherVideoDecoder(player, error)) return
-                // Only Live TV gets special handling; every other video behaves exactly as before.
+                // Only Live TV gets special handling; every other video behaves exactly as before,
+                // except that a stream no decoder can play now says so instead of failing silently.
                 val live = _uiState.value.currentVideo
-                    ?.takeIf { it.source == com.beatraxus.app.model.VideoSource.LIVE_TV } ?: return
+                    ?.takeIf { it.source == com.beatraxus.app.model.VideoSource.LIVE_TV }
+                if (live == null) {
+                    Log.w(TAG, "Playback error ${error.errorCodeName}", error)
+                    if (isCodecSupportError(error)) {
+                        android.widget.Toast.makeText(
+                            context,
+                            "This video's format can't be decoded on this device.",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                    return
+                }
                 if (error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
                     // Fell behind the live window of an HLS stream: jump back to the live edge.
                     player.seekToDefaultPosition()
@@ -1416,6 +1428,12 @@ class VideoPlayerViewModel(
         player.playWhenReady = true
         return true
     }
+
+    private fun isCodecSupportError(error: androidx.media3.common.PlaybackException): Boolean =
+        error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ||
+            error.errorCode == androidx.media3.common.PlaybackException.ERROR_CODE_DECODING_FAILED
 
     /** Switches to the next decoder mode (HW -> HW+ -> SW -> HW) and returns it. */
     fun cycleVideoDecoderMode(): VideoDecoderMode {

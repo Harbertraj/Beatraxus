@@ -344,3 +344,8 @@
 -keep class ai.onnxruntime.** { *; }
 -keepclassmembers class ai.onnxruntime.** { *; }
 -dontwarn ai.onnxruntime.**
+
+# NextLib FFmpeg decoders (software AV1/HEVC video + AC3/EAC3/DTS/TrueHD audio). The native code looks these classes up
+# by name through JNI, so they must not be renamed or stripped.
+-keep class io.github.anilbeesetti.nextlib.** { *; }
+-dontwarn io.github.anilbeesetti.nextlib.**

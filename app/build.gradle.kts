@@ -186,6 +186,8 @@ configure<ApplicationExtension> {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // ffmpeg-kit and NextLib each ship the C++ runtime.
+            pickFirsts += "**/libc++_shared.so"
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -265,7 +267,8 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.media:media:1.7.0")
     
-    val media3Version = "1.5.0"
+    // 1.7.1 matches NextLib 1.7.1-0.9.0 below (NextLib is compiled against that exact Media3 line).
+    val media3Version = "1.7.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-common:$media3Version")
     implementation("androidx.media3:media3-session:$media3Version")
@@ -275,9 +278,10 @@ dependencies {
     // DefaultMediaSourceFactory picks these up automatically when they are on the classpath.
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
-    // Media3 FFmpeg extension for EAC3/AC3/DTS support. 
-    // Fetched from Maven Central (maintained by Jellyfin project).
-    implementation("org.jellyfin.media3:media3-ffmpeg-decoder:1.5.0+1")
+    // NextLib (the FFmpeg decoders behind Next Player): software VIDEO decoders (AV1/dav1d, HEVC, H.264, VP9, VP8)
+    // plus AUDIO decoders (AC3, EAC3, DTS, MLP/TrueHD, ...). Replaces the Jellyfin audio-only extension, so a 4K
+    // AV1 10-bit MKV still plays on phones without a hardware AV1 decoder, like MX Player's software decoder.
+    implementation("io.github.anilbeesetti:nextlib-media3ext:1.7.1-0.9.0")
 
     implementation("io.coil-kt:coil-compose:2.6.0")
     implementation("io.coil-kt:coil-video:2.6.0")

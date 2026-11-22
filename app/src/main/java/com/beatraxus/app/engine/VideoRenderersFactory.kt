@@ -10,12 +10,13 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.video.VideoRendererEventListener
-import androidx.media3.decoder.ffmpeg.FfmpegAudioRenderer
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegAudioRenderer
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegVideoRenderer
 import androidx.media3.common.MimeTypes
 
 /**
- * Custom RenderersFactory for video playback that includes the FFmpeg audio renderer
- * for formats like EAC3, AC3, and DTS which are often not supported by hardware decoders.
+ * Custom RenderersFactory for video playback. Adds the FFmpeg audio renderer (EAC3, AC3, DTS, TrueHD, ...) and an
+ * FFmpeg software video renderer (AV1, HEVC, ...) as fallbacks for what the phone's hardware decoders cannot play.
  *
  * It also applies the user's video decoder choice (HW / HW+ / SW) and the audio delay,
  * both read from [tuning] while playing.
@@ -69,6 +70,22 @@ class VideoRenderersFactory(
             allowedVideoJoiningTimeMs,
             out
         )
+
+        // Software fallback (MX Player style): MediaCodec stays first, so a phone with a hardware decoder keeps using
+        // it. ExoPlayer only reaches this FFmpeg renderer for a video track no MediaCodec decoder supports (AV1 on a
+        // phone without an AV1 chip, a decoder blocked after it crashed) -- previously that gave a black screen/no
+        // picture. "HW" mode means hardware only, so it gets no software fallback.
+        // Note: frames from this renderer bypass the GL effect chain (upscaler, colour grade, FPS Booster).
+        if (extensionRendererMode != EXTENSION_RENDERER_MODE_OFF && tuning.decoderMode != VideoDecoderMode.HW) {
+            out.add(
+                FfmpegVideoRenderer(
+                    allowedVideoJoiningTimeMs,
+                    eventHandler,
+                    eventListener,
+                    MAX_DROPPED_VIDEO_FRAMES_TO_NOTIFY
+                )
+            )
+        }
     }
 
     override fun buildAudioRenderers(
@@ -127,6 +144,8 @@ class VideoRenderersFactory(
     }
 
     internal companion object {
+        private const val MAX_DROPPED_VIDEO_FRAMES_TO_NOTIFY = 50
+
         /** Filters/orders video decoders for the chosen mode. Kept free of side effects for testing. */
         fun applyDecoderMode(
             decoderInfos: List<MediaCodecInfo>,
