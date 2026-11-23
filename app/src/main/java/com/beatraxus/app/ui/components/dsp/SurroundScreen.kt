@@ -230,162 +230,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             modifier = Modifier.alpha(if (config.surroundEnabled) 1f else 0.6f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Shared by the Studio DSP surround page and the video player's surround sheet ──────────────────────────────
-
-/**
- * False while the Surround master switch is off: every bar, fader, slider and the room orb ignores touches (they
- * would change values that nothing is using). Defaults to true outside the surround screens.
- */
-internal val LocalSurroundControlsEnabled = compositionLocalOf { true }
-
-/** State of the 360° move helpers: auto orbit, gyro follow and the distance the user chose for an orbit. */
-@Stable
-internal class SurroundMoveController(initialDistance: Float, val gyroAvailable: Boolean) {
-    var orbit by mutableStateOf(false)
-    var gyro by mutableStateOf(false)
-    var orbitStyle by mutableStateOf(0)
-    var orbitSeconds by mutableStateOf(SURROUND_ORBIT_DEFAULT_SECONDS)
-    var orbitBase by mutableStateOf(initialDistance)
-
-    /** Dragging the orb, tapping Center or leaving the mode stops both helpers. */
-    fun stop() {
-        orbit = false
-        gyro = false
-    }
-}
-
-/**
- * Creates the move controller and runs its two loops. Orbit travels along the chosen style; Gyro follow keeps the
- * sound fixed in the room while the phone turns (the heading when the mode starts is "straight ahead of the
- * sound"; uses the rotation-vector sensor). [onPosition] / [onDistance] write the settings.
- */
-@Composable
-internal fun rememberSurroundMoveController(
-    config: DspConfig,
-    onPosition: (Float, Float) -> Unit,
-    onDistance: (Float) -> Unit
-): SurroundMoveController {
-    val context = LocalContext.current
-    val sensorManager = remember(context) { context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
-    val motionSensor = remember(sensorManager) {
-        sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
-            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-    }
-    val c = remember(motionSensor) { SurroundMoveController(config.surroundPositionDistance, motionSensor != null) }
-    val latestConfig by rememberUpdatedState(config)
-    val latestOnPosition by rememberUpdatedState(onPosition)
-    val latestOnDistance by rememberUpdatedState(onDistance)
-
-    LaunchedEffect(c.orbit, config.surroundMoveEnabled) {
-        if (!c.orbit || !config.surroundMoveEnabled) return@LaunchedEffect
-        val styles = SurroundOrbitPattern.entries
-        val first = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
-        // A circle or spiral carries on from where the orb is now; the other styles start at their own beginning.
-        var phase = if (first == SurroundOrbitPattern.CIRCLE || first == SurroundOrbitPattern.SPIRAL) {
-            latestConfig.surroundPositionAngleDeg / 360f
-        } else 0f
-        var last = androidx.compose.runtime.withFrameNanos { it }
-        var acc = 0f
-        try {
-            while (true) {
-                val now = androidx.compose.runtime.withFrameNanos { it }
-                acc += (now - last) / 1_000_000_000f
-                last = now
-                if (acc >= ORBIT_STEP_S) {
-                    phase = advanceSurroundOrbitPhase(phase, acc, c.orbitSeconds)
-                    val style = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
-                    val (angle, distance) = surroundOrbitPoint(style, phase, c.orbitBase)
-                    latestOnPosition(angle, distance)
-                    acc = 0f
-                }
-            }
-        } finally {
-            // Spiral and Figure 8 breathe in and out; when the orbit stops the distance goes back to the one the
-            // user chose, so the slider and the next orbit start from it (not from wherever the breath stopped).
-            latestOnDistance(c.orbitBase)
-        }
-    }
-
-    DisposableEffect(c.gyro, config.surroundMoveEnabled, motionSensor) {
-        if (!c.gyro || !config.surroundMoveEnabled || sensorManager == null || motionSensor == null) {
-            return@DisposableEffect onDispose { }
-        }
-        val rotation = FloatArray(9)
-        val anchor = latestConfig.surroundPositionAngleDeg
-        var startHeading: Float? = null
-        var shown = anchor
-        var lastPushNs = 0L
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent) {
-                SensorManager.getRotationMatrixFromVector(rotation, event.values)
-                val heading = surroundPhoneHeadingDeg(rotation) ?: return
-                val start = startHeading ?: heading.also { startHeading = it }
-                shown = smoothSurroundAngle(shown, surroundGyroAngle(anchor, heading, start), 0.25f)
-                val cfg = latestConfig
-                // At most 25 updates a second, and only when the sound really moved (saves the settings store).
-                if (event.timestamp - lastPushNs >= 40_000_000L && surroundAngleGap(shown, cfg.surroundPositionAngleDeg) >= 0.4f) {
-                    lastPushNs = event.timestamp
-                    latestOnPosition(shown, cfg.surroundPositionDistance)
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-        }
-        sensorManager.registerListener(listener, motionSensor, SensorManager.SENSOR_DELAY_GAME)
-        onDispose { sensorManager.unregisterListener(listener) }
-    }
-    return c
-}
-
-/** The "Sound position" card of the 360° move mode, wired to a [SurroundMoveController]. */
-@Composable
-internal fun SurroundMoveSection(
-    config: DspConfig,
-    accent: Color,
-    sevenOne: Boolean,
-    move: SurroundMoveController,
-    onDistance: (Float) -> Unit,
-    onSpot: (String) -> Unit,
-    onCenter: () -> Unit
-) {
-    PositionPanel(
-        config = config,
-        accent = accent,
-        sevenOne = sevenOne,
-        // While an orbit runs the live distance breathes (Spiral / Figure 8); the slider shows the distance the
-        // user chose, so the thumb stays where they put it.
-        distanceValue = if (move.orbit) move.orbitBase else config.surroundPositionDistance,
-        orbit = move.orbit,
-        onOrbit = {
-            if (it) move.gyro = false
-            move.orbit = it
-        },
-        gyro = move.gyro,
-        gyroAvailable = move.gyroAvailable,
-        onGyro = { if (it) move.orbit = false; move.gyro = it },
-        orbitStyle = move.orbitStyle,
-        onOrbitStyle = { move.orbitStyle = it },
-        orbitSeconds = move.orbitSeconds,
-        onOrbitSeconds = { move.orbitSeconds = it },
-        onDistance = {
-            move.orbitBase = sanitizeSurroundDistance(it)
-            // While orbiting, the orbit applies the new base itself on its next step.
-            if (!move.orbit) onDistance(it)
-        },
-        onSpot = { name ->
-            move.stop()
-            BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name }?.let { move.orbitBase = it.distance }
-            onSpot(name)
-        },
-        onCenter = {
-            move.stop()
-            move.orbitBase = SURROUND_POSITION_MIN_DISTANCE
-            onCenter()
-        }
-    )
-}
-
-// ── Stage view ────────────────────────────────────────────────────────────────────────────────
+            // ── Stage view ────────────────────────────────────────────────────────────────────────────────
             SurroundStageView(
                 plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor, moveState,
                 distancesM = if (config.surroundCalibrationEnabled) config.surroundSpeakerDistancesM else null
@@ -580,6 +425,161 @@ internal fun SurroundMoveSection(
         }
         }
     }
+}
+
+// ── Shared by the Studio DSP surround page and the video player's surround sheet ───────────
+
+/**
+ * False while the Surround master switch is off: every bar, fader, slider and the room orb ignores touches (they
+ * would change values that nothing is using). Defaults to true outside the surround screens.
+ */
+internal val LocalSurroundControlsEnabled = compositionLocalOf { true }
+
+/** State of the 360° move helpers: auto orbit, gyro follow and the distance the user chose for an orbit. */
+@Stable
+internal class SurroundMoveController(initialDistance: Float, val gyroAvailable: Boolean) {
+    var orbit by mutableStateOf(false)
+    var gyro by mutableStateOf(false)
+    var orbitStyle by mutableStateOf(0)
+    var orbitSeconds by mutableStateOf(SURROUND_ORBIT_DEFAULT_SECONDS)
+    var orbitBase by mutableStateOf(initialDistance)
+
+    /** Dragging the orb, tapping Center or leaving the mode stops both helpers. */
+    fun stop() {
+        orbit = false
+        gyro = false
+    }
+}
+
+/**
+ * Creates the move controller and runs its two loops. Orbit travels along the chosen style; Gyro follow keeps the
+ * sound fixed in the room while the phone turns (the heading when the mode starts is "straight ahead of the
+ * sound"; uses the rotation-vector sensor). [onPosition] / [onDistance] write the settings.
+ */
+@Composable
+internal fun rememberSurroundMoveController(
+    config: DspConfig,
+    onPosition: (Float, Float) -> Unit,
+    onDistance: (Float) -> Unit
+): SurroundMoveController {
+    val context = LocalContext.current
+    val sensorManager = remember(context) { context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    val motionSensor = remember(sensorManager) {
+        sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    }
+    val c = remember(motionSensor) { SurroundMoveController(config.surroundPositionDistance, motionSensor != null) }
+    val latestConfig by rememberUpdatedState(config)
+    val latestOnPosition by rememberUpdatedState(onPosition)
+    val latestOnDistance by rememberUpdatedState(onDistance)
+
+    LaunchedEffect(c.orbit, config.surroundMoveEnabled) {
+        if (!c.orbit || !config.surroundMoveEnabled) return@LaunchedEffect
+        val styles = SurroundOrbitPattern.entries
+        val first = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
+        // A circle or spiral carries on from where the orb is now; the other styles start at their own beginning.
+        var phase = if (first == SurroundOrbitPattern.CIRCLE || first == SurroundOrbitPattern.SPIRAL) {
+            latestConfig.surroundPositionAngleDeg / 360f
+        } else 0f
+        var last = androidx.compose.runtime.withFrameNanos { it }
+        var acc = 0f
+        try {
+            while (true) {
+                val now = androidx.compose.runtime.withFrameNanos { it }
+                acc += (now - last) / 1_000_000_000f
+                last = now
+                if (acc >= ORBIT_STEP_S) {
+                    phase = advanceSurroundOrbitPhase(phase, acc, c.orbitSeconds)
+                    val style = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
+                    val (angle, distance) = surroundOrbitPoint(style, phase, c.orbitBase)
+                    latestOnPosition(angle, distance)
+                    acc = 0f
+                }
+            }
+        } finally {
+            // Spiral and Figure 8 breathe in and out; when the orbit stops the distance goes back to the one the
+            // user chose, so the slider and the next orbit start from it (not from wherever the breath stopped).
+            latestOnDistance(c.orbitBase)
+        }
+    }
+
+    DisposableEffect(c.gyro, config.surroundMoveEnabled, motionSensor) {
+        if (!c.gyro || !config.surroundMoveEnabled || sensorManager == null || motionSensor == null) {
+            return@DisposableEffect onDispose { }
+        }
+        val rotation = FloatArray(9)
+        val anchor = latestConfig.surroundPositionAngleDeg
+        var startHeading: Float? = null
+        var shown = anchor
+        var lastPushNs = 0L
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                SensorManager.getRotationMatrixFromVector(rotation, event.values)
+                val heading = surroundPhoneHeadingDeg(rotation) ?: return
+                val start = startHeading ?: heading.also { startHeading = it }
+                shown = smoothSurroundAngle(shown, surroundGyroAngle(anchor, heading, start), 0.25f)
+                val cfg = latestConfig
+                // At most 25 updates a second, and only when the sound really moved (saves the settings store).
+                if (event.timestamp - lastPushNs >= 40_000_000L && surroundAngleGap(shown, cfg.surroundPositionAngleDeg) >= 0.4f) {
+                    lastPushNs = event.timestamp
+                    latestOnPosition(shown, cfg.surroundPositionDistance)
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        sensorManager.registerListener(listener, motionSensor, SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sensorManager.unregisterListener(listener) }
+    }
+    return c
+}
+
+/** The "Sound position" card of the 360° move mode, wired to a [SurroundMoveController]. */
+@Composable
+internal fun SurroundMoveSection(
+    config: DspConfig,
+    accent: Color,
+    sevenOne: Boolean,
+    move: SurroundMoveController,
+    onDistance: (Float) -> Unit,
+    onSpot: (String) -> Unit,
+    onCenter: () -> Unit
+) {
+    PositionPanel(
+        config = config,
+        accent = accent,
+        sevenOne = sevenOne,
+        // While an orbit runs the live distance breathes (Spiral / Figure 8); the slider shows the distance the
+        // user chose, so the thumb stays where they put it.
+        distanceValue = if (move.orbit) move.orbitBase else config.surroundPositionDistance,
+        orbit = move.orbit,
+        onOrbit = {
+            if (it) move.gyro = false
+            move.orbit = it
+        },
+        gyro = move.gyro,
+        gyroAvailable = move.gyroAvailable,
+        onGyro = { if (it) move.orbit = false; move.gyro = it },
+        orbitStyle = move.orbitStyle,
+        onOrbitStyle = { move.orbitStyle = it },
+        orbitSeconds = move.orbitSeconds,
+        onOrbitSeconds = { move.orbitSeconds = it },
+        onDistance = {
+            move.orbitBase = sanitizeSurroundDistance(it)
+            // While orbiting, the orbit applies the new base itself on its next step.
+            if (!move.orbit) onDistance(it)
+        },
+        onSpot = { name ->
+            move.stop()
+            BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name }?.let { move.orbitBase = it.distance }
+            onSpot(name)
+        },
+        onCenter = {
+            move.stop()
+            move.orbitBase = SURROUND_POSITION_MIN_DISTANCE
+            onCenter()
+        }
+    )
 }
 
 // ── Stage view ────────────────────────────────────────────────────────────────────────────────────────────
