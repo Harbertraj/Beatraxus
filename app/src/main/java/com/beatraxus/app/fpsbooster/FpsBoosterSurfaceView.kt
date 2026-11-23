@@ -94,6 +94,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
             manager?.let { mgr ->
                 renderer?.setLevel(mgr.initialLevel)
                 hybridRenderer?.setLevel(mgr.initialLevel)
+                rifeRenderer?.setLevel(mgr.initialLevel)
             }
         } else if (targetChanged) {
             manager?.updatePlan(plan)
@@ -147,6 +148,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 if (manager === created) {
                     renderer?.setLevel(level)
                     hybridRenderer?.setLevel(level)
+                    rifeRenderer?.setLevel(level)
                 }
             }
             override fun onStats(stats: BoosterStats) { if (manager === created) listener?.onStats(stats) }
@@ -218,6 +220,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 }, context.applicationContext, p.quality)
                 rifeRenderer = createdRife
                 createdRife.setTargetFps(p.targetFps)
+                manager?.let { createdRife.setLevel(it.initialLevel) }
                 createdRife.setColorGrade(brightness, contrast, saturation)
                 createdRife.setColorTune(hue, temperature)
                 createdRife.setOrientation(orientation)

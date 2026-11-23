@@ -34,6 +34,10 @@ import kotlin.math.max
  * GPU-accelerated RIFE AI Renderer for BeatRaxus:
  * Combines GL surface rendering with ONNX Runtime RIFE 4.26 neural synthesis, incorporating async PBO frame
  * readback, thread-safe NCHW packing, multi-generation task fencing, and piecewise-alpha shader blending.
+ *
+ * This renderer never hands over to another engine. When the model is too slow for the video it keeps running and lowers
+ * its own model size ([setLevel], driven by the adaptive quality ladder in [FpsBoosterManager]); pairs whose AI frame is
+ * not ready in time are shown as real frames until it is.
  */
 class RifeRenderer(
     private val outputSurface: Surface,
@@ -110,7 +114,6 @@ class RifeRenderer(
     // ---- Safeguard Helpers ----
     private val regularizer = TimestampRegularizer()
     private val statsAcc = StatsAccumulator()
-    private var consecutiveSlowWindows = 0
 
     // ---- Sizes ----
     private var srcW = 0
@@ -119,6 +122,8 @@ class RifeRenderer(
     private var frameH = 0
     private var modelW = 640
     private var modelH = 360
+    /** Longest side (px) of the picture the model sees. Starts at the preset, then follows the quality ladder ([setLevel]). */
+    @Volatile private var modelLongEdge = longEdgeFor(quality)
 
     // ---- Frame History ----
     private var cur: Slot? = null
@@ -197,6 +202,25 @@ class RifeRenderer(
 
     fun setSourceSize(width: Int, height: Int) {
         handler.post { runGuarded("resize failed") { applySourceSize(width, height) } }
+    }
+
+    /**
+     * Quality ladder step from [FpsBoosterManager]: a slower phone gets a smaller model input (the shown picture keeps the
+     * video's own resolution). This replaces the old "RIFE too slow, switch engine" exit: RIFE stays RIFE.
+     */
+    fun setLevel(level: QualityLevel) {
+        val edge = level.workEdge
+        // Compared on the GL thread (applyModelEdge): two quick steps must not be judged against a value the first one has not set yet.
+        handler.post { runGuarded("model resize failed") { applyModelEdge(edge) } }
+    }
+
+    private fun applyModelEdge(edge: Int) {
+        if (released || edge == modelLongEdge) return
+        modelLongEdge = edge
+        // Before the first frame size is known only the target changes; applySourceSize then builds everything with it.
+        if (srcW > 0 && srcH > 0 && eglContext != EGL14.EGL_NO_CONTEXT && slots.isNotEmpty()) {
+            applySourceSize(srcW, srcH, force = true)
+        }
     }
 
     fun release() {
@@ -288,9 +312,10 @@ class RifeRenderer(
         choreographer?.postFrameCallback(frameCallback)
     }
 
-    private fun applySourceSize(width: Int, height: Int) {
+    /** [force]: rebuild even when the video size is unchanged (the model size changed). */
+    private fun applySourceSize(width: Int, height: Int, force: Boolean = false) {
         if (released || width <= 0 || height <= 0 || eglContext == EGL14.EGL_NO_CONTEXT) return
-        if (width == srcW && height == srcH && slots.isNotEmpty()) return
+        if (!force && width == srcW && height == srcH && slots.isNotEmpty()) return
         cancelEstimate()
         srcW = width
         srcH = height
@@ -298,12 +323,7 @@ class RifeRenderer(
         frameW = max(16, width and 1.inv())
         frameH = max(16, height and 1.inv())
 
-        val longEdge = when (quality) {
-            BoosterQuality.PERFORMANCE -> 640
-            BoosterQuality.BALANCED -> 960
-            BoosterQuality.QUALITY -> 1280
-        }
-        val (mw, mh) = RifePacking.modelSize(frameW, frameH, longEdge)
+        val (mw, mh) = RifePacking.modelSize(frameW, frameH, modelLongEdge)
         modelW = mw
         modelH = mh
 
@@ -648,10 +668,6 @@ class RifeRenderer(
 
     private fun reportStats(nowNs: Long, sourceFps: Float) {
         val win = statsAcc.poll(nowNs)
-        if (win != null && fallingBehind(win, sourceFps)) {
-            callbacks.onError(FallbackReason.RIFE_TOO_SLOW, "RIFE AI inference too slow on this device")
-            return
-        }
         if (win != null) {
             callbacks.onStats(
                 BoosterStats(
@@ -669,24 +685,6 @@ class RifeRenderer(
             )
             callbacks.onWindow(win, sourceFps, modelW, lastHoldNs / 1e6f)
         }
-    }
-
-    /**
-     * True when RIFE cannot keep up and should hand over to Optical flow. Judged once per statistics window (about one
-     * second), not per vsync. A window counts as "behind" when the model needs more than 90 % of a source interval
-     * (the same budget the planner uses) or when interpolation was expected but not one generated frame was shown:
-     * a result that arrives after the next real frame is stale and is never used, so the output would only be
-     * repeated real frames at the target rate (the counter says 60 while nothing is generated).
-     */
-    private fun fallingBehind(win: WindowStats, sourceFps: Float): Boolean {
-        val intervalNs = if (sourceFps > 0f) (1e9f / sourceFps).toLong() else frameIntervalNs
-        val expectsGenerated = intervalNs > 0 && win.sourceFrames >= 3 &&
-            !MotionBoostTiming.shouldBypass(sourceFps, cadence.effectiveTarget(targetFps))
-        if (!expectsGenerated) { consecutiveSlowWindows = 0; return false }
-        val tooSlow = estimateLatency.smoothedNs > (0.9f * intervalNs).toLong()
-        val nothingGenerated = win.generated == 0
-        consecutiveSlowWindows = if (tooSlow || nothingGenerated) consecutiveSlowWindows + 1 else 0
-        return consecutiveSlowWindows >= SLOW_WINDOWS_BEFORE_FALLBACK
     }
 
     private fun bindTarget(texture: Int, width: Int, height: Int) {
@@ -808,8 +806,13 @@ class RifeRenderer(
     companion object {
         private const val TAG = "RifeRenderer"
         private const val SLOT_COUNT = 4
-        /** Consecutive one-second windows RIFE may be behind before the renderer reports RIFE_TOO_SLOW. */
-        private const val SLOW_WINDOWS_BEFORE_FALLBACK = 4
+
+        /** Model input long edge of a quality preset (same numbers as [BoosterQuality.workEdge] for the RIFE engine). */
+        private fun longEdgeFor(q: BoosterQuality): Int = when (q) {
+            BoosterQuality.PERFORMANCE -> 640
+            BoosterQuality.BALANCED -> 960
+            BoosterQuality.QUALITY -> 1280
+        }
         private const val MIN_FRAME_NS = 4_000_000L
         private const val MAX_FRAME_NS = 200_000_000L
 

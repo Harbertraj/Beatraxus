@@ -159,4 +159,13 @@ class BoosterBenchmarkTest {
         assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(engine = BoosterEngine.AI_RIFE)))
         assertTrue(!BoosterRecommender.aiFusionEnabled(on, plan.copy(active = false)))
     }
+
+    @Test fun fusionRunsInHybridToo() {
+        // Hybrid is built on the optical-flow renderer, so the fusion pass applies to it (it used to be Optical flow only).
+        val on = FpsBoosterSettings(mode = BoosterMode.ON, aiFusion = true)
+        val hybrid = BoosterPlan(true, 60, BoosterEngine.HYBRID, BoosterQuality.QUALITY, null)
+        assertTrue(BoosterRecommender.aiFusionEnabled(on, hybrid))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on.copy(aiFusion = false), hybrid))
+        assertTrue(!BoosterRecommender.aiFusionEnabled(on, hybrid.copy(active = false)))
+    }
 }

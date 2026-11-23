@@ -793,3 +793,40 @@ between 0.9x and 2x never fell back.
 Fix: `RifeRenderer.fallingBehind` is judged once per window, uses the planner's 90 % budget, and also fires when
 interpolation was expected but a window produced zero generated frames (4 windows in a row), reporting `RIFE_TOO_SLOW`.
 Optical flow is unaffected (its estimate runs on the GPU in a few ms).
+
+## 25. RIFE stays RIFE, Hybrid review, AI fusion in Hybrid
+
+Nothing here was built with Gradle or run on a device (no Android SDK in the authoring environment); read the diff and run
+`testDebugUnitTest` before shipping.
+
+Why selecting RIFE AI used to end up on Optical flow:
+1. `FpsBoosterPlanner` replaced `AI_RIFE` by `OPTICAL_FLOW` whenever the target was not within 3 % of 2x the source rate. A
+   24 fps film at the default 60 FPS target is 2.5x, so this happened on the most common setup.
+2. The same method replaced it when a measured inference time did not fit 90 % of a source interval.
+3. `RifeRenderer` reported `RIFE_TOO_SLOW` after four slow windows. The toast said "falling back to Optical flow", but the player
+   actually suspended the booster completely (plain playback).
+
+Changes:
+- **Planner.** The engine the user chose is kept. RIFE AI and Hybrid change engine only when they cannot run at all (model
+  missing, no float render targets). The cases above now set `plan.note` ("what to expect") and keep the engine. Hybrid is no
+  longer demoted to Optical flow when the model does not fit every pair: its renderer already degrades gracefully (RIFE as the
+  middle frame while the budget fits, otherwise RIFE on some pairs as a guarded candidate; output always at the full target).
+- **RIFE adapts instead of leaving.** `RifeRenderer.setLevel` follows the quality ladder from `FpsBoosterManager` (1280 / 960 /
+  640 / 480 px long edge of the model input; the shown picture keeps the video's resolution). The manager already steps down on
+  slow estimates or skipped pairs and learns the rung per engine / target (`DeviceTuning`). `FpsBoosterSurfaceView` now forwards
+  the level to the RIFE renderer too, which it did not before. `RIFE_TOO_SLOW` and `fallingBehind` are removed. With "Adaptive
+  resolution" off the size stays as chosen; pairs whose AI frame is not ready are shown as real frames.
+- **AI fusion.** `BoosterRecommender.aiFusionEnabled` accepted only `OPTICAL_FLOW`, so with Hybrid the switch was shown but did
+  nothing. It now accepts `HYBRID` as well (Hybrid's RIFE frames are queue frames of the optical-flow renderer, so the fusion
+  pass sees them). RIFE AI alone and Classic have no flow candidates to choose between (the six candidates are the nearest real
+  frame, forward / backward / global-motion warps of both frames), so they have no fusion pass and the sheet explains this in
+  a hint instead of showing a switch that does nothing.
+
+Known limits (unchanged by this patch):
+- RIFE-only output at a non-2x target still maps the 2x frame onto the other phases by blending (t is fixed at 0.5 in the
+  model input). For 24 to 60 / 90 / 120 use Hybrid.
+- A 1280 px RIFE session on CPU can take longer than a 24 fps interval, so the ladder starts by stepping down; each step
+  reallocates the renderer's textures (a brief glitch). It takes a few seconds to settle, then is remembered per target.
+- The Hybrid cascade waits `midWaitNs` (1.25 source intervals, 30 to 90 ms) for the AI frame after a real frame arrives, and that
+  wait includes the read-back and the model run. A model near the 90 % budget can miss it on every pair, which only costs the
+  RIFE work, never a frame. Check "Generated" and "Processing latency" in the live statistics on the device.

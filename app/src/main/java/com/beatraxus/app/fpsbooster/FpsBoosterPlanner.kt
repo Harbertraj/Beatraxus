@@ -41,6 +41,8 @@ data class BoosterPlan(
  *  - The target must divide some panel rate into a whole number of vsyncs ([MotionBoostTiming.isCleanRate]),
  *    otherwise frames would be shown unevenly (45 or 90 FPS on a 60 / 120 Hz panel); in that case the next lower
  *    usable target is used and the user is told.
+ *  - An explicitly chosen engine is never replaced by a different one for speed or frame-rate reasons (RIFE AI and Hybrid
+ *    stay RIFE AI and Hybrid). It changes only when it cannot run at all: RIFE model missing, or no float render targets.
  *  - AUTO mode only acts on sources below 45 fps and picks the highest usable of 60 / 30 above 1.2x the source.
  *  - Battery saver caps the target at 60 and the quality at PERFORMANCE.
  */
@@ -140,25 +142,31 @@ object FpsBoosterPlanner {
             }
         }
 
-        if (engine == BoosterEngine.AI_RIFE) {
-            if (source.fps > 0f) {
-                val is2x = abs(wanted - 2 * source.fps) / (2 * source.fps) <= 0.03f
-                if (!is2x) {
-                    engine = BoosterEngine.OPTICAL_FLOW
-                    note = "RIFE supports 2x only: using Optical flow"
-                } else if (!HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps)) {
-                    engine = BoosterEngine.OPTICAL_FLOW
-                    note = String.format(Locale.US, "RIFE too slow on this device (%.0f ms per frame): using Optical flow", rifeInferenceMs)
-                }
+        // The engine the user picked is the engine that runs. RIFE AI and Hybrid are never swapped for Optical flow because
+        // of the video's frame rate or because the model is slow: the renderers adapt instead (RIFE lowers its model size on
+        // the quality ladder; Hybrid keeps full-rate output and uses RIFE on as many pairs as it can). The notes below only
+        // tell the user what to expect while the chosen engine keeps running.
+        if (engine == BoosterEngine.AI_RIFE && source.fps > 0f) {
+            val is2x = abs(wanted - 2 * source.fps) / (2 * source.fps) <= 0.03f
+            if (!is2x) {
+                note = String.format(
+                    Locale.US,
+                    "RIFE AI makes one AI frame between each pair of real frames (2x). For %d FPS from %.0f FPS the other " +
+                        "positions are blended; Hybrid (RIFE 2x, then Optical flow up to the target) is smoother here",
+                    wanted, source.fps
+                )
+            } else if (!HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps)) {
+                note = String.format(
+                    Locale.US, "RIFE needs %.0f ms per frame: it will lower its analysis size to keep up", rifeInferenceMs
+                )
             }
         }
 
-        // Hybrid runs the model on every pair or not at all: a model that only fits every 2nd / 3rd pair would alternate
-        // between AI-assisted and plain pairs, a quality flicker. Same rule as the RIFE engine, same budget as the renderer.
         if (engine == BoosterEngine.HYBRID && source.fps > 0f && !HybridScheduling.fitsEveryPair(rifeInferenceMs, source.fps)) {
-            engine = BoosterEngine.OPTICAL_FLOW
             note = String.format(
-                Locale.US, "RIFE needs %.0f ms per frame, more than the %.0f ms this video allows: using Optical flow",
+                Locale.US,
+                "RIFE needs %.0f ms per frame, more than the %.0f ms this video allows: RIFE helps on some pairs, " +
+                    "Optical flow carries the rest",
                 rifeInferenceMs, 0.9f * 1000f / source.fps
             )
         }

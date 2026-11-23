@@ -119,12 +119,15 @@ object BoosterRecommender {
 
     /**
      * The single decision the player acts on. AI fusion is always available: it runs whenever the user turned it on and
-     * the Optical flow engine is the one running (RIFE and Classic have no fusion pass). The device-test verdict is
-     * deliberately NOT a condition; it is only shown as a hint. If the GPU really cannot do it, the renderer drops back to
-     * the hand-tuned blend on its own.
+     * the running engine is built on the optical-flow renderer, which is where the fusion pass lives: Optical flow, and
+     * Hybrid (its RIFE middle frames are queue frames of that same renderer, so the fusion sees them as real pictures).
+     * RIFE AI alone and Classic have no flow candidates to choose between, so they have no fusion pass. The device-test
+     * verdict is deliberately NOT a condition; it is only shown as a hint. If the GPU really cannot do it, the renderer
+     * drops back to the hand-tuned blend on its own.
      */
     fun aiFusionEnabled(s: FpsBoosterSettings, plan: BoosterPlan): Boolean =
-        s.aiFusion && plan.active && plan.engine == BoosterEngine.OPTICAL_FLOW
+        s.aiFusion && plan.active &&
+            (plan.engine == BoosterEngine.OPTICAL_FLOW || plan.engine == BoosterEngine.HYBRID)
 
     fun recommend(r: BenchmarkResult, panelRates: List<Float>, rifeModelInstalled: Boolean = false): Recommendation {
         val usableTargets = BoosterTargets.ALL.filter { MotionBoostTiming.isCleanRate(panelRates, it) }.ifEmpty { listOf(30) }

@@ -92,23 +92,26 @@ class FpsBoosterPlannerTest {
         assertTrue(rifeNoFloat.note!!.contains("float textures"))
     }
 
-    @Test fun rifeEngineFallbackWhenTargetNotExact2x() {
-        // 24 fps -> 60 fps is 2.5x, not exact 2x
-        val rifePlan3x = FpsBoosterPlanner.plan(
+    @Test fun rifeEngineStaysRifeWhenTargetIsNotExact2x() {
+        // 24 fps -> 60 fps is 2.5x, not exact 2x. RIFE AI is kept (it used to be swapped for Optical flow); the note says what to expect.
+        val rifePlan25x = FpsBoosterPlanner.plan(
             on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr24, rifeModelInstalled = true
         )
-        assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlan3x.engine)
-        assertTrue(rifePlan3x.note!!.contains("RIFE supports 2x only"))
+        assertTrue(rifePlan25x.active)
+        assertEquals(BoosterEngine.AI_RIFE, rifePlan25x.engine)
+        assertEquals(60, rifePlan25x.targetFps)
+        assertTrue(rifePlan25x.note!!.contains("Hybrid"))
     }
 
-    @Test fun rifeEngineFallbackWhenInferenceTooSlow() {
+    @Test fun rifeEngineStaysRifeWhenInferenceIsSlow() {
         val sdr30 = SourceInfo(30f, 1920, 1080, false)
-        // 30 fps frame interval is 33.3ms; 45ms inference exceeds interval
+        // 30 fps frame interval is 33.3ms; 45ms inference exceeds the budget. RIFE is kept and lowers its own model size.
         val rifePlanSlow = FpsBoosterPlanner.plan(
             on(60).copy(engine = BoosterEngine.AI_RIFE), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 45f
         )
-        assertEquals(BoosterEngine.OPTICAL_FLOW, rifePlanSlow.engine)
-        assertTrue(rifePlanSlow.note!!.contains("RIFE too slow on this device (45 ms per frame)"))
+        assertTrue(rifePlanSlow.active)
+        assertEquals(BoosterEngine.AI_RIFE, rifePlanSlow.engine)
+        assertTrue(rifePlanSlow.note!!.contains("RIFE needs 45 ms per frame"))
     }
 
     @Test fun rifeEngineSelectedWhenFastAnd2x() {
@@ -172,13 +175,16 @@ class FpsBoosterPlannerTest {
     @Test fun ninetyOnNinetyHzPanel() =
         assertEquals(90, FpsBoosterPlanner.plan(on(90), panel90, sdr24).targetFps)
 
-    @Test fun hybridFallsBackToOpticalFlowWhenTheModelDoesNotFitEveryPair() {
-        // 30 fps: 90 % of the 33.3 ms interval is 30 ms. 34 ms would only fit every 2nd pair: flickering quality.
+    @Test fun hybridStaysHybridWhenTheModelDoesNotFitEveryPair() {
+        // 30 fps: 90 % of the 33.3 ms interval is 30 ms. 34 ms only fits some pairs: Hybrid keeps running at the full target
+        // (RIFE on the pairs it can, Optical flow on the rest) instead of being swapped for plain Optical flow.
         val sdr30 = SourceInfo(30f, 1920, 1080, false)
         val slow = FpsBoosterPlanner.plan(
             on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 34f
         )
-        assertEquals(BoosterEngine.OPTICAL_FLOW, slow.engine)
+        assertTrue(slow.active)
+        assertEquals(BoosterEngine.HYBRID, slow.engine)
+        assertEquals(60, slow.targetFps)
         assertTrue(slow.note!!.contains("RIFE needs 34 ms"))
         val fits = FpsBoosterPlanner.plan(
             on(60).copy(engine = BoosterEngine.HYBRID), panel120, sdr30, rifeModelInstalled = true, rifeInferenceMs = 28f

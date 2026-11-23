@@ -135,6 +135,12 @@ fun FpsBoosterSheetContent(
             }
         }
         Hint(s.engine.description)
+        if (s.engine == BoosterEngine.AI_RIFE) {
+            Hint(
+                "RIFE AI stays on RIFE: if your phone is too slow for real time it lowers the size RIFE works at, it does not " +
+                    "switch engine. It makes one AI frame per real pair (2x); for other targets Hybrid is smoother."
+            )
+        }
 
         SectionLabel("Quality")
         ChipRow {
@@ -147,8 +153,9 @@ fun FpsBoosterSheetContent(
             else "Higher quality analyses motion on a larger image: fewer artifacts, more GPU and battery. The picture itself always keeps the original video resolution."
         )
 
-        // AI fusion: offered for the Optical flow engine and always switchable. The device test only adds a hint when
-        // it expects this GPU to struggle at the quality / target in use.
+        // AI fusion: offered for the engines built on the optical-flow renderer (Auto, Hybrid, Optical flow) and always
+        // switchable. RIFE AI alone and Classic have no flow candidates to fuse, so no switch is shown for them (a switch that
+        // did nothing would be fake). The device test only adds a hint when it expects this GPU to struggle.
         if (!classicEngine && s.engine != BoosterEngine.AI_RIFE) {
             val gateResult = (bench as? BenchmarkState.Done)?.result
             val verdict = BoosterRecommender.aiFusionVerdict(
@@ -159,10 +166,19 @@ fun FpsBoosterSheetContent(
             ToggleRow(
                 "AI fusion (experimental)",
                 "A small neural network, built into the shader, decides per pixel which candidate picture to show. " +
+                    "Works with Optical flow and Hybrid (in Hybrid it also sees the RIFE frames). " +
                     "Fewer ghosting and stretching artifacts on fast motion; uses more GPU.",
                 s.aiFusion
             ) { onSettingsChange(s.copy(aiFusion = it)) }
             verdict.message?.let { Hint(it) }
+        } else {
+            Hint(
+                if (s.engine == BoosterEngine.AI_RIFE) {
+                    "AI fusion is for Optical flow and Hybrid. Choose Hybrid to use RIFE and AI fusion together."
+                } else {
+                    "AI fusion is for Optical flow and Hybrid; the Classic engine has no motion field to fuse."
+                }
+            )
         }
         ToggleRow(
             "Adaptive resolution",
