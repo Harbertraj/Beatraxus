@@ -986,18 +986,20 @@ private fun SurroundStageView(
                 }
                 drawSpeaker(spot.channel, at, ks, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
 
-                // Live 50-segment white LED ladder beside the cabinet, on the outer side: what this speaker really plays right now.
+                // Live 50-segment white LED ladder beside the cabinet (as tall as the cabinet), on the outer side.
                 if (meters && playing) {
                     val detailed = look.surroundShowSpeakerIcons
                     val sub = spot.channel == SurroundChannel.SW
                     val cabW = if (!detailed) 14f * ks else if (sub) 30f * ks else 24f * ks
                     val cabD = if (detailed) 10f * ks else 0f
+                    // Same height as the cabinet body (a plain dot when speaker icons are off gets a small default).
+                    val cabH = if (!detailed) 24f * ks else if (sub) 28f * ks else 42f * ks
                     val ladderW = 4f * ks
                     val ladderGap = 4f * ks
                     val onLeft = at.x < cx - 4f * k
                     val ladderX = if (onLeft) at.x - cabW / 2f - ladderGap - ladderW
                     else at.x + cabW / 2f + cabD + ladderGap
-                    drawLedLadder(ladderX, at.y, ladderW, 72f * ks, shownLevels[index], peakLevels[index], ks)
+                    drawLedLadder(ladderX, at.y, ladderW, cabH, shownLevels[index], peakLevels[index], ks)
                 }
             }
 
@@ -1659,10 +1661,10 @@ private fun DrawScope.drawLedLadder(
     level: Float, peak: Float, k: Float
 ) {
     val n = LADDER_SEGMENTS
-    val pad = 1.2f * k
-    val gap = 0.3f * k
+    val pad = 0.8f * k
+    val gap = 0.12f * k
     val segH = (height - 2f * pad - gap * (n - 1)) / n
-    if (segH <= 0.3f) return
+    if (segH <= 0.15f) return
     val step = segH + gap
     val capsule = CornerRadius(width / 2f + pad)
     drawRoundRect(Color.Black.copy(0.62f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule)
