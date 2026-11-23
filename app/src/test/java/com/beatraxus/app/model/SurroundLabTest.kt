@@ -101,13 +101,22 @@ class SurroundLabTest {
     }
 
     @Test
-    fun pickingAPresetHandsControlBackToTheMode() {
+    fun pickingAPresetKeepsTheLabOn() {
         val lab = DspConfig(surroundMode = SurroundMode.MOVIE).withSurroundKnob(SurroundLabKnob.CENTER, 1f)
         val cinema = lab.withSurroundPreset("Cinema")
-        assertFalse(cinema.surroundTuneEnabled)
-        assertEquals(SurroundMode.MOVIE.tuning(), cinema.surroundEffectiveTuning())
+        assertTrue(cinema.surroundTuneEnabled)
+        assertEquals(lab.surroundTune, cinema.surroundTune)
+        assertEquals("Cinema", cinema.surroundActivePreset)
         val concert = lab.withSurroundPreset("Concert")
-        assertEquals(SurroundMode.MUSIC.tuning(), concert.surroundEffectiveTuning())
+        assertTrue(concert.surroundTuneEnabled)
+        assertEquals(lab.surroundEffectiveTuning(), concert.surroundEffectiveTuning())
+    }
+
+    @Test
+    fun pickingAPresetWithTheLabOffStaysOff() {
+        val off = DspConfig(surroundMode = SurroundMode.MOVIE).withSurroundPreset("Concert")
+        assertFalse(off.surroundTuneEnabled)
+        assertEquals(SurroundMode.MUSIC.tuning(), off.surroundEffectiveTuning())
     }
 
     @Test

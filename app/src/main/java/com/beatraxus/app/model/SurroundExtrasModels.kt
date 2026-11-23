@@ -197,7 +197,7 @@ fun parseSurroundPresetCode(text: String?): Pair<SurroundMode, List<Float>>? {
 fun DspConfig.withSurroundPresetCode(text: String?): DspConfig {
     val (mode, trims) = parseSurroundPresetCode(text) ?: return this
     return copy(
-        surroundMode = mode, surroundChannelTrimsDb = trims, surroundActivePreset = "", surroundTuneEnabled = false
+        surroundMode = mode, surroundChannelTrimsDb = trims, surroundActivePreset = ""
     )
 }
 

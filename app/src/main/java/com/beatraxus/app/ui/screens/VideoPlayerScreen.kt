@@ -557,6 +557,22 @@ fun VideoPlayerScreen(
     ) {
         // Player View
         var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+
+        // HDR window colour mode (API 26+): without it the system can leave the window in SDR and clip an HDR video.
+        // It is set while an HDR / Dolby Vision video plays and put back when the video is not HDR or the player closes.
+        val hdrWindow = uiState.isHdr || uiState.hdrInfo.isHdr
+        DisposableEffect(hdrWindow) {
+            val w = activity?.window
+            val previous = w?.colorMode
+            if (hdrWindow && w != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && activity?.resources?.configuration?.isScreenHdr == true) {
+                w.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_HDR
+            }
+            onDispose {
+                if (w != null && previous != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && w.colorMode != previous) {
+                    w.colorMode = previous
+                }
+            }
+        }
         val latestAspect by rememberUpdatedState(uiState.aspectRatio)
         val latestOrientation by rememberUpdatedState(uiState.videoOrientation)
 
@@ -617,7 +633,10 @@ fun VideoPlayerScreen(
         // the GL renderer does it itself.)
         val orientation = uiState.videoOrientation
         // The night filter multiplies the picture, which a SurfaceView cannot take, so it needs the TextureView too.
-        val useTextureSurface = !boostActive &&
+        // HDR / Dolby Vision video always stays on the SurfaceView: a TextureView converts HDR to SDR (Android docs), so
+        // grading, rotate/flip and the night filter wait until the next non-HDR video.
+        val hdrVideo = uiState.isHdr || uiState.hdrInfo.isHdr
+        val useTextureSurface = !boostActive && !hdrVideo &&
             (gradingActive || sheetType == PlayerSheetType.COLOR || !orientation.isIdentity || nightFilterActive)
 
         key(useTextureSurface, boostActive, boostEngine) {

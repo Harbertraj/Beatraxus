@@ -483,19 +483,16 @@ fun DspConfig.withSurroundPreset(name: String): DspConfig {
     if (name == SURROUND_CUSTOM_PRESET_NAME) {
         val saved = surroundCustomTrimsDb ?: return this
         return copy(
-            surroundChannelTrimsDb = saved, surroundMode = surroundCustomMode, surroundActivePreset = name,
-            surroundTuneEnabled = false
+            surroundChannelTrimsDb = saved, surroundMode = surroundCustomMode, surroundActivePreset = name
         )
     }
     surroundSlotPresets.firstOrNull { it.name == name }?.let { slot ->
         return copy(
-            surroundChannelTrimsDb = slot.trimsDb, surroundMode = slot.mode, surroundActivePreset = name,
-            surroundTuneEnabled = false
+            surroundChannelTrimsDb = slot.trimsDb, surroundMode = slot.mode, surroundActivePreset = name
         )
     }
     val preset = BUILT_IN_SURROUND_PRESETS.firstOrNull { it.name == name } ?: return this
     return copy(
-        surroundChannelTrimsDb = preset.trimsDb, surroundMode = preset.mode, surroundActivePreset = name,
-        surroundTuneEnabled = false
+        surroundChannelTrimsDb = preset.trimsDb, surroundMode = preset.mode, surroundActivePreset = name
     )
 }

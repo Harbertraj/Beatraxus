@@ -71,6 +71,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -151,12 +152,6 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     val plannedChannels = when {
         !config.surroundEnabled || forcedOff || fallback -> 2
         liveChannels > 2 -> liveChannels
-        // Headphone surround: the output stays stereo, the virtual speakers are what the room view shows.
-        config.surroundHeadphoneMode -> when (config.surroundLayout) {
-            SurroundLayout.FIVE_ONE -> 6
-            SurroundLayout.SEVEN_ONE, SurroundLayout.AUTO -> 8
-            SurroundLayout.STEREO -> 2
-        }
         else -> when (config.surroundLayout) {
             SurroundLayout.SEVEN_ONE -> 8
             SurroundLayout.FIVE_ONE, SurroundLayout.AUTO -> 6
@@ -331,8 +326,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 Text(note, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
             }
 
-            // ── Headphone surround, live speaker levels, A/B hold ─────────────────────────────────────────
-            HeadphoneSurroundPanel(config, accent) { viewModel.setSurroundHeadphoneMode(it) }
+            // ── Live speaker levels, A/B hold ─────────────────────────────────────────────────────────────
             if (config.surroundEnabled && plannedChannels > 2) {
                 SurroundMeterStrip(viewModel, running = uiState.isPlaying && !forcedOff, channels = plannedChannels, accent = accent)
                 HoldOriginalButton(accent, enabled = uiState.isPlaying) { viewModel.setSurroundHoldOriginal(it) }
@@ -438,7 +432,19 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 onEnabled = { viewModel.setSurroundLabEnabled(it) },
                 onKnob = { knob, value -> viewModel.setSurroundLabKnob(knob, value) },
                 onReset = { viewModel.resetSurroundLab() }
-            )
+            ) {
+                SpeakerSetupPanel(
+                    config = config,
+                    accent = accent,
+                    sevenOne = plannedChannels >= 8 || config.surroundLayout == SurroundLayout.SEVEN_ONE,
+                    embedded = true,
+                    onTest = { viewModel.setSurroundTestChannel(it) },
+                    onCalibration = { viewModel.setSurroundCalibration(it) },
+                    onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
+                    onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
+                    onBassManagement = { viewModel.setSurroundBassManagement(it) }
+                )
+            }
 
             // ── Presets ───────────────────────────────────────────────────────────────────────────────────
             Column(
@@ -501,16 +507,6 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 config, accent,
                 onEnabled = { viewModel.setSurroundSmartSteering(it) },
                 onAmount = { viewModel.setSurroundSmartSteeringAmount(it) }
-            )
-            SpeakerSetupPanel(
-                config = config,
-                accent = accent,
-                sevenOne = plannedChannels >= 8 || config.surroundLayout == SurroundLayout.SEVEN_ONE,
-                onTest = { viewModel.setSurroundTestChannel(it) },
-                onCalibration = { viewModel.setSurroundCalibration(it) },
-                onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
-                onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
-                onBassManagement = { viewModel.setSurroundBassManagement(it) }
             )
         }
     }
@@ -670,16 +666,30 @@ private fun SurroundStageView(
         val wPx = constraints.maxWidth.toFloat()
         val hPx = constraints.maxHeight.toFloat()
         val cx = wPx * 0.5f
-        val cy = hPx * 0.54f
-        val rx = wPx * 0.385f
-        val ry = hPx * 0.335f
+        val cy = hPx * STAGE_CY
+        val rx = wPx * STAGE_RX
+        val ry = hPx * STAGE_RY
+        // Floor plan (fx sideways, fy towards the screen) -> screen. Far things shrink, near things grow.
+        fun floorPoint(fx: Float, fy: Float): Offset {
+            val pp = stageDepthScale(fy)
+            return Offset(cx + fx * rx * pp, cy - fy * ry * pp)
+        }
+        fun ringPath(r: Float): Path = Path().apply {
+            val n = 72
+            for (i in 0..n) {
+                val a = 2f * PI.toFloat() * i / n
+                val o = floorPoint(sin(a) * r, cos(a) * r)
+                if (i == 0) moveTo(o.x, o.y) else lineTo(o.x, o.y)
+            }
+            close()
+        }
 
         // A louder speaker stands closer to the listener, a quieter one further away, so every level change
         // (slider or preset) visibly moves its speaker.
         fun spotPos(spot: SpeakerSpot): Offset {
             val a = spot.angleDeg * PI.toFloat() / 180f
             val r = spot.radius * speakerDistanceFactor(trimsDb.getOrElse(spot.channel.ordinal) { 0f })
-            return Offset(cx + sin(a) * rx * r, cy - cos(a) * ry * r)
+            return floorPoint(sin(a) * r, cos(a) * r)
         }
 
         Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1.02f)) {
@@ -693,42 +703,10 @@ private fun SurroundStageView(
             }
             val me = Offset(cx, cy)
 
-            // Room floor: a lit pool of the room theme, fading to black at the walls
-            drawRect(Brush.radialGradient(listOf(bgInner.copy(0.85f), bgOuter, bgTone(0xFF07090D)), me, wPx * 0.72f))
-
-            // Seating zone and the ring the speakers stand on (dashed)
-            drawOval(
-                Brush.radialGradient(listOf(glow.copy(0.16f + 0.08f * level), Color.Transparent), me, rx * 0.62f),
-                Offset(cx - rx * 0.62f, cy - ry * 0.62f), Size(rx * 1.24f, ry * 1.24f)
+            // Cinema room: walls, ceiling coves, glossy floor, curved screen
+            drawCinemaRoom(
+                ::floorPoint, wPx, hPx, cx, cy, rx, k, glow, bgInner, level, isPlaying, look.surroundShowScreen
             )
-            drawOval(
-                glow.copy(0.20f), Offset(cx - rx, cy - ry), Size(rx * 2f, ry * 2f),
-                style = Stroke(1.2f * k + 0.4f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * k, 7f * k)))
-            )
-
-            // Screen at the front of the room; it lights the floor below it while something plays
-            if (look.surroundShowScreen) {
-            val screenW = wPx * 0.36f
-            val screenH = 6f * k
-            val screenTop = hPx * 0.075f
-            if (isPlaying) {
-                drawRect(
-                    Brush.verticalGradient(listOf(glow.copy(0.20f * (0.5f + level)), Color.Transparent), screenTop, screenTop + hPx * 0.2f),
-                    Offset(cx - screenW * 0.62f, screenTop), Size(screenW * 1.24f, hPx * 0.2f)
-                )
-            }
-            drawRoundRect(
-                Color.White.copy(if (isPlaying) 0.75f else 0.28f),
-                Offset(cx - screenW / 2f, screenTop), Size(screenW, screenH), CornerRadius(screenH / 2f)
-            )
-            }
-
-            // Listener: a soft sweet-spot halo and a top-down head that faces the screen
-            val phase = if (look.surroundAnimated) (t * 0.6f) % 1f else 0.35f
-            if (look.surroundShowScreen) drawCircle(glow.copy((1f - phase) * 0.26f * (0.4f + level)), (14f + phase * 30f) * k, me, style = Stroke(1.4f))
-            drawCircle(bgTone(0xFF10161F), 10f * k, me)
-            drawCircle(glow.copy(0.9f), 10f * k, me, style = Stroke(1.8f * k))
-            drawLine(glow.copy(0.9f), Offset(cx, cy - 10f * k), Offset(cx, cy - 15f * k), 2f * k)
 
             // Visualizer (decorative, driven by the live loudness)
             if (look.surroundVisualizerEnabled && channels > 2) {
@@ -749,7 +727,7 @@ private fun SurroundStageView(
                     // wedge: narrow at the speaker, wide at the listener
                     val px = -uy
                     val py = ux
-                    val spread = 26f * k
+                    val spread = 34f * k
                     val cone = Path().apply {
                         moveTo(at.x + ux * 14f * k, at.y + uy * 14f * k)
                         lineTo(me.x + px * spread, me.y + py * spread)
@@ -763,40 +741,58 @@ private fun SurroundStageView(
                 }
             }
 
-            // Speakers
-            SPEAKER_SPOTS.forEachIndexed { i, spot ->
+            // Cinema seats with the listener in the middle one
+            drawCinemaSeating(cx, cy, k, glow)
+
+            // Speakers: free-standing 3D cabinets, drawn far to near so closer ones overlap the distant ones
+            SPEAKER_SPOTS.withIndex().sortedByDescending { spotPos(it.value).y }.forEach { (i, spot) ->
                 val index = spot.channel.ordinal
                 val playing = isChannelActive(spot.channel, channels)
                 val c = channelColor(spot.channel, look)
                 val at = spotPos(spot)
+                val ps = (0.6f + 0.5f * stageDepthScale(-(at.y - cy) / ry)) // size follows depth
+                val ks = k * ps
                 val gainFactor = 10f.pow(trimsDb[index] / 20f).coerceIn(0.25f, 2.5f)
                 val energy = if (playing) (0.25f + 0.75f * level) * (0.6f + 0.4f * gainFactor.coerceAtMost(1.6f)) else 0f
+                val bodyH = if (spot.channel == SurroundChannel.SW) 28f * ks else 42f * ks
+                val body = Offset(at.x, at.y - bodyH * 0.5f)
 
                 if (playing) {
-                    drawCircle(Brush.radialGradient(listOf(c.copy(0.30f * (0.5f + energy)), Color.Transparent), at, 34f * k), 34f * k, at)
-                    // three sound arcs that face the listener and drift outwards
-                    val dir = Math.toDegrees(kotlin.math.atan2(me.y - at.y, me.x - at.x).toDouble()).toFloat()
+                    drawOval(
+                        Brush.radialGradient(listOf(c.copy(0.30f * (0.5f + energy)), Color.Transparent), at, 36f * ks),
+                        Offset(at.x - 36f * ks, at.y - 18f * ks), Size(72f * ks, 36f * ks)
+                    )
+                    val dir = Math.toDegrees(kotlin.math.atan2(me.y - body.y, me.x - body.x).toDouble()).toFloat()
                     if (look.surroundShowArcs) for (ring in 0..2) {
                         val ph = if (look.surroundAnimated) (t * 0.8f + i * 0.19f + ring / 3f) % 1f else 0.15f + ring * 0.3f
-                        val r = (15f + ph * (14f + 12f * energy)) * k
+                        val r = (17f + ph * (14f + 12f * energy)) * ks
                         drawArc(
                             c.copy((1f - ph) * 0.65f), dir - 38f, 76f, false,
-                            Offset(at.x - r, at.y - r), Size(r * 2f, r * 2f),
-                            style = Stroke(1.6f * k, cap = androidx.compose.ui.graphics.StrokeCap.Round)
+                            Offset(body.x - r, body.y - r), Size(r * 2f, r * 2f),
+                            style = Stroke(1.6f * ks, cap = androidx.compose.ui.graphics.StrokeCap.Round)
                         )
                     }
                 }
-                drawSpeaker(spot.channel, at, k, spot.angleDeg, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
+                drawSpeaker(spot.channel, at, ks, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
             }
+
+            // Edge vignette frames the scene like a lens
+            drawRect(
+                Brush.radialGradient(listOf(Color.Transparent, Color.Black.copy(0.55f)), me, wPx * 0.80f),
+                Offset.Zero, Size(wPx, hPx)
+            )
 
             // 360° move: the sound orb, a dashed line back to the listener
             if (move != null) {
                 val a = move.angleDeg * PI.toFloat() / 180f
-                val orb = Offset(cx + sin(a) * rx * move.distance, cy - cos(a) * ry * move.distance)
+                val floorSpot = floorPoint(sin(a) * move.distance, cos(a) * move.distance)
+                val orb = Offset(floorSpot.x, floorSpot.y - 16f * k)
                 drawLine(
-                    glow.copy(0.7f), me, orb, 1.5f * k + 0.5f,
+                    glow.copy(0.7f), me, floorSpot, 1.5f * k + 0.5f,
                     pathEffect = PathEffect.dashPathEffect(floatArrayOf(4f * k, 4f * k))
                 )
+                drawOval(Color.Black.copy(0.40f), Offset(floorSpot.x - 11f * k, floorSpot.y - 4f * k), Size(22f * k, 8f * k))
+                drawLine(glow.copy(0.35f), floorSpot, orb, 1.2f * k)
                 drawCircle(glow.copy(0.16f + 0.10f * level), 22f * k, orb)
                 drawCircle(glow, 11f * k, orb)
                 drawCircle(Color(0xFF04202A), 4f * k, orb)
@@ -813,7 +809,7 @@ private fun SurroundStageView(
                     fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
                     modifier = Modifier
                         .width(28.dp)
-                        .offset { IntOffset((at.x - 14.dp.toPx()).roundToInt(), (at.y + 17.dp.toPx()).roundToInt()) }
+                        .offset { IntOffset((at.x - 14.dp.toPx()).roundToInt(), (at.y + 3.dp.toPx()).roundToInt()) }
                         .clip(RoundedCornerShape(50))
                         .background(Color.Black.copy(if (playing) 0.45f else 0.25f))
                         .padding(vertical = 1.dp)
@@ -866,6 +862,15 @@ private class MoveState(
     val onMove: (angleDeg: Float, distance: Float) -> Unit
 )
 
+// Room view geometry shared by the drawing and the touch mapping.
+private const val STAGE_CY = 0.55f
+private const val STAGE_RX = 0.36f
+private const val STAGE_RY = 0.30f
+private const val STAGE_PERSPECTIVE = 0.30f
+
+/** 1 at the listener, smaller towards the screen (fy > 0), larger towards the back of the room (fy < 0). */
+private fun stageDepthScale(fy: Float): Float = 1f / (1f + STAGE_PERSPECTIVE * fy)
+
 /** Auto-orbit moves the sound 20 times a second; how long one cycle takes is the Orbit speed slider. */
 private const val ORBIT_STEP_S = 0.05f
 
@@ -875,11 +880,14 @@ private const val ORBIT_STEP_S = 0.05f
  * keeps the current angle, since "straight ahead of nothing" has no direction.
  */
 private fun positionFromTouch(x: Float, y: Float, w: Float, h: Float, currentAngle: Float): Pair<Float, Float> {
-    val dx = (x - w * 0.5f) / (w * 0.385f)
-    val dy = -(y - h * 0.54f) / (h * 0.335f)
-    val distance = sqrt(dx * dx + dy * dy)
+    // Undo the floor perspective: screen y = fy * p(fy) with p = 1 / (1 + c * fy), so fy = Y / (1 - c * Y).
+    val sy = -(y - h * STAGE_CY) / (h * STAGE_RY)
+    val denom = (1f - STAGE_PERSPECTIVE * sy).coerceAtLeast(0.2f)
+    val fy = sy / denom
+    val dx = (x - w * 0.5f) / (w * STAGE_RX) * (1f + STAGE_PERSPECTIVE * fy)
+    val distance = sqrt(dx * dx + fy * fy)
     val angle = if (distance < 0.05f) currentAngle
-    else normalizeSurroundAngle(Math.toDegrees(atan2(dx, dy).toDouble()).toFloat())
+    else normalizeSurroundAngle(Math.toDegrees(atan2(dx, fy).toDouble()).toFloat())
     return angle to sanitizeSurroundDistance(distance)
 }
 
@@ -1033,7 +1041,8 @@ private fun UpmixLabPanel(
     accent: Color,
     onEnabled: (Boolean) -> Unit,
     onKnob: (SurroundLabKnob, Float) -> Unit,
-    onReset: () -> Unit
+    onReset: () -> Unit,
+    speakerSetup: @Composable () -> Unit = {}
 ) {
     val tuning = config.surroundEffectiveTuning()
     Column(
@@ -1049,7 +1058,7 @@ private fun UpmixLabPanel(
             Icon(Icons.Rounded.GraphicEq, null, tint = accent, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(
-                "UPMIX LAB", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                "UPMIX LAB & SPEAKER SETUP", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
                 letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
             )
             Row(
@@ -1064,7 +1073,7 @@ private fun UpmixLabPanel(
             PremiumSwitch(checked = config.surroundTuneEnabled, onCheckedChange = onEnabled, accentColor = accent)
         }
         Text(
-            if (config.surroundTuneEnabled) "Your tuning replaces the ${config.surroundMode.displayName} mode. Picking a preset hands control back to the mode."
+            if (config.surroundTuneEnabled) "Your tuning replaces the ${config.surroundMode.displayName} mode. It stays on when you pick a preset; the preset only sets the speaker levels."
             else "Showing the ${config.surroundMode.displayName} mode. Move a slider to make it your own.",
             color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp
         )
@@ -1089,6 +1098,8 @@ private fun UpmixLabPanel(
             )
             Text(knob.hint, color = Color.White.copy(0.45f), fontSize = 10.sp, lineHeight = 14.sp)
         }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(0.10f)))
+        speakerSetup()
     }
 }
 
@@ -1134,36 +1145,265 @@ private fun ActiveChannelStrip(channels: Int, look: AppearanceConfig) {
     }
 }
 
-/** Top-down speaker: a cabinet with a driver cone, turned towards the listener ([angleDeg] rotates it into place). */
-private fun DrawScope.drawSpeaker(
-    channel: SurroundChannel, c: Offset, k: Float, angleDeg: Float, color: Color, playing: Boolean, detailed: Boolean
+// Room extent in floor-plan units, shared by the walls, the floor and the lane lights.
+private const val ROOM_HALF_WIDTH = 1.30f
+private const val ROOM_FAR = 1.30f
+private const val ROOM_NEAR = -1.30f
+
+private fun cinemaPoly(vararg p: Offset): Path = Path().apply {
+    moveTo(p[0].x, p[0].y)
+    for (i in 1 until p.size) lineTo(p[i].x, p[i].y)
+    close()
+}
+
+/** Quadratic curve from [p0] to [p1] through control point [c], written with cubicTo so it works on every Compose version. */
+private fun Path.curveTo(p0: Offset, c: Offset, p1: Offset) {
+    cubicTo(
+        p0.x + (c.x - p0.x) * 2f / 3f, p0.y + (c.y - p0.y) * 2f / 3f,
+        p1.x + (c.x - p1.x) * 2f / 3f, p1.y + (c.y - p1.y) * 2f / 3f,
+        p1.x, p1.y
+    )
+}
+
+/**
+ * Home-cinema room in perspective: coved ceiling lights, acoustic side walls with wash lights, a glossy floor with
+ * lane lights, the seating zone ring and a big curved screen that throws light onto the room while it plays.
+ */
+private fun DrawScope.drawCinemaRoom(
+    floorPoint: (Float, Float) -> Offset,
+    w: Float, h: Float, cx: Float, cy: Float, rx: Float, k: Float,
+    glow: Color, bgInner: Color, level: Float, playing: Boolean, showScreen: Boolean
 ) {
+    val fl = floorPoint(-ROOM_HALF_WIDTH, ROOM_FAR)
+    val fr = floorPoint(ROOM_HALF_WIDTH, ROOM_FAR)
+    val nl = floorPoint(-ROOM_HALF_WIDTH, ROOM_NEAR)
+    val nr = floorPoint(ROOM_HALF_WIDTH, ROOM_NEAR)
+    val hz = fl.y
+    val wallTop = hz - h * 0.30f * stageDepthScale(ROOM_FAR)
+    val ceilN = -h * 0.02f
+    val tlO = Offset(-w * 0.18f, ceilN)
+    val trO = Offset(w * 1.18f, ceilN)
+    val wl = Offset(fl.x, wallTop)
+    val wr = Offset(fr.x, wallTop)
+    val lightLevel = if (playing) level else 0.2f
+
+    drawRect(Color(0xFF05070B))
+    // Ceiling with glowing cove strips that get smaller towards the screen
+    drawPath(cinemaPoly(tlO, trO, wr, wl), Brush.verticalGradient(listOf(Color(0xFF06080C), Color(0xFF121A26)), 0f, wallTop.coerceAtLeast(1f)))
+    for (i in 0 until 4) {
+        val u = i / 3f
+        val y = ceilN + (wallTop - ceilN) * (0.18f + 0.2f * u * u + 0.05f * u)
+        val half = w * 0.62f * (1f - u * 0.62f)
+        drawLine(glow.copy(0.06f), Offset(cx - half, y), Offset(cx + half, y), 10f * k * (1f - u * 0.6f))
+        drawLine(glow.copy(0.18f + 0.22f * (1f - u) + 0.1f * lightLevel), Offset(cx - half, y), Offset(cx + half, y), (3.2f - u * 1.8f) * k)
+    }
+    // Far wall with acoustic panel seams
+    drawPath(cinemaPoly(wl, wr, Offset(fr.x, hz), Offset(fl.x, hz)), Brush.verticalGradient(listOf(Color(0xFF121926), Color(0xFF1B2535)), wallTop, hz))
+    for (i in 0 until 14) {
+        val x = wl.x + (wr.x - wl.x) * i / 14f
+        drawLine(Color.White.copy(0.045f), Offset(x, wallTop), Offset(x, hz), 1f)
+    }
+    // Side walls: ribs converge towards the screen, a wash light runs along each wall
+    for (sign in intArrayOf(-1, 1)) {
+        val f = if (sign < 0) fl else fr
+        val n = if (sign < 0) nl else nr
+        val o = if (sign < 0) tlO else trO
+        val brush = if (sign < 0) Brush.horizontalGradient(listOf(Color(0xFF07090D), Color(0xFF141C2A)), 0f, w * 0.3f)
+        else Brush.horizontalGradient(listOf(Color(0xFF141C2A), Color(0xFF07090D)), w * 0.7f, w)
+        drawPath(cinemaPoly(Offset(f.x, wallTop), f, n, o), brush)
+        for (i in 1 until 10) {
+            val u = i / 10f
+            val fz = ROOM_FAR + (ROOM_NEAR - ROOM_FAR) * u * u
+            val p0 = floorPoint(sign * ROOM_HALF_WIDTH, fz)
+            val yTop = wallTop + (ceilN - wallTop) * minOf(1f, u * u * 1.15f)
+            drawLine(
+                Color(0xFF78AADC).copy(0.05f + 0.05f * (1f - u)), p0,
+                Offset(p0.x + (o.x - f.x) * u * u * 0.9f, yTop), 1f
+            )
+        }
+        drawLine(
+            glow.copy(0.22f + 0.15f * lightLevel),
+            Offset(f.x, hz - h * 0.09f * stageDepthScale(ROOM_FAR)), Offset(n.x, n.y - h * 0.16f), 2f * k
+        )
+    }
+    // Glossy floor
+    val floor = cinemaPoly(fl, fr, nr, nl)
+    drawPath(floor, Brush.verticalGradient(listOf(Color(0xFF0D141E), Color(0xFF162233), Color(0xFF0A0F17)), hz, h))
+    clipPath(floor) {
+        drawRect(
+            Brush.verticalGradient(listOf(glow.copy(0.20f + 0.10f * lightLevel), Color.Transparent), hz, hz + h * 0.25f),
+            Offset(0f, hz), Size(w, h * 0.25f)
+        )
+        for (i in -5..5) {
+            drawLine(Color.White.copy(0.045f), floorPoint(i * 0.26f, ROOM_FAR), floorPoint(i * 0.26f, ROOM_NEAR), 1f)
+        }
+        for (j in 0..8) {
+            val z = ROOM_FAR + (ROOM_NEAR - ROOM_FAR) * j / 8f
+            drawLine(Color.White.copy(0.04f), floorPoint(-ROOM_HALF_WIDTH, z), floorPoint(ROOM_HALF_WIDTH, z), 1f)
+        }
+    }
+    // Lane lights along both edges of the floor
+    for (sign in intArrayOf(-1, 1)) for (j in 0 until 16) {
+        val z = ROOM_FAR + (ROOM_NEAR - ROOM_FAR) * j / 15f
+        val p = floorPoint(sign * (ROOM_HALF_WIDTH - 0.02f), z)
+        val sc = stageDepthScale(z)
+        drawCircle(glow.copy(0.18f), 8f * k * sc, p)
+        drawCircle(glow.copy(0.85f), 2.2f * k * sc, p)
+    }
+    // Seating zone halo and the ring the speakers stand on
+    fun ring(r: Float) = Path().apply {
+        for (i in 0..72) {
+            val a = 2f * PI.toFloat() * i / 72f
+            val o = floorPoint(sin(a) * r, cos(a) * r)
+            if (i == 0) moveTo(o.x, o.y) else lineTo(o.x, o.y)
+        }
+        close()
+    }
+    drawPath(ring(0.62f), Brush.radialGradient(listOf(glow.copy(0.30f + 0.10f * lightLevel), Color.Transparent), Offset(cx, cy), rx * 0.7f))
+    drawPath(ring(0.5f), Color.White.copy(0.06f), style = Stroke(1f))
+    drawPath(
+        ring(1f), glow.copy(0.38f),
+        style = Stroke(1.6f * k, pathEffect = PathEffect.dashPathEffect(floatArrayOf(3f * k, 7f * k)))
+    )
+
+    if (!showScreen) return
+    // Curved cinema screen at the far wall
+    val sc = floorPoint(0f, ROOM_FAR - 0.02f)
+    val ps = stageDepthScale(ROOM_FAR)
+    val sw = w * 0.56f * ps
+    val sh = w * 0.25f * ps
+    val top = sc.y - sh
+    val bow = 14f * k * 1.2f
+    drawRect(
+        Brush.radialGradient(listOf(glow.copy(0.30f * (0.5f + lightLevel)), Color.Transparent), Offset(cx, sc.y - sh / 2f), w * 0.55f),
+        Offset.Zero, Size(w, hz + h * 0.1f)
+    )
+    clipPath(floor) {
+        drawPath(
+            cinemaPoly(Offset(cx - sw * 0.5f, sc.y), Offset(cx + sw * 0.5f, sc.y), floorPoint(0.9f, -0.1f), floorPoint(-0.9f, -0.1f)),
+            Brush.verticalGradient(listOf(glow.copy(0.30f * (0.6f + lightLevel)), Color.Transparent), sc.y, sc.y + h * 0.3f)
+        )
+    }
+    val bezel = Path().apply {
+        val a = Offset(cx - sw / 2f - 6f * k, top - 6f * k)
+        val b = Offset(cx + sw / 2f + 6f * k, top - 6f * k)
+        moveTo(a.x, a.y)
+        curveTo(a, Offset(cx, a.y + bow), b)
+        lineTo(b.x, sc.y + 6f * k)
+        curveTo(Offset(b.x, sc.y + 6f * k), Offset(cx, sc.y + 6f * k + bow), Offset(a.x, sc.y + 6f * k))
+        close()
+    }
+    drawPath(bezel, Color(0xFF04060A))
+    val picture = Path().apply {
+        val a = Offset(cx - sw / 2f, top)
+        val b = Offset(cx + sw / 2f, top)
+        moveTo(a.x, a.y)
+        curveTo(a, Offset(cx, top + bow), b)
+        lineTo(b.x, sc.y)
+        curveTo(Offset(b.x, sc.y), Offset(cx, sc.y + bow), Offset(a.x, sc.y))
+        close()
+    }
+    val dim = if (playing) 0.55f + 0.45f * level else 0.35f
+    drawPath(
+        picture,
+        Brush.linearGradient(
+            listOf(
+                Color(0xFF0E5A86).copy(dim), glow.copy(dim), Color(0xFF7A5CFF).copy(dim), Color(0xFF12304F).copy(dim)
+            ),
+            Offset(cx - sw / 2f, top), Offset(cx + sw / 2f, sc.y)
+        )
+    )
+    drawPath(
+        picture,
+        Brush.verticalGradient(listOf(Color.White.copy(0.35f), Color.Transparent, Color.Black.copy(0.25f)), top, sc.y)
+    )
+    drawPath(
+        cinemaPoly(Offset(cx - 10f * k, top + sh * 0.38f), Offset(cx - 10f * k, top + sh * 0.62f), Offset(cx + 14f * k, top + sh * 0.5f)),
+        Color.White.copy(0.85f)
+    )
+}
+
+/** Three cinema seats at the listening spot; the listener sits in the middle one. */
+private fun DrawScope.drawCinemaSeating(cx: Float, cy: Float, k: Float, glow: Color) {
+    fun seat(x: Float, y: Float, s: Float, highlight: Boolean) {
+        val w = 34f * k * s
+        val h = 30f * k * s
+        drawOval(Color.Black.copy(0.5f), Offset(x - w * 0.7f, y - 3f * k * s), Size(w * 1.4f, 12f * k * s))
+        drawRoundRect(
+            Brush.verticalGradient(listOf(Color(0xFF2B3650), Color(0xFF141B2A)), y - h, y),
+            Offset(x - w / 2f, y - h), Size(w, h * 0.78f), CornerRadius(9f * k * s)
+        )
+        drawRoundRect(glow.copy(if (highlight) 0.9f else 0.35f), Offset(x - w / 2f, y - h), Size(w, h * 0.78f), CornerRadius(9f * k * s), style = Stroke(1.4f * k * s))
+        drawRoundRect(
+            Brush.verticalGradient(listOf(Color(0xFF202A3F), Color(0xFF10151F)), y - h * 0.3f, y),
+            Offset(x - w / 2f - 4f * k * s, y - h * 0.42f), Size(w + 8f * k * s, h * 0.42f), CornerRadius(7f * k * s)
+        )
+        drawRoundRect(glow.copy(if (highlight) 0.9f else 0.30f), Offset(x - w / 2f - 4f * k * s, y - h * 0.42f), Size(w + 8f * k * s, h * 0.42f), CornerRadius(7f * k * s), style = Stroke(1.4f * k * s))
+    }
+    val sy = cy + 10f * k
+    seat(cx - 72f * k, sy, 1f, false)
+    seat(cx + 72f * k, sy, 1f, false)
+    seat(cx, sy, 1.12f, true)
+    // listener: body and head, with a soft glow
+    drawCircle(Brush.radialGradient(listOf(glow.copy(0.35f), Color.Transparent), Offset(cx, cy - 30f * k), 26f * k), 26f * k, Offset(cx, cy - 30f * k))
+    drawRoundRect(Color(0xFF161D2B), Offset(cx - 11f * k, cy - 24f * k), Size(22f * k, 18f * k), CornerRadius(8f * k))
+    drawRoundRect(glow.copy(0.95f), Offset(cx - 11f * k, cy - 24f * k), Size(22f * k, 18f * k), CornerRadius(8f * k), style = Stroke(1.8f * k))
+    drawCircle(Color(0xFF161D2B), 8f * k, Offset(cx, cy - 30f * k))
+    drawCircle(glow.copy(0.95f), 8f * k, Offset(cx, cy - 30f * k), style = Stroke(1.8f * k))
+}
+
+/** Free-standing 3D speaker: floor shadow, front baffle with drivers, lit top and side faces. [base] is where it stands. */
+private fun DrawScope.drawSpeaker(
+    channel: SurroundChannel, base: Offset, k: Float, color: Color, playing: Boolean, detailed: Boolean
+) {
+    val sub = channel == SurroundChannel.SW
+    val bw = if (sub) 30f * k else 24f * k
+    val bh = if (sub) 28f * k else 42f * k
+    val d = 10f * k
+    drawOval(Color.Black.copy(0.55f), Offset(base.x - bw * 0.75f, base.y - 4f * k), Size(bw * 1.9f, 10f * k))
     if (!detailed) {
-        drawCircle(color, 7f * k, c)
+        drawCircle(color, 7f * k, Offset(base.x, base.y - 7f * k))
         return
     }
-    if (channel == SurroundChannel.SW) {
-        val s = 26f * k
-        val tl = Offset(c.x - s / 2, c.y - s / 2)
-        drawRoundRect(bgTone(0xFF0E1118), tl, Size(s, s), CornerRadius(8f * k))
-        drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(s, s), CornerRadius(8f * k), style = Stroke(1.6f * k))
-        drawCircle(color.copy(if (playing) 0.30f else 0.12f), s * 0.34f, c)
-        drawCircle(color, s * 0.34f, c, style = Stroke(1.4f * k))
-        drawCircle(color, s * 0.11f, c)
-        return
+    val left = base.x - bw / 2f
+    val top = base.y - bh
+    val edge = color.copy(if (playing) 0.95f else 0.65f)
+    val side = cinemaPoly(
+        Offset(left + bw, top), Offset(left + bw + d, top - d * 0.6f),
+        Offset(left + bw + d, base.y - d * 0.6f), Offset(left + bw, base.y)
+    )
+    drawPath(side, Color(0xFF090C12))
+    drawPath(side, edge.copy(0.35f), style = Stroke(1f * k))
+    val topFace = cinemaPoly(
+        Offset(left, top), Offset(left + d, top - d * 0.6f), Offset(left + bw + d, top - d * 0.6f), Offset(left + bw, top)
+    )
+    drawPath(topFace, Brush.linearGradient(listOf(color.copy(if (playing) 0.60f else 0.25f), Color.White.copy(0.20f)), Offset(left, top), Offset(left + bw, top - d)))
+    drawPath(topFace, edge.copy(0.5f), style = Stroke(1f * k))
+    drawRoundRect(
+        Brush.horizontalGradient(listOf(Color(0xFF2C3547), Color(0xFF181E2A), Color(0xFF0B0E15)), left, left + bw),
+        Offset(left, top), Size(bw, bh), CornerRadius(3f * k)
+    )
+    drawRoundRect(edge, Offset(left, top), Size(bw, bh), CornerRadius(3f * k), style = Stroke(1.5f * k))
+    drawLine(Color.White.copy(if (playing) 0.60f else 0.25f), Offset(left + 2f * k, top + 1f * k), Offset(left + bw - 2f * k, top + 1f * k), 1f * k)
+    fun driver(center: Offset, radius: Float) {
+        drawCircle(Color.Black.copy(0.70f), radius * 1.2f, center)
+        drawCircle(
+            Brush.radialGradient(
+                listOf(color.copy(if (playing) 1f else 0.40f), color.copy(if (playing) 0.40f else 0.14f), Color(0xFF0B0E14)),
+                center, radius
+            ),
+            radius, center
+        )
+        drawCircle(color.copy(0.9f), radius, center, style = Stroke(1.2f * k))
+        drawCircle(Color.White.copy(if (playing) 0.40f else 0.12f), radius * 0.28f, Offset(center.x - radius * 0.30f, center.y - radius * 0.34f))
     }
-    val w = 22f * k
-    val h = 16f * k
-    rotate(angleDeg, c) {
-        val tl = Offset(c.x - w / 2, c.y - h / 2)
-        drawRoundRect(bgTone(0xFF0E1118), tl, Size(w, h), CornerRadius(5f * k))
-        drawRoundRect(color.copy(if (playing) 0.9f else 0.7f), tl, Size(w, h), CornerRadius(5f * k), style = Stroke(1.5f * k))
-        // driver cone on the baffle that faces the listener (unrotated: the bottom half)
-        val dc = Offset(c.x, c.y + 1.5f * k)
-        drawCircle(color.copy(if (playing) 0.30f else 0.10f), 4.6f * k, dc)
-        drawCircle(color, 4.6f * k, dc, style = Stroke(1.2f * k))
-        drawCircle(color, 1.5f * k, dc)
+    if (sub) {
+        driver(Offset(base.x, top + bh / 2f), bw * 0.34f)
+    } else {
+        driver(Offset(base.x, top + bh * 0.24f), 3.6f * k)
+        driver(Offset(base.x, top + bh * 0.66f), 7.2f * k)
     }
+    drawCircle(if (playing) color else Color(0xFF3A4150), 1.3f * k, Offset(left + bw - 3f * k, base.y - 3f * k))
 }
 
 private fun DrawScope.drawVisualizer(style: String, color: Color, centre: Offset, width: Float, level: Float, t: Float) {

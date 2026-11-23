@@ -55,6 +55,10 @@ import com.beatraxus.app.fpsbooster.GlCapabilityProbe
 import com.beatraxus.app.fpsbooster.SourceInfo
 import com.beatraxus.app.motionboost.DisplayRefreshRate
 import com.beatraxus.app.engine.VideoPlaybackTuning
+import com.beatraxus.app.engine.VideoCapabilityProbe
+import com.beatraxus.app.engine.VideoCompat
+import com.beatraxus.app.engine.VideoCompatibility
+import com.beatraxus.app.engine.VideoFacts
 import com.beatraxus.app.engine.VideoRenderersFactory
 import com.beatraxus.app.engine.VideoRoutePhase
 import com.beatraxus.app.service.VideoAudioBridge
@@ -497,6 +501,18 @@ class VideoPlayerViewModel(
     private var videoDecoderName: String? = null
     private var audioDecoderName: String? = null
 
+    // First-frame watchdog: a hardware decoder can start, play the sound and show no picture (seen with 4K HDR10 /
+    // Dolby Vision). If no frame is drawn a few seconds after playback is ready, that decoder is blocked and the
+    // player restarts on the next one (see armFirstFrameWatchdog).
+    private var firstFrameRendered = false
+    private var firstFrameWatchdog: Job? = null
+
+    /** True while the current video is HDR / Dolby Vision: no colour effects (they would turn HDR into SDR or black). */
+    private var hdrContent = false
+
+    /** Result of the compatibility check for the current video, shown in the info sheet. */
+    private var deviceCompat: VideoCompat? = null
+
     private var pendingAudioTrackIndex = -1
     private var pendingSubtitleTrackIndex = -1
     private var isInitialTrackRestorationDone = false
@@ -689,6 +705,9 @@ class VideoPlayerViewModel(
         val boosterSetting = _uiState.value
         effectsPipelineAllowed = !(boosterSetting.fpsBooster.isOn && boosterSetting.fpsBoosterSuspended == null &&
             !video.isHdr && deviceCaps?.glEs3 != false)
+        hdrContent = video.isHdr
+        firstFrameRendered = false
+        firstFrameWatchdog?.cancel()
 
         val audioAttributes = AudioAttributes.Builder()
             .setUsage(C.USAGE_MEDIA)
@@ -788,6 +807,7 @@ class VideoPlayerViewModel(
                 initializedTimestampMs: Long, initializationDurationMs: Long
             ) {
                 videoDecoderName = decoderName
+                Log.i(TAG, "Video decoder $decoderName ready after ${initializationDurationMs} ms (mode ${tuning.decoderMode})")
             }
 
             override fun onAudioDecoderInitialized(
@@ -812,6 +832,7 @@ class VideoPlayerViewModel(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _uiState.update { it.copy(isPlaying = isPlaying) }
                 PlaybackGlobalState.setPlaybackActive(isPlaying)
+                if (isPlaying) armFirstFrameWatchdog(player)
                 if (_uiState.value.routeAudioToEngine) {
                     val engine = VideoAudioBridge.getAudioEngine()
                     if (isPlaying) engine?.resumeVideoAudio() else engine?.pauseVideoAudio()
@@ -843,6 +864,7 @@ class VideoPlayerViewModel(
                     _uiState.update { it.copy(duration = player.duration) }
                     reportStreamedVideoMetadata(player)
                     updateTracks()
+                    armFirstFrameWatchdog(player)
                     setupLoudnessEnhancer(player.audioSessionId)
                     finishEngineReroute(player)
                     restoreSavedAudioRoute()
@@ -899,8 +921,15 @@ class VideoPlayerViewModel(
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                firstFrameRendered = false
+                firstFrameWatchdog?.cancel()
                 updateCurrentVideo()
                 updateTracks()
+            }
+
+            override fun onRenderedFirstFrame() {
+                firstFrameRendered = true
+                firstFrameWatchdog?.cancel()
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -1376,6 +1405,8 @@ class VideoPlayerViewModel(
         // currentPosition includes the clock shift (audio delay + booster A/V compensation), so take it back out.
         val positionMs = (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
         val resumePlayback = player.playWhenReady
+        firstFrameRendered = false
+        firstFrameWatchdog?.cancel()
         player.stop()
         player.seekTo(player.currentMediaItemIndex, positionMs)
         player.prepare()
@@ -1422,11 +1453,71 @@ class VideoPlayerViewModel(
 
         Log.w(TAG, "Video decoder $failed failed (${error.errorCodeName}); retrying on another decoder")
         tuning.blockedVideoDecoders = tuning.blockedVideoDecoders + failed
+        firstFrameRendered = false
+        firstFrameWatchdog?.cancel()
         val positionMs = (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
         player.seekTo(player.currentMediaItemIndex, positionMs)
         player.prepare()
         player.playWhenReady = true
         return true
+    }
+
+    /**
+     * Starts the first-frame watchdog once the player is ready and playing a video track with no picture drawn yet.
+     * The check is skipped while the player screen is not showing (background play) and while casting: no frame is drawn there either.
+     */
+    private fun armFirstFrameWatchdog(player: ExoPlayer) {
+        if (firstFrameRendered || firstFrameWatchdog?.isActive == true) return
+        if (player.videoFormat == null || !player.playWhenReady || player.playbackState != Player.STATE_READY) return
+        firstFrameWatchdog = viewModelScope.launch {
+            delay(FIRST_FRAME_TIMEOUT_MS)
+            val st = _uiState.value
+            val canShowPicture = PlaybackGlobalState.isVideoPlayerOnScreen.value && st.castDeviceName == null
+            if (exoPlayer === player && !firstFrameRendered && canShowPicture &&
+                player.playbackState == Player.STATE_READY && player.playWhenReady
+            ) {
+                recoverFromMissingPicture(player)
+            }
+        }
+    }
+
+    /**
+     * The player is ready and playing but never drew a frame: the video decoder runs and shows nothing. Blocks that
+     * decoder and restarts on the next one, but only when another decoder exists in the chosen mode, so a working
+     * (just slow to start) decoder is never swapped for nothing. Gives up after [MAX_DECODER_RETRIES] tries per video.
+     */
+    private fun recoverFromMissingPicture(player: ExoPlayer) {
+        val name = videoDecoderName
+        val format = player.videoFormat
+        Log.w(TAG, "No video frame ${FIRST_FRAME_TIMEOUT_MS} ms after playback became ready (decoder=$name, mode=${tuning.decoderMode})")
+        if (name == null || format == null || name.contains("ffmpeg", ignoreCase = true)) return
+
+        val blocked = tuning.blockedVideoDecoders + name
+        if (!VideoRenderersFactory.hasAlternativeDecoder(format, blocked, tuning.decoderMode)) {
+            Log.w(TAG, "No other video decoder to try for ${format.sampleMimeType} in ${tuning.decoderMode} mode")
+            _uiState.update {
+                it.copy(aspectRatioMessage = "This phone's video decoder shows no picture for this video. Try another decoder mode.")
+            }
+            viewModelScope.launch { delay(5000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+            return
+        }
+
+        val mediaId = player.currentMediaItem?.mediaId
+        if (mediaId != decoderRetryMediaId) {
+            decoderRetryMediaId = mediaId
+            decoderRetryCount = 0
+        }
+        if (decoderRetryCount >= MAX_DECODER_RETRIES) return
+        decoderRetryCount++
+
+        Log.w(TAG, "Video decoder $name shows no picture; retrying on another decoder")
+        tuning.blockedVideoDecoders = blocked
+        firstFrameRendered = false
+        val positionMs = (player.currentPosition - tuning.clockShiftMs).coerceAtLeast(0L)
+        player.stop()
+        player.seekTo(player.currentMediaItemIndex, positionMs)
+        player.prepare()
+        player.playWhenReady = true
     }
 
     private fun isCodecSupportError(error: androidx.media3.common.PlaybackException): Boolean =
@@ -2959,15 +3050,54 @@ class VideoPlayerViewModel(
 
     private var dolbyVisionWarnedFor: String? = null
 
-    /** Works out the HDR format from the video stream, and warns once about Dolby Vision the device cannot decode. */
+    /**
+     * Works out the HDR format from the video stream and checks it against what this phone can decode
+     * ([VideoCapabilityProbe], read on first app open). Tells the viewer once per video when something is beyond the
+     * phone (a 4K 60 fps file on a 4K 30 fps decoder, Dolby Vision profile 5 without a Dolby Vision decoder, ...).
+     */
     private fun onVideoFormatKnown(vf: androidx.media3.common.Format) {
         val hdr = HdrFormat.detect(vf.sampleMimeType, vf.codecs, vf.colorInfo?.colorTransfer ?: -1, vf.colorInfo?.colorSpace ?: -1)
         if (hdr != _uiState.value.hdrInfo) _uiState.update { it.copy(hdrInfo = hdr) }
         val id = exoPlayer?.currentMediaItem?.mediaId
-        if (hdr.needsDolbyVisionDecoder && !hasDolbyVisionDecoder && dolbyVisionWarnedFor != id) {
+
+        val wasHdr = hdrContent
+        hdrContent = hdr.isHdr
+        if (wasHdr && !hdr.isHdr) updateVideoEffects() // the effects that were held back for an HDR video can start now
+
+        val compat = try {
+            val caps = VideoCapabilityProbe.cachedOrNull() ?: VideoCapabilityProbe.ensure(getApplication<Application>())
+            VideoCompatibility.check(
+                caps,
+                VideoFacts(
+                    mimeType = vf.sampleMimeType,
+                    width = vf.width.coerceAtLeast(0),
+                    height = vf.height.coerceAtLeast(0),
+                    frameRate = vf.frameRate.takeIf { it > 0f } ?: 0f,
+                    bitrate = vf.averageBitrate.takeIf { it > 0 } ?: vf.peakBitrate.takeIf { it > 0 } ?: 0,
+                    tenBit = (vf.colorInfo?.lumaBitdepth ?: -1) > 8 || hdr.isHdr,
+                    isHdr = hdr.isHdr,
+                    dolbyVisionProfile = hdr.dolbyVisionProfile
+                )
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "Compatibility check failed", t)
+            null
+        }
+        deviceCompat = compat
+        if (compat != null) Log.i(TAG, "Device compatibility: ${compat.fit} - ${compat.summary}")
+
+        val st = _uiState.value
+        val colourFeaturesOn = st.colorBrightness != 0f || st.colorContrast != 1f || st.colorSaturation != 1f ||
+            st.colorHue != 0f || st.colorTemperature != 0f || !st.videoOrientation.isIdentity
+        val message = listOfNotNull(
+            compat?.note,
+            if (hdr.isHdr && colourFeaturesOn) "Colour grading and rotation are paused for HDR video to keep its HDR" else null
+        ).joinToString(". ").takeIf { it.isNotBlank() }
+
+        if (message != null && dolbyVisionWarnedFor != id) {
             dolbyVisionWarnedFor = id
-            _uiState.update { it.copy(aspectRatioMessage = "Dolby Vision profile 5 needs a Dolby Vision decoder. Colours may look wrong on this device") }
-            viewModelScope.launch { delay(4000); _uiState.update { it.copy(aspectRatioMessage = null) } }
+            _uiState.update { it.copy(aspectRatioMessage = message) }
+            viewModelScope.launch { delay(6000); _uiState.update { it.copy(aspectRatioMessage = null) } }
         }
     }
 
@@ -3014,7 +3144,8 @@ class VideoPlayerViewModel(
             droppedFrames = counters?.droppedBufferCount ?: 0,
             renderedFrames = counters?.renderedOutputBufferCount ?: 0,
             displayHdrTypes = displayHdrSupport,
-            dolbyVisionDecoder = hasDolbyVisionDecoder
+            dolbyVisionDecoder = hasDolbyVisionDecoder,
+            deviceCompat = deviceCompat?.summary
         )
         _uiState.update { it.copy(videoInfo = info) }
     }
@@ -3092,6 +3223,10 @@ class VideoPlayerViewModel(
         upscaleEffect.mode = state.upscaleMode
         upscaleEffect.strength = state.upscaleStrength
         if (!effectsPipelineAllowed || state.fpsBoosterPlan.active) return
+        // HDR / Dolby Vision goes straight from the decoder to the screen. media3's effect pipeline would tone-map it to
+        // SDR (or show black for Dolby Vision), so it is never installed for an HDR video. (Once installed it cannot be
+        // taken out again, hence the check on effectsInstalled.)
+        if (hdrContent && !effectsInstalled) return
         val wantGrade = needsGradeEffect()
         // The FPS Booster draws the video itself at the file's size, so the upscaler stays out of its way.
         val wantUpscale = state.upscaleMode.isOn && !state.fpsBoosterPlan.active
@@ -3153,6 +3288,9 @@ class VideoPlayerViewModel(
 
 private const val PREF_VIDEO_DECODER_MODE = "video_decoder_mode"
 private const val MAX_DECODER_RETRIES = 2
+
+/** How long a ready, playing video may go without drawing any frame before its decoder is blocked (see armFirstFrameWatchdog). */
+private const val FIRST_FRAME_TIMEOUT_MS = 4500L
 
 // Remembered player settings (SharedPreferences "beatraxus").
 private const val KEY_COLOR_BRIGHTNESS = "video_color_brightness"

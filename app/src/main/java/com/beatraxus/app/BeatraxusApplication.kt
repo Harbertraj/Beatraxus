@@ -108,6 +108,11 @@ class BeatraxusApplication : Application(), ImageLoaderFactory {
             try { com.beatraxus.app.perf.RefreshRateManager.init(this) } catch (_: Throwable) {}
         }
         startup.execute {
+            // First open (and after a system update): ask the phone what video it can decode and show, so the video
+            // player can pick the best decoder and say up front when a file is beyond the phone.
+            try { com.beatraxus.app.engine.VideoCapabilityProbe.ensure(this) } catch (_: Throwable) {}
+        }
+        startup.execute {
             // Clear temporary cloud cache on app start
             try {
                 clearTemporaryCache()

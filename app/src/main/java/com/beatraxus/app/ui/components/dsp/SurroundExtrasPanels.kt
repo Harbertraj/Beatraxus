@@ -23,7 +23,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SurroundSound
@@ -124,29 +123,6 @@ private fun accentSliderColors(accent: Color) = SliderDefaults.colors(
     activeTrackColor = accent,
     inactiveTrackColor = Color.White.copy(0.12f)
 )
-
-// ── Headphone surround ───────────────────────────────────────────────────────────────────────────────────────
-
-@Composable
-internal fun HeadphoneSurroundPanel(
-    config: DspConfig,
-    accent: Color,
-    onEnabled: (Boolean) -> Unit
-) {
-    Column(modifier = Modifier.extrasCard(accent), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        CardTitle("HEADPHONE SURROUND", Icons.Rounded.Headphones, accent) {
-            PremiumSwitch(checked = config.surroundHeadphoneMode, onCheckedChange = onEnabled, accentColor = accent)
-        }
-        Hint(
-            "For headphones, earbuds and Bluetooth, where real surround speakers do not exist. The 5.1 / 7.1 mix is " +
-                "rendered to two ears with a head model, so front, side and back can be heard in their own directions."
-        )
-        Hint("A general head model, not tuned to your ears. Works best on wired or good wireless headphones.")
-        if (config.surroundHeadphoneMode && config.surroundLayout == SurroundLayout.STEREO) {
-            Text("Layout is Stereo. Pick 5.1, 7.1 or Auto above to hear it.", color = accent.copy(0.9f), fontSize = 10.sp, lineHeight = 14.sp)
-        }
-    }
-}
 
 // ── Live meters and A/B hold ─────────────────────────────────────────────────────────────────────────────────
 
@@ -287,6 +263,7 @@ internal fun SpeakerSetupPanel(
     config: DspConfig,
     accent: Color,
     sevenOne: Boolean,
+    embedded: Boolean = false,
     onTest: (Int) -> Unit,
     onCalibration: (Boolean) -> Unit,
     onDistance: (Int, Float) -> Unit,
@@ -303,7 +280,10 @@ internal fun SpeakerSetupPanel(
         }
     }
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onTest(-1) } }
-    Column(modifier = Modifier.extrasCard(accent), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = if (embedded) Modifier.fillMaxWidth() else Modifier.extrasCard(accent),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         CardTitle("SPEAKER SETUP", Icons.Rounded.SurroundSound, accent) {
             ResetLink({ onResetDistances() }, accent)
         }
@@ -330,13 +310,7 @@ internal fun SpeakerSetupPanel(
             )
             PremiumSwitch(checked = config.surroundCalibrationEnabled, onCheckedChange = onCalibration, accentColor = accent)
         }
-        Hint(
-            if (config.surroundHeadphoneMode) {
-                "Distances describe real speakers, so they only apply on a real 5.1 / 7.1 output, not in headphone surround."
-            } else {
-                "Set how far each speaker is from where you sit. Nearer speakers are delayed so every sound reaches you together."
-            }
-        )
+        Hint("Set how far each speaker is from where you sit. Nearer speakers are delayed so every sound reaches you together.")
         SurroundChannel.entries.forEachIndexed { i, channel ->
             if (!sevenOne && channel.sevenOneOnly) return@forEachIndexed
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -368,7 +342,7 @@ internal fun SpeakerSetupPanel(
             PremiumSwitch(checked = config.surroundBassManagement, onCheckedChange = onBassManagement, accentColor = accent)
         }
         Hint(
-            "For small speakers: the main speakers stop below the bass cutoff (Upmix Lab > Bass cutoff) and the " +
+            "For small speakers: the main speakers stop below the bass cutoff (Upmix Lab > Bass cutoff, above) and the " +
                 "subwoofer plays the low end. Leave it off if your speakers are full range."
         )
     }

@@ -230,7 +230,8 @@ class DspPreferences(private val context: Context) {
             surroundPositionDistance = sanitizeSurroundDistance(pref(SURROUND_POSITION_DISTANCE, SURROUND_POSITION_DEFAULT_DISTANCE)),
             surroundTuneEnabled = pref(SURROUND_TUNE_ENABLED, false),
             surroundTune = deserializeSurroundTuning(prefNullable(SURROUND_TUNE)),
-            surroundHeadphoneMode = pref(SURROUND_HEADPHONE_MODE, false),
+            // Headphone surround was removed from the UI; a value saved earlier must not keep silently rendering.
+            surroundHeadphoneMode = false,
             surroundSmartSteering = pref(SURROUND_SMART_STEERING, false),
             surroundSmartSteeringAmount = sanitizeSmartSteeringAmount(pref(SURROUND_SMART_AMOUNT, SURROUND_SMART_DEFAULT_AMOUNT)),
             surroundBassManagement = pref(SURROUND_BASS_MANAGEMENT, false),

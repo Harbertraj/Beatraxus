@@ -56,7 +56,9 @@ data class VideoInfoData(
     /** HDR formats the screen can show, e.g. "HDR10, HLG"; null when not checked. */
     val displayHdrTypes: String? = null,
     /** Whether the device has a Dolby Vision decoder; null when not checked. */
-    val dolbyVisionDecoder: Boolean? = null
+    val dolbyVisionDecoder: Boolean? = null,
+    /** How this phone's decoders cope with the video (from the first-open compatibility check); null when not checked. */
+    val deviceCompat: String? = null
 )
 
 data class InfoRow(val label: String, val value: String)
@@ -106,6 +108,7 @@ object VideoInfoReport {
                 }
             }
             add(InfoRow("Decoder", d.videoDecoder?.let { "$it (${decoderKind(it)})" } ?: UNKNOWN))
+            d.deviceCompat?.let { add(InfoRow("Device compatibility", it)) }
             if (d.renderedFrames > 0 || d.droppedFrames > 0) {
                 add(InfoRow("Dropped frames", "${d.droppedFrames} of ${d.renderedFrames + d.droppedFrames}"))
             }
