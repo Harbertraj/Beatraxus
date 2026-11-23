@@ -13,7 +13,7 @@ class AdaptiveQualityControllerTest {
     private fun AdaptiveQualityController.feed(w: WindowStats, thermal: ThermalLevel = ThermalLevel.NONE) =
         onWindow(w, 24f, 60f, thermal)
 
-    private val overload = win(est = 60f)   // budget at 24 fps = 29 ms
+    private val overload = win(est = 35f) // ordinary overload at 24 FPS
     private val calm = win(est = 5f)
 
     @Test fun startsAtTheUsersPreset() {
@@ -55,6 +55,17 @@ class AdaptiveQualityControllerTest {
         c.feed(overload); assertEquals(2, c.index)
         c.feed(overload); assertEquals(2, c.index)   // cooling down
         c.feed(overload); assertEquals(3, c.index)
+    }
+
+    @Test
+    fun severeLatencyForcesEmergencyDownshiftEvenWithoutAdaptiveResolution() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, false, false)
+
+        c.feed(win(est = 60f))
+
+        // 60 ms exceeds 1.25 × the 41.67 ms source interval.
+        // QUALITY (1280) -> PERFORMANCE (640).
+        assertEquals(2, c.index)
     }
 
     @Test fun droppedFramesCountAsOverloadEvenWhenEstimateIsFast() {

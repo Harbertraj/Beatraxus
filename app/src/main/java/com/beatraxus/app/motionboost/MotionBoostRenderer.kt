@@ -24,6 +24,8 @@ import com.beatraxus.app.deinterlace.DeinterlaceGlsl
 import com.beatraxus.app.fpsbooster.EstimateLatency
 import com.beatraxus.app.fpsbooster.FramePacing
 import com.beatraxus.app.fpsbooster.CadenceGovernor
+import com.beatraxus.app.fpsbooster.PanelRateHint
+import com.beatraxus.app.fpsbooster.VsyncPeriodEstimator
 import com.beatraxus.app.fpsbooster.StatsAccumulator
 import com.beatraxus.app.fpsbooster.FramePts
 import com.beatraxus.app.fpsbooster.TimestampRegularizer
@@ -151,11 +153,9 @@ class MotionBoostRenderer(
     /** Exact n-vsync cadence for the presented frames (see [CadenceGovernor]). */
     private val cadence = CadenceGovernor()
 
-    // ---- Vsync Median Ring (9 samples) ----
-    private val vsyncRing = LongArray(9)
-    private var vsyncHead = 0
-    private var vsyncCount = 0
-    private val vsyncScratch = LongArray(9)
+    // ---- vsync period estimation (late callbacks must never read as a slower panel: see VsyncPeriodEstimator) ----
+    private val vsyncEstimator = VsyncPeriodEstimator()
+    private val panelHint = PanelRateHint(context)
 
     // ---- redraw bookkeeping ----
     private var lastDrawnCur: Slot? = null
@@ -575,15 +575,7 @@ class MotionBoostRenderer(
 
     private fun tick(vsyncNs: Long) {
         if (lastVsyncNs != 0L) {
-            val period = vsyncNs - lastVsyncNs
-            if (period in 3_000_000L..40_000_000L) {
-                vsyncRing[vsyncHead] = period
-                vsyncHead = (vsyncHead + 1) % 9
-                if (vsyncCount < 9) vsyncCount++
-                System.arraycopy(vsyncRing, 0, vsyncScratch, 0, vsyncCount)
-                vsyncScratch.sort(0, vsyncCount)
-                vsyncPeriodNs = vsyncScratch[vsyncCount / 2]
-            }
+            vsyncPeriodNs = vsyncEstimator.onGap(vsyncNs - lastVsyncNs, panelHint.hz(vsyncNs))
         }
         lastVsyncNs = vsyncNs
 

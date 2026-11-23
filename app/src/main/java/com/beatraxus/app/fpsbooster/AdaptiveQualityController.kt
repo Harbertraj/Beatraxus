@@ -72,6 +72,10 @@ class AdaptiveQualityController(
         const val UPGRADE_HOLD = 20
         /** Share of source frames without a motion estimate above which the rung is far too heavy: step down two at once. */
         const val SEVERE_SKIP_RATIO = 0.5f
+        /** Emergency fallback when a single frame-pair estimate exceeds the source-frame interval by 25%. */
+        const val SEVERE_LATENCY_MULTIPLIER = 1.25f
+        const val SEVERE_DROP_RATIO = 0.20f
+        const val SEVERE_MISS_RATIO = 0.40f
         const val BUDGET_SHARE = 0.7f
         const val DROP_RATIO = 0.05f
         /** Share of source frames whose motion estimate was skipped (GPU still busy) above which a window is overloaded. */
@@ -125,6 +129,10 @@ class AdaptiveQualityController(
         val missRatio = if (expectedPresentFps > 0f) missed / (expectedPresentFps * w.durationNs / 1e9f) else 0f
         val skipRatio = if (w.sourceFrames > 0) w.skippedEstimates.toFloat() / w.sourceFrames else 0f
         val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f || skipRatio > SKIP_RATIO
+        val severeOverload = w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER ||
+            skipRatio > SEVERE_SKIP_RATIO ||
+            dropRatio > SEVERE_DROP_RATIO ||
+            missRatio > SEVERE_MISS_RATIO
         val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f &&
             w.skippedEstimates == 0
 
@@ -140,7 +148,16 @@ class AdaptiveQualityController(
 
         if (!overloaded && lastChangeWasUpgrade && windowsSinceUpgrade != Int.MAX_VALUE && windowsSinceUpgrade >= UPGRADE_HOLD) failedUpgrades = 0
 
-        if (overloaded && adaptive && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
+        if (severeOverload && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
+            // A device that cannot finish even one source-frame pair in time needs an immediate
+            // quality reduction, regardless of the optional adaptive-resolution preference.
+            val steps = if (skipRatio > SEVERE_SKIP_RATIO ||
+                w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER) 2 else 1
+            index = (index + steps).coerceAtMost(LADDER.lastIndex)
+            calmStreak = 0
+            lastChangeWasUpgrade = false
+            upgradeBlock = maxOf(upgradeBlock, UPGRADE_BLOCK)
+        } else if (overloaded && adaptive && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
             index++
             // Most pairs got no motion estimate at all: one rung is not going to be enough, so do not spend two more
             // seconds of stuttering finding that out.

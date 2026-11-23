@@ -221,11 +221,9 @@ class OpticalFlowRenderer(
     /** Keeps the analysis steps from delaying the presenter: fewer steps per vsync while presenting is late or slow. */
     private val estimatePacer = EstimatePacer()
 
-    // ---- vsync period estimation ----
-    private val periodRing = LongArray(9)
-    private var periodCount = 0
-    private var periodHead = 0
-    private val periodScratch = LongArray(9)
+    // ---- vsync period estimation (late callbacks must never read as a slower panel: see VsyncPeriodEstimator) ----
+    private val vsyncEstimator = VsyncPeriodEstimator()
+    private val panelHint = PanelRateHint(context)
 
     // Fence of the motion estimate in flight (at most one): measures every pair's latency without a glFinish
     // (which would stall the vsync callback) and tells the intake whether the GPU is still busy.
@@ -460,7 +458,7 @@ class OpticalFlowRenderer(
         appliedLevel = lv
         cancelEstimate()
         estimatePacer.reset()
-        periodCount = 0; periodHead = 0
+        vsyncEstimator.reset()
         freeResources()
 
         FrameSizing.frame(width, height, lv.frameEdge).let { frameW = it.first; frameH = it.second }
@@ -1002,15 +1000,7 @@ class OpticalFlowRenderer(
 
     private fun tick(vsyncNs: Long) {
         if (lastVsyncNs != 0L) {
-            val period = vsyncNs - lastVsyncNs
-            if (period in 3_000_000L..40_000_000L) {
-                periodRing[periodHead] = period
-                periodHead = (periodHead + 1) % 9
-                if (periodCount < 9) periodCount++
-                System.arraycopy(periodRing, 0, periodScratch, 0, periodCount)
-                periodScratch.sort(0, periodCount)
-                vsyncPeriodNs = periodScratch[periodCount / 2]
-            }
+            vsyncPeriodNs = vsyncEstimator.onGap(vsyncNs - lastVsyncNs, panelHint.hz(vsyncNs))
         }
         lastVsyncNs = vsyncNs
         // Retire the finished motion estimate (records its latency) with one non-blocking check per vsync.

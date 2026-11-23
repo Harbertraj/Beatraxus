@@ -5,6 +5,7 @@ import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Display
 import android.view.Surface
@@ -38,6 +39,7 @@ class BoosterDisplaySession(
     private var targetFps = 0
     private var started = false
     private var reasserts = 0
+    private var lastReassertMs = 0L
 
     /** Panel rate (Hz) this session asked for; 0 until [apply] ran. */
     var requestedHz: Float = 0f
@@ -50,8 +52,13 @@ class BoosterDisplaySession(
             if (displayId != Display.DEFAULT_DISPLAY || !started) return
             val actual = DisplayRefreshRate.currentRate(context)
             if (MotionBoostTiming.isCleanMultiple(actual, targetFps)) return
+            // The budget is for a system that keeps fighting back right now, not for the whole video: a panel that was
+            // given up on after three quick drops would stay low for the rest of a two-hour film.
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastReassertMs > REASSERT_RESET_MS) reasserts = 0
             if (reasserts >= MAX_REASSERTS) return
             reasserts++
+            lastReassertMs = now
             Log.i(TAG, "display now at %.1f Hz, which does not show $targetFps FPS evenly: asking again (%d/%d)"
                 .format(actual, reasserts, MAX_REASSERTS))
             apply(force = true)
@@ -138,5 +145,7 @@ class BoosterDisplaySession(
     companion object {
         private const val TAG = "BoosterDisplay"
         const val MAX_REASSERTS = 3
+        /** Quiet time (ms) after which the re-assert budget is full again. */
+        const val REASSERT_RESET_MS = 10_000L
     }
 }
