@@ -795,6 +795,10 @@ private fun SurroundStageView(
     val liveMeters = levelSource != null && isPlaying
     val rawLevels = remember { FloatArray(8) }
     val shownLevels = remember { FloatArray(8) }
+    // Peak-hold markers of the LED ladders: they stay at the highest recent level, then fall slowly.
+    val peakLevels = remember { FloatArray(8) }
+    val peakHold = remember { FloatArray(8) }
+    val lastFrameNs = remember { LongArray(1) }
     LaunchedEffect(look.surroundAnimated, liveMeters) {
         if (!look.surroundAnimated && !liveMeters) { frame = 0L; return@LaunchedEffect }
         while (true) {
@@ -881,7 +885,22 @@ private fun SurroundStageView(
                     } else 0f
                     shownLevels[n] = if (v >= shownLevels[n]) v else max(v, shownLevels[n] - 0.04f)
                 }
-            } else shownLevels.fill(0f)
+                val dt = ((frame - lastFrameNs[0]) / 1_000_000_000f).coerceIn(0f, 0.1f)
+                lastFrameNs[0] = frame
+                for (n in 0 until 8) {
+                    val v = shownLevels[n]
+                    if (v >= peakLevels[n]) {
+                        peakLevels[n] = v
+                        peakHold[n] = 0.8f
+                    } else {
+                        peakHold[n] -= dt
+                        if (peakHold[n] <= 0f) peakLevels[n] = max(v, peakLevels[n] - 0.7f * dt)
+                    }
+                }
+            } else {
+                shownLevels.fill(0f)
+                peakLevels.fill(0f)
+            }
             val level = when {
                 !isPlaying -> 0.18f
                 !look.surroundAnimated -> 0.5f
@@ -967,15 +986,22 @@ private fun SurroundStageView(
                 }
                 drawSpeaker(spot.channel, at, ks, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
 
-                // Live level bar under the speaker (and its name tag): what this speaker really plays right now.
+                // Live LED ladder beside the cabinet, on the outer side: what this speaker really plays right now.
                 if (meters && playing) {
-                    val bw = 26.dp.toPx() * ps
-                    val bh = 3.dp.toPx()
-                    val bx = at.x - bw / 2f
-                    val by = at.y + if (look.surroundShowLabels) 21.dp.toPx() else 6.dp.toPx()
-                    drawRoundRect(Color.Black.copy(0.55f), Offset(bx, by), Size(bw, bh), CornerRadius(bh / 2f))
-                    val fw = bw * shownLevels[index]
-                    if (fw > 0.5f) drawRoundRect(c, Offset(bx, by), Size(fw, bh), CornerRadius(bh / 2f))
+                    val detailed = look.surroundShowSpeakerIcons
+                    val sub = spot.channel == SurroundChannel.SW
+                    val cabW = if (!detailed) 14f * ks else if (sub) 30f * ks else 24f * ks
+                    val cabH = if (!detailed) 14f * ks else if (sub) 28f * ks else 42f * ks
+                    val cabD = if (detailed) 10f * ks else 0f
+                    val ladderW = 5f * ks
+                    val ladderGap = 4f * ks
+                    val onLeft = at.x < cx - 4f * k
+                    val ladderX = if (onLeft) at.x - cabW / 2f - ladderGap - ladderW
+                    else at.x + cabW / 2f + cabD + ladderGap
+                    drawLedLadder(
+                        ladderX, at.y, ladderW, max(cabH, 32f * ks),
+                        shownLevels[index], peakLevels[index], c, ks
+                    )
                 }
             }
 
@@ -1623,6 +1649,47 @@ private fun DrawScope.drawSpeaker(
         driver(Offset(base.x, top + bh * 0.66f), 7.2f * k)
     }
     drawCircle(if (playing) color else Color(0xFF3A4150), 1.3f * k, Offset(left + bw - 3f * k, base.y - 3f * k))
+}
+
+private const val LADDER_SEGMENTS = 10
+
+/**
+ * Studio-style LED ladder: [LADDER_SEGMENTS] segments in the speaker's colour that light from the bottom with the
+ * [level] (0..1), the top three warming to amber and red like a real meter, a brighter peak-hold segment at [peak],
+ * and a dark glass capsule behind. The segment that is only part-way lit fades in, so it moves smoothly.
+ */
+private fun DrawScope.drawLedLadder(
+    left: Float, bottom: Float, width: Float, height: Float,
+    level: Float, peak: Float, color: Color, k: Float
+) {
+    val n = LADDER_SEGMENTS
+    val pad = 1.6f * k
+    val gap = 1f * k
+    val segH = (height - 2f * pad - gap * (n - 1)) / n
+    if (segH <= 0.5f) return
+    val capsule = CornerRadius(width / 2f + pad)
+    drawRoundRect(Color.Black.copy(0.62f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule)
+    drawRoundRect(
+        color.copy(0.32f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule,
+        style = Stroke(0.8f * k)
+    )
+    val lit = level.coerceIn(0f, 1f) * n
+    val peakIndex = if (peak > 0.02f) (peak * n).toInt().coerceIn(0, n - 1) else -1
+    val corner = CornerRadius(segH * 0.3f)
+    for (i in 0 until n) {
+        val top = bottom - pad - (i + 1) * segH - i * gap
+        val base = when {
+            i >= n - 1 -> lerp(color, Color(0xFFFF5C6C), 0.80f)
+            i >= n - 3 -> lerp(color, Color(0xFFFFC857), 0.75f)
+            else -> color
+        }
+        drawRoundRect(Color.White.copy(0.08f), Offset(left, top), Size(width, segH), corner)
+        val on = (lit - i).coerceIn(0f, 1f)
+        if (on > 0.02f) drawRoundRect(base.copy(0.95f * on), Offset(left, top), Size(width, segH), corner)
+        if (i == peakIndex && on < 1f) {
+            drawRoundRect(lerp(base, Color.White, 0.55f).copy(0.95f), Offset(left, top), Size(width, segH), corner)
+        }
+    }
 }
 
 private fun DrawScope.drawVisualizer(style: String, color: Color, centre: Offset, width: Float, level: Float, t: Float) {
