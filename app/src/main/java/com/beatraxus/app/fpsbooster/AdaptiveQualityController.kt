@@ -66,6 +66,12 @@ class AdaptiveQualityController(
         const val COOLDOWN = 2
         const val UPGRADE_AFTER = 10
         const val UPGRADE_BLOCK = 30
+        /** Every failed upgrade doubles the block (30, 60, 120, 240 windows): a phone that cannot hold a rung stops being sent back to it. */
+        const val MAX_BLOCK_DOUBLINGS = 3
+        /** Windows an upgrade must hold without overload before it counts as successful (resets the doubling). */
+        const val UPGRADE_HOLD = 20
+        /** Share of source frames without a motion estimate above which the rung is far too heavy: step down two at once. */
+        const val SEVERE_SKIP_RATIO = 0.5f
         const val BUDGET_SHARE = 0.7f
         const val DROP_RATIO = 0.05f
         /** Share of source frames whose motion estimate was skipped (GPU still busy) above which a window is overloaded. */
@@ -98,6 +104,7 @@ class AdaptiveQualityController(
     private var upgradeBlock = 0
     private var lastChangeWasUpgrade = false
     private var windowsSinceUpgrade = Int.MAX_VALUE
+    private var failedUpgrades = 0
 
     /**
      * @param sourceFps  measured source frame rate (falls back to 24 when unknown)
@@ -131,9 +138,17 @@ class AdaptiveQualityController(
             index++
         }
 
+        if (!overloaded && lastChangeWasUpgrade && windowsSinceUpgrade != Int.MAX_VALUE && windowsSinceUpgrade >= UPGRADE_HOLD) failedUpgrades = 0
+
         if (overloaded && adaptive && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
             index++
-            if (lastChangeWasUpgrade && windowsSinceUpgrade <= 3) upgradeBlock = UPGRADE_BLOCK
+            // Most pairs got no motion estimate at all: one rung is not going to be enough, so do not spend two more
+            // seconds of stuttering finding that out.
+            if (skipRatio > SEVERE_SKIP_RATIO && index < LADDER.lastIndex) index++
+            if (lastChangeWasUpgrade && windowsSinceUpgrade <= 3) {
+                upgradeBlock = UPGRADE_BLOCK shl failedUpgrades.coerceAtMost(MAX_BLOCK_DOUBLINGS)
+                failedUpgrades++
+            }
         } else if (calm && adaptive && index > bestIndex && calmStreak >= UPGRADE_AFTER &&
             upgradeBlock == 0 && thermal == ThermalLevel.NONE && !batterySaver
         ) {

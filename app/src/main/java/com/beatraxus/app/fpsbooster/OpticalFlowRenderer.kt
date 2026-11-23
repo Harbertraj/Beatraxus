@@ -113,6 +113,8 @@ class OpticalFlowRenderer(
         var flowPending: Boolean = false
         /** Synthesised by the AI engine (lives between two real frames in the queue). */
         var isMid: Boolean = false
+        /** The pair (previous frame, this frame) is waiting for the GPU to finish the running estimate: see [deferredB]. */
+        var flowDeferred: Boolean = false
     }
 
     private val thread = HandlerThread("FpsBooster-GL", Process.THREAD_PRIORITY_DISPLAY).also { it.start() }
@@ -166,6 +168,14 @@ class OpticalFlowRenderer(
     private val freeSlots = ArrayList<Slot>(SLOT_COUNT)
     /** Estimates waiting for the GPU, in order: (A, M) then (M, B) for every injected mid frame M. */
     private val midChain = ArrayList<Pair<Slot, Slot>>()
+    /**
+     * The one pair that arrived while the GPU was still busy and waits for it ("preload"): it starts the moment the
+     * running estimate has finished, while its frames are still ahead of the picture on screen (the video hold keeps
+     * the shown picture a few frames behind the decoder). A second pair arriving meanwhile is skipped, so the GPU
+     * backlog stays bounded at one pair. Before, every pair that met a busy GPU was skipped for good, and one slow
+     * estimate in a row made most of the following pairs repeat real frames instead of generating new ones.
+     */
+    private var deferredB: Slot? = null
     private var flowTex: Array<Array<IntArray>> = emptyArray()   // [direction 0=fw 1=bw][level] -> ping/pong
     private var globalCoarse = IntArray(0)                       // [direction] 1x1: dominant motion of the coarsest field
 
@@ -469,7 +479,7 @@ class OpticalFlowRenderer(
         }
         allocFlowTextures()
         queue.clear(); freeSlots.clear(); freeSlots.addAll(slots)
-        midChain.clear()
+        midChain.clear(); deferredB = null
         holdCtl.reset()
         estimateLatency.reset()
         tsRegularizer.reset()
@@ -529,7 +539,7 @@ class OpticalFlowRenderer(
             // seek / pause / new clip: never interpolate across it
             cancelEstimate()
             while (queue.isNotEmpty()) freeSlots.add(queue.removeAt(0))
-            midChain.clear()
+            midChain.clear(); deferredB = null
             holdCtl.reset()
             tsRegularizer.reset()
         }
@@ -542,6 +552,7 @@ class OpticalFlowRenderer(
         slot.arrivalNs = now
         slot.midPending = false
         slot.flowPending = false
+        slot.flowDeferred = false
         slot.isMid = false
         queue.add(slot)
 
@@ -553,10 +564,17 @@ class OpticalFlowRenderer(
                 slot.flowPending = true
                 slot.midDeadlineNs = now + midWaitNs()
             } else if (gpuBusy()) {
-                // The previous estimate is still running: queueing another one only grows the backlog that delays
-                // every later estimate and every presented frame. This pair is shown as real frames.
-                slot.flowSkipped = true
-                acc.onEstimateSkipped()
+                // The previous estimate is still running. One pair may wait for it (started from the vsync tick as soon
+                // as the GPU is free); more than one would only grow the backlog that delays every later estimate and
+                // every presented frame, so any further pair is shown as real frames.
+                val waiting = deferredB
+                if (waiting == null || !waiting.flowDeferred || !queue.contains(waiting)) {
+                    slot.flowDeferred = true
+                    deferredB = slot
+                } else {
+                    slot.flowSkipped = true
+                    acc.onEstimateSkipped()
+                }
             } else {
                 beginEstimate(last!!, slot, now)
             }
@@ -759,6 +777,26 @@ class OpticalFlowRenderer(
             beginEstimate(x, y, y.arrivalNs)
             return
         }
+    }
+
+    /**
+     * Starts the waiting pair once the GPU is free. A pair whose second frame is already behind the picture on screen
+     * is no longer worth estimating (it would only land after it was needed): it is counted as skipped instead.
+     */
+    private fun startDeferredEstimate(nowNs: Long) {
+        val b = deferredB ?: return
+        val i = queue.indexOf(b)
+        if (!b.flowDeferred || i < 1) { b.flowDeferred = false; deferredB = null; return }   // left the queue / was recycled
+        if (gpuBusy()) return
+        b.flowDeferred = false
+        deferredB = null
+        val content = FramePacing.contentTimeNs(nowNs, vsyncPeriodNs, lastHoldNs)
+        if (b.tsNs <= content) {
+            b.flowSkipped = true
+            acc.onEstimateSkipped()
+            return
+        }
+        beginEstimate(queue[i - 1], b, b.arrivalNs)
     }
 
     /** Every vsync: give up on mid frames that are late, and feed the GPU the next queued estimate. */
@@ -977,6 +1015,7 @@ class OpticalFlowRenderer(
         lastVsyncNs = vsyncNs
         // Retire the finished motion estimate (records its latency) with one non-blocking check per vsync.
         if (fence != 0L) gpuBusy(vsyncPeriodNs / 2)
+        startDeferredEstimate(vsyncNs)
         rifeOverlayHook?.onTick()
         emitWindow(vsyncNs)
         serviceMid(vsyncNs)
@@ -1014,7 +1053,7 @@ class OpticalFlowRenderer(
             if (a !== b) {
                 // Rare: interpolation was switched on after b arrived. Only when the GPU is idle - a late estimate
                 // queued behind a running one would delay this very frame - and never for a pair that was skipped.
-                if (!b.hasFlow && !b.flowSkipped && !b.flowPending && !gpuBusy()) beginEstimate(a, b, System.nanoTime())
+                if (!b.hasFlow && !b.flowSkipped && !b.flowPending && !b.flowDeferred && !gpuBusy()) beginEstimate(a, b, System.nanoTime())
                 warp = b.hasFlow
                 if (!warp) {
                     // No flow for this pair (estimate skipped or still running): the nearest REAL frame by phase,
@@ -1265,7 +1304,7 @@ class OpticalFlowRenderer(
         fuseTex = IntArray(0)
         if (ids.isNotEmpty()) GLES30.glDeleteTextures(ids.size, ids.toIntArray(), 0)
         slots = emptyArray(); flowTex = emptyArray(); globalCoarse = IntArray(0)
-        queue.clear(); freeSlots.clear(); midChain.clear()
+        queue.clear(); freeSlots.clear(); midChain.clear(); deferredB = null
     }
 
     private fun releaseGl() {

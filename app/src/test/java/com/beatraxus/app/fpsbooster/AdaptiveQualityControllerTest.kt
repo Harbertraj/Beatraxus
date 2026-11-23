@@ -152,4 +152,33 @@ class AdaptiveQualityControllerTest {
         }
         assertEquals("a skip is not calm", at, c.index)
     }
+
+    @Test fun repeatedFailedUpgradesBackOffLonger() {
+        val c = AdaptiveQualityController(BoosterQuality.BALANCED, true, false)
+        c.feed(overload)                                   // 1 -> 2
+        var block = AdaptiveQualityController.UPGRADE_BLOCK
+        repeat(3) {
+            // wait out the block, climb once, fail at once
+            var guard = 0
+            while (c.index == 2 && guard++ < 1000) c.feed(calm)
+            assertEquals(1, c.index)
+            c.feed(overload); c.feed(overload)
+            assertEquals(2, c.index)
+            // right after the failure no upgrade may happen for the whole (doubled) block
+            repeat(block - 1) { c.feed(calm); assertEquals("block $block", 2, c.index) }
+            block *= 2
+        }
+    }
+
+    @Test fun mostPairsWithoutEstimateStepsDownTwoRungs() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        c.feed(WindowStats(sec, 24, 60, 4, 0, 20f, 20f, 2f, skippedEstimates = 20))   // 83 % skipped
+        assertEquals(2, c.index)
+    }
+
+    @Test fun someSkipsStepDownOnlyOneRung() {
+        val c = AdaptiveQualityController(BoosterQuality.QUALITY, true, false)
+        c.feed(WindowStats(sec, 24, 60, 30, 0, 20f, 20f, 2f, skippedEstimates = 6))   // 25 % skipped
+        assertEquals(1, c.index)
+    }
 }
