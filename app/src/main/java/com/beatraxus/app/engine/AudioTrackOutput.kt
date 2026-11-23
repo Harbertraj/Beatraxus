@@ -668,6 +668,26 @@ class AudioTrackOutput(
         }
     }
 
+    /** Ensure the packed PCM conversion buffer can hold every sample in this write.
+     * Surround output can expand a stereo source to 5.1/7.1, so a fixed-size buffer
+     * sized for smaller stereo batches is not a safe upper bound. */
+    private fun ensurePcmBufferCapacity(sampleCount: Int) {
+        when (currentEncoding) {
+            AudioFormat.ENCODING_PCM_16BIT -> {
+                val required = sampleCount * 2
+                if (pcm16Buffer.size < required) pcm16Buffer = ByteArray(required)
+            }
+            AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
+                val required = sampleCount * 3
+                if (pcm24Buffer.size < required) pcm24Buffer = ByteArray(required)
+            }
+            AudioFormat.ENCODING_PCM_32BIT -> {
+                val required = sampleCount * 4
+                if (pcm32Buffer.size < required) pcm32Buffer = ByteArray(required)
+            }
+        }
+    }
+
     override fun write(data: FloatArray, offsetInSamples: Int, frameCount: Int): Int {
         if (lastThreadId != Thread.currentThread().id) {
             Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
@@ -679,12 +699,17 @@ class AudioTrackOutput(
             val track = audioTrack
             val isMmap = usingMmap
 
-            if (frameCount > 0) stashLiveCaptureFloat(data, offsetInSamples, frameCount * channels, channels)
-
             if (isMmap && mmap != null) return mmap.write(data, offsetInSamples, frameCount)
             if (track == null) return 0
 
             val sampleCount = frameCount * channels
+            if (frameCount <= 0 || channels <= 0 || offsetInSamples < 0 ||
+                sampleCount < 0 || offsetInSamples > data.size - sampleCount) return 0
+            if (currentEncoding != AudioFormat.ENCODING_PCM_FLOAT) {
+                ensurePcmBufferCapacity(sampleCount)
+            }
+            stashLiveCaptureFloat(data, offsetInSamples, sampleCount, channels)
+
             return try {
                 val writtenFrames = when (currentEncoding) {
                     AudioFormat.ENCODING_PCM_16BIT -> {
@@ -732,11 +757,15 @@ class AudioTrackOutput(
         lifecycleLock.readLock().withLock {
             val mmap = mmapOutput
             val track = audioTrack
-            if (frameCount > 0) stashLiveCaptureInt(data, offsetInSamples, frameCount * channels, channels, currentEncoding)
             if (usingMmap && mmap != null) return mmap.writeInt(data, offsetInSamples, frameCount)
             if (track == null) return 0
 
             val sampleCount = frameCount * channels
+            if (frameCount <= 0 || channels <= 0 || offsetInSamples < 0 ||
+                sampleCount < 0 || offsetInSamples > data.size - sampleCount) return 0
+            ensurePcmBufferCapacity(sampleCount)
+            stashLiveCaptureInt(data, offsetInSamples, sampleCount, channels, currentEncoding)
+
             return try {
                 val writtenFrames = when (currentEncoding) {
                     AudioFormat.ENCODING_PCM_24BIT_PACKED -> {
