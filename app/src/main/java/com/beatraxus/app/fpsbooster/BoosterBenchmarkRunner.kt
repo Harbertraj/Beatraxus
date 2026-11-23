@@ -237,11 +237,15 @@ void main() {
                 onProgress(0.95f, "Testing GPU: RIFE AI")
                 try {
                     val engine = RifeAiEngine(context)
-                    if (engine.initialize(BoosterQuality.PERFORMANCE)) {
+                    if (engine.initialize(BoosterQuality.PERFORMANCE, useNnapi = false, tuned = false)) {
                         val (mw, mh) = RifePacking.modelSize(1280, 720, 640)
                         rifeMs = engine.benchmark(mw, mh, iterations = 6)
+                        engine.release()
+                        // Once per system build: is NNAPI (the phone's AI chip) clearly faster than the CPU providers?
+                        rifeMs = rifeMs?.let { DeviceTuning.tuneProvider(context, it, mw, mh) }
+                    } else {
+                        engine.release()
                     }
-                    engine.release()
                 } catch (e: Throwable) {
                     Log.w(TAG, "RIFE benchmark failed", e)
                 }

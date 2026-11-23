@@ -116,14 +116,19 @@ class RifeAiEngine(private val context: Context) : InterpolationBackend {
      * Legacy entry point: [quality] sets the nominal model size; [useNnapi] puts NNAPI first in the provider order
      * (CPU providers remain as fallbacks). Defaults to no NNAPI.
      */
-    fun initialize(quality: BoosterQuality, useNnapi: Boolean = false): Boolean {
+    fun initialize(quality: BoosterQuality, useNnapi: Boolean = false, tuned: Boolean = true): Boolean {
         when (quality) {
             BoosterQuality.PERFORMANCE -> { modelWidth = 640; modelHeight = 360 }
             BoosterQuality.BALANCED -> { modelWidth = 960; modelHeight = 540 }
             BoosterQuality.QUALITY -> { modelWidth = 1280; modelHeight = 720 }
         }
-        val order = if (useNnapi) listOf(InferenceProvider.NNAPI) + InferenceProvider.DEFAULT_ORDER
-        else InferenceProvider.DEFAULT_ORDER
+        // [tuned]: use the provider the device test found fastest on this phone (see DeviceTuning); the test itself
+        // passes false so it always measures the default providers.
+        val order = when {
+            useNnapi -> listOf(InferenceProvider.NNAPI) + InferenceProvider.DEFAULT_ORDER
+            tuned -> DeviceTuning.order(context)
+            else -> InferenceProvider.DEFAULT_ORDER
+        }
         return initialize(order)
     }
 

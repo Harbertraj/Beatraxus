@@ -10,9 +10,11 @@ import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.PerformanceHintManager
 import android.os.Process
 import android.util.Log
 import android.view.Choreographer
@@ -1056,11 +1058,44 @@ class OpticalFlowRenderer(
         acc.onDrawMs(drawMs)
         estimatePacer.onPresented(lateNs >= vsyncPeriodNs, drawMs, vsyncPeriodNs / 1e6f)
         pumpEstimate()
+        reportWorkDuration(System.nanoTime() - workStart, step)
         nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, step)
         lastDrawnA = a; lastDrawnB = b; lastDrawnTsA = a.tsNs; lastDrawnTsB = b.tsNs
         lastDrawnAlpha = alpha; lastDrawnWarp = warp
         dirty = false
         acc.onPresented(generatedFrame = warp && alpha > 0.02f && alpha < 0.98f)
+    }
+
+    // ---- Performance hint (ADPF, Android 12+) ----
+    // Tells the phone's scheduler that this thread is a real-time job with a deadline of one output frame, so it raises
+    // the CPU / GPU clocks in time instead of after frames were already late. Mid-range chips (Dimensity, Snapdragon 7)
+    // idle their clocks down between light frames, and that ramp-up delay is a common cause of uneven FPS.
+    private var hintSession: PerformanceHintManager.Session? = null
+    private var hintTargetNs = 0L
+    private var hintFailed = false
+
+    private fun reportWorkDuration(workNs: Long, targetNs: Long) {
+        if (hintFailed || Build.VERSION.SDK_INT < Build.VERSION_CODES.S || workNs <= 0L || targetNs <= 0L) return
+        try {
+            var session = hintSession
+            if (session == null) {
+                val mgr = context.getSystemService(Context.PERFORMANCE_HINT_SERVICE) as? PerformanceHintManager
+                session = mgr?.createHintSession(intArrayOf(thread.threadId), targetNs)
+                if (session == null) { hintFailed = true; return }
+                hintSession = session
+                hintTargetNs = targetNs
+            }
+            if (targetNs != hintTargetNs) {
+                session.updateTargetWorkDuration(targetNs)
+                hintTargetNs = targetNs
+            }
+            session.reportActualWorkDuration(workNs)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Performance hint unavailable", t)
+            hintFailed = true
+            runCatching { hintSession?.close() }
+            hintSession = null
+        }
     }
 
     private fun emitWindow(nowNs: Long) {
@@ -1234,6 +1269,8 @@ class OpticalFlowRenderer(
     }
 
     private fun releaseGl() {
+        runCatching { hintSession?.close() }
+        hintSession = null
         runCatching {
             rifeOverlayHook?.onGlRelease()
             surfaceTexture?.setOnFrameAvailableListener(null)

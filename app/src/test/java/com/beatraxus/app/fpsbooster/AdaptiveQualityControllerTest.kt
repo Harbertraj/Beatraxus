@@ -20,6 +20,14 @@ class AdaptiveQualityControllerTest {
         assertEquals(0, AdaptiveQualityController(BoosterQuality.QUALITY, true, false).index)
         assertEquals(1, AdaptiveQualityController(BoosterQuality.BALANCED, true, false).index)
         assertEquals(2, AdaptiveQualityController(BoosterQuality.PERFORMANCE, true, false).index)
+    }
+
+    @Test
+    fun learnedStartRungIsUsedButNeverAboveThePresetOrWhenNotAdaptive() {
+        assertEquals(2, AdaptiveQualityController(BoosterQuality.QUALITY, true, false, 2).index)
+        assertEquals(1, AdaptiveQualityController(BoosterQuality.BALANCED, true, false, 0).index)
+        assertEquals(3, AdaptiveQualityController(BoosterQuality.QUALITY, true, false, 9).index)
+        assertEquals(0, AdaptiveQualityController(BoosterQuality.QUALITY, false, false, 2).index)
         assertEquals(2, AdaptiveQualityController(BoosterQuality.QUALITY, true, true).index)
     }
 

@@ -58,7 +58,9 @@ data class QualityDecision(val level: QualityLevel, val changed: Boolean, val fa
 class AdaptiveQualityController(
     userQuality: BoosterQuality,
     private val adaptive: Boolean,
-    private val batterySaver: Boolean
+    private val batterySaver: Boolean,
+    /** Rung the last session on this phone settled on (see DeviceTuning); never above the preset, ignored when not adaptive. */
+    startIndex: Int? = null
 ) {
     companion object {
         const val COOLDOWN = 2
@@ -87,7 +89,7 @@ class AdaptiveQualityController(
 
     /** Best rung this session may use. */
     private val bestIndex: Int = if (batterySaver) maxOf(2, indexFor(userQuality)) else indexFor(userQuality)
-    var index: Int = bestIndex
+    var index: Int = if (adaptive && startIndex != null) startIndex.coerceIn(bestIndex, LADDER.lastIndex) else bestIndex
         private set
     val level: QualityLevel get() = LADDER[index]
 

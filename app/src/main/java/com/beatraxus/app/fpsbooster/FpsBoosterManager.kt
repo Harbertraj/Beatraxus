@@ -29,7 +29,11 @@ class FpsBoosterManager(
     }
 
     private val appContext = runCatching { context.applicationContext }.getOrDefault(context)
-    private val controller = AdaptiveQualityController(plan.quality, settings.adaptiveResolution, settings.batterySaver)
+    // Starts where the last session on this phone settled, so a heavy preset does not stutter through the same
+    // step-downs on every video. It still climbs back up on its own when the phone has headroom.
+    private val controller = AdaptiveQualityController(
+        plan.quality, settings.adaptiveResolution, settings.batterySaver, DeviceTuning.learnedLevel(appContext, plan)
+    )
     private var thermal = ThermalLevel.NONE
     private var droppedTotal = 0L
     private var finished = false
@@ -80,7 +84,11 @@ class FpsBoosterManager(
                 currentRate
             )
             val d = controller.onWindow(w, sourceFps, expected, thermal)
-            if (d.changed) { graceWindows = CHANGE_GRACE_WINDOWS; listener.onQualityLevel(d.level) }
+            if (d.changed) {
+                graceWindows = CHANGE_GRACE_WINDOWS
+                DeviceTuning.rememberLevel(appContext, plan, controller.index)
+                listener.onQualityLevel(d.level)
+            }
             fallback = d.fallback
         }
         listener.onStats(
