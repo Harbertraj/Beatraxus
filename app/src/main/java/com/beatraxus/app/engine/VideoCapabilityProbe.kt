@@ -127,7 +127,7 @@ object VideoCapabilityProbe {
     private fun displayHdrTypes(context: Context): Set<String> = try {
         val dm = context.getSystemService(android.hardware.display.DisplayManager::class.java)
         val types = dm?.getDisplay(android.view.Display.DEFAULT_DISPLAY)?.hdrCapabilities?.supportedHdrTypes ?: IntArray(0)
-        types.mapNotNull {
+        types.toList().mapNotNull {
             when (it) {
                 android.view.Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION -> "Dolby Vision"
                 android.view.Display.HdrCapabilities.HDR_TYPE_HDR10 -> "HDR10"

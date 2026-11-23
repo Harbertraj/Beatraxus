@@ -1150,7 +1150,11 @@ private const val ROOM_HALF_WIDTH = 1.30f
 private const val ROOM_FAR = 1.30f
 private const val ROOM_NEAR = -1.30f
 
-private fun cinemaPoly(vararg p: Offset): Path = Path().apply {
+// Offset is a value class, so it cannot be a vararg; the three and four corner shapes get their own overloads.
+private fun cinemaPoly(a: Offset, b: Offset, c: Offset): Path = cinemaPoly(listOf(a, b, c))
+private fun cinemaPoly(a: Offset, b: Offset, c: Offset, d: Offset): Path = cinemaPoly(listOf(a, b, c, d))
+
+private fun cinemaPoly(p: List<Offset>): Path = Path().apply {
     moveTo(p[0].x, p[0].y)
     for (i in 1 until p.size) lineTo(p[i].x, p[i].y)
     close()
