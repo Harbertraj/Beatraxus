@@ -1077,8 +1077,10 @@ class AudioEngine(
      * Live level of every surround speaker for the room view (music, or the video soundtrack when video audio runs
      * through the engine); false while no surround upmix runs.
      */
-    fun getSurroundLevels(dst: FloatArray): Boolean =
-        (activeSession ?: videoSession)?.dspPipeline?.copySurroundLevels(dst) ?: false
+    fun getSurroundLevels(dst: FloatArray, preferVideo: Boolean = false): Boolean {
+        val session = if (preferVideo) videoSession ?: activeSession else activeSession ?: videoSession
+        return session?.dspPipeline?.copySurroundLevels(dst) ?: false
+    }
 
     /**
      * True when the source already is a real 5.1 / 7.1 mix that the surround stage must keep discrete (only trims

@@ -986,22 +986,18 @@ private fun SurroundStageView(
                 }
                 drawSpeaker(spot.channel, at, ks, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
 
-                // Live LED ladder beside the cabinet, on the outer side: what this speaker really plays right now.
+                // Live 50-segment white LED ladder beside the cabinet, on the outer side: what this speaker really plays right now.
                 if (meters && playing) {
                     val detailed = look.surroundShowSpeakerIcons
                     val sub = spot.channel == SurroundChannel.SW
                     val cabW = if (!detailed) 14f * ks else if (sub) 30f * ks else 24f * ks
-                    val cabH = if (!detailed) 14f * ks else if (sub) 28f * ks else 42f * ks
                     val cabD = if (detailed) 10f * ks else 0f
-                    val ladderW = 5f * ks
+                    val ladderW = 4f * ks
                     val ladderGap = 4f * ks
                     val onLeft = at.x < cx - 4f * k
                     val ladderX = if (onLeft) at.x - cabW / 2f - ladderGap - ladderW
                     else at.x + cabW / 2f + cabD + ladderGap
-                    drawLedLadder(
-                        ladderX, at.y, ladderW, max(cabH, 32f * ks),
-                        shownLevels[index], peakLevels[index], c, ks
-                    )
+                    drawLedLadder(ladderX, at.y, ladderW, 72f * ks, shownLevels[index], peakLevels[index], ks)
                 }
             }
 
@@ -1651,43 +1647,49 @@ private fun DrawScope.drawSpeaker(
     drawCircle(if (playing) color else Color(0xFF3A4150), 1.3f * k, Offset(left + bw - 3f * k, base.y - 3f * k))
 }
 
-private const val LADDER_SEGMENTS = 10
+private const val LADDER_SEGMENTS = 50
 
 /**
- * Studio-style LED ladder: [LADDER_SEGMENTS] segments in the speaker's colour that light from the bottom with the
- * [level] (0..1), the top three warming to amber and red like a real meter, a brighter peak-hold segment at [peak],
- * and a dark glass capsule behind. The segment that is only part-way lit fades in, so it moves smoothly.
+ * Fine-grain white LED ladder: [LADDER_SEGMENTS] segments that light from the bottom with the [level] (0..1), a
+ * brighter two-segment peak-hold marker at [peak], and a dark glass capsule behind. The part-lit segment fades in,
+ * so the ladder moves smoothly. The segments are drawn as dashed lines, so 50 of them cost only a few draw calls.
  */
 private fun DrawScope.drawLedLadder(
     left: Float, bottom: Float, width: Float, height: Float,
-    level: Float, peak: Float, color: Color, k: Float
+    level: Float, peak: Float, k: Float
 ) {
     val n = LADDER_SEGMENTS
-    val pad = 1.6f * k
-    val gap = 1f * k
+    val pad = 1.2f * k
+    val gap = 0.3f * k
     val segH = (height - 2f * pad - gap * (n - 1)) / n
-    if (segH <= 0.5f) return
+    if (segH <= 0.3f) return
+    val step = segH + gap
     val capsule = CornerRadius(width / 2f + pad)
     drawRoundRect(Color.Black.copy(0.62f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule)
     drawRoundRect(
-        color.copy(0.32f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule,
+        Color.White.copy(0.28f), Offset(left - pad, bottom - height), Size(width + 2f * pad, height), capsule,
         style = Stroke(0.8f * k)
     )
+    val x = left + width / 2f
+    val y0 = bottom - pad // bottom edge of segment 0; segment i spans y0 - i * step - segH .. y0 - i * step
+    val dash = PathEffect.dashPathEffect(floatArrayOf(segH, gap))
+    // Unlit track, then the lit segments on top of it.
+    drawLine(Color.White.copy(0.10f), Offset(x, y0), Offset(x, y0 - n * step + gap), strokeWidth = width, pathEffect = dash)
     val lit = level.coerceIn(0f, 1f) * n
-    val peakIndex = if (peak > 0.02f) (peak * n).toInt().coerceIn(0, n - 1) else -1
-    val corner = CornerRadius(segH * 0.3f)
-    for (i in 0 until n) {
-        val top = bottom - pad - (i + 1) * segH - i * gap
-        val base = when {
-            i >= n - 1 -> lerp(color, Color(0xFFFF5C6C), 0.80f)
-            i >= n - 3 -> lerp(color, Color(0xFFFFC857), 0.75f)
-            else -> color
-        }
-        drawRoundRect(Color.White.copy(0.08f), Offset(left, top), Size(width, segH), corner)
-        val on = (lit - i).coerceIn(0f, 1f)
-        if (on > 0.02f) drawRoundRect(base.copy(0.95f * on), Offset(left, top), Size(width, segH), corner)
-        if (i == peakIndex && on < 1f) {
-            drawRoundRect(lerp(base, Color.White, 0.55f).copy(0.95f), Offset(left, top), Size(width, segH), corner)
+    val full = lit.toInt().coerceIn(0, n)
+    if (full > 0) {
+        drawLine(Color.White.copy(0.92f), Offset(x, y0), Offset(x, y0 - full * step + gap), strokeWidth = width, pathEffect = dash)
+    }
+    val frac = lit - full
+    if (full < n && frac > 0.02f) {
+        drawRect(Color.White.copy(0.92f * frac), Offset(left, y0 - full * step - segH), Size(width, segH))
+    }
+    if (peak > 0.02f) {
+        val p = (peak * n).toInt().coerceIn(0, n - 1)
+        if (p >= full) {
+            val upper = (p + 1).coerceAtMost(n - 1)
+            val top = y0 - upper * step - segH
+            drawRect(Color.White, Offset(left, top), Size(width, (y0 - p * step) - top))
         }
     }
 }
