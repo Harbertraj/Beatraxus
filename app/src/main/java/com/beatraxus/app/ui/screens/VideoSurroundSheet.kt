@@ -40,7 +40,17 @@ import com.beatraxus.app.model.SURROUND_TRIM_MIN_DB
 import com.beatraxus.app.model.SurroundChannel
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.SurroundMode
+import com.beatraxus.app.model.SURROUND_ALL_SLOT_NAMES
+import com.beatraxus.app.model.surroundSlotFilled
+import com.beatraxus.app.ui.components.dsp.HoldOriginalButton
+import com.beatraxus.app.ui.components.dsp.SmartSteeringPanel
+import com.beatraxus.app.ui.components.dsp.SpeakerSetupPanel
+import com.beatraxus.app.ui.components.dsp.SurroundMoveSection
 import com.beatraxus.app.ui.components.dsp.SurroundStageCard
+import com.beatraxus.app.ui.components.dsp.UpmixLabPanel
+import com.beatraxus.app.ui.components.dsp.PresetSlotsRow
+import com.beatraxus.app.ui.components.dsp.rememberSurroundMoveController
+import com.beatraxus.app.viewmodel.VideoPlayerViewModel
 import com.beatraxus.app.viewmodel.VideoPlayerUiState
 import kotlin.math.roundToInt
 
@@ -64,9 +74,17 @@ internal fun VideoSurroundSection(
     onPreset: (String) -> Unit,
     onTrim: (Int, Float) -> Unit,
     onResetTrims: () -> Unit,
-    onSaveCustom: () -> Unit
+    onSaveCustom: () -> Unit,
+    viewModel: VideoPlayerViewModel
 ) {
     val settings = uiState.surroundSettings
+    // The full Studio DSP config: 360° move, Upmix Lab, speaker setup, smart steering and the preset slots live in it.
+    val config = settings.config
+    val move = rememberSurroundMoveController(
+        config,
+        onPosition = { a, d -> viewModel.setSurroundPosition(a, d) },
+        onDistance = { viewModel.setSurroundDistance(it) }
+    )
     // The simulator switch. With "Connect to audio mode" it adds the simulator to the DSP pipeline (ON) or skips it
     // (OFF); without audio mode ON runs the soundtrack through the simulator alone.
     val simulatorOn = uiState.surroundSimulatorEnabled
@@ -228,12 +246,26 @@ internal fun VideoSurroundSection(
         // Simulator off: nothing below applies (layout, mode, presets and levels only shape the simulator).
         if (!simulatorOn) return@Column
 
+        val placeOrb: ((Float, Float) -> Unit)? = if (config.surroundMoveEnabled && shownChannels > 2) {
+            { angle: Float, distance: Float ->
+                move.stop()
+                move.orbitBase = distance
+                viewModel.setSurroundPosition(angle, distance)
+            }
+        } else null
+
         // ── Speaker preview: speakers move closer / further as their level changes ────────────────────
         SurroundStageCard(
             channels = previewChannels,
             trimsDb = settings.trimsDb,
             isPlaying = uiState.isPlaying,
-            statusText = previewStatus
+            statusText = previewStatus,
+            // Speaker setup > Distance delay: every speaker stands at its real distance in the preview.
+            distancesM = if (config.surroundCalibrationEnabled) config.surroundSpeakerDistancesM else null,
+            // 360° move: drag the orb in the room to place the sound.
+            moveAngleDeg = config.surroundPositionAngleDeg,
+            moveDistance = config.surroundPositionDistance,
+            onMove = placeOrb
         )
 
         // Nothing is upmixed on a stereo output, so mode / presets / levels have nothing to shape.
@@ -263,13 +295,52 @@ internal fun VideoSurroundSection(
                     onClick = { onPreset(preset.name) }
                 )
             }
-            if (settings.customPresetSaved) {
+            SURROUND_ALL_SLOT_NAMES.filter { config.surroundSlotFilled(it) }.forEach { slot ->
                 SurroundChip(
-                    label = SURROUND_CUSTOM_PRESET_NAME,
-                    selected = settings.activePreset == SURROUND_CUSTOM_PRESET_NAME,
-                    onClick = { onPreset(SURROUND_CUSTOM_PRESET_NAME) }
+                    label = slot,
+                    selected = settings.activePreset == slot,
+                    onClick = { onPreset(slot) }
                 )
             }
+        }
+        // Save the current mix to Custom 1..4, copy / paste a mix code.
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            PresetSlotsRow(
+                config = config,
+                accent = SurroundAmber,
+                onSave = { viewModel.saveSurroundSlot(it) },
+                exportCode = { viewModel.surroundPresetCodeText() },
+                onImport = { viewModel.importSurroundPresetCode(it) }
+            )
+        }
+
+        // ── Channel levels only, or place the sound anywhere around you (360° move) ──────────────────
+        SurroundLabel("SOUND PLACEMENT")
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SurroundChip(
+                label = "Channel levels",
+                selected = !config.surroundMoveEnabled,
+                onClick = {
+                    move.stop()
+                    viewModel.setSurroundMoveEnabled(false)
+                }
+            )
+            SurroundChip(
+                label = "360° move",
+                selected = config.surroundMoveEnabled,
+                onClick = { viewModel.setSurroundMoveEnabled(true) }
+            )
+        }
+        if (config.surroundMoveEnabled) {
+            SurroundMoveSection(
+                config = config,
+                accent = SurroundAmber,
+                sevenOne = sevenOne,
+                move = move,
+                onDistance = { viewModel.setSurroundDistance(it) },
+                onSpot = { viewModel.applySurroundPositionPreset(it) },
+                onCenter = { viewModel.resetSurroundPosition() }
+            )
         }
 
         // ── Channel levels ────────────────────────────────────────────────────────────────────────────
@@ -317,6 +388,52 @@ internal fun VideoSurroundSection(
                     onChange = { v -> onTrim(index, ((v * 2f).roundToInt() / 2f) + offset) }
                 )
             }
+
+        // ── Upmix Lab, Speaker setup (distances, test noise, bass management), Smart steering ────────
+        // Upmix Lab and Smart steering shape the stereo upmix only; a real 5.1 / 7.1 soundtrack keeps its channels,
+        // but Speaker setup (distance delay, test noise, bass management) still applies to it.
+        if (!discrete) {
+            UpmixLabPanel(
+                config = config,
+                accent = SurroundAmber,
+                onEnabled = { viewModel.setSurroundLabEnabled(it) },
+                onKnob = { knob, value -> viewModel.setSurroundLabKnob(knob, value) },
+                onReset = { viewModel.resetSurroundLab() }
+            ) {
+                SpeakerSetupPanel(
+                    config = config,
+                    accent = SurroundAmber,
+                    sevenOne = sevenOne,
+                    embedded = true,
+                    onTest = { viewModel.setSurroundTestChannel(it) },
+                    onCalibration = { viewModel.setSurroundCalibration(it) },
+                    onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
+                    onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
+                    onBassManagement = { viewModel.setSurroundBassManagement(it) }
+                )
+            }
+            SmartSteeringPanel(
+                config = config,
+                accent = SurroundAmber,
+                onEnabled = { viewModel.setSurroundSmartSteering(it) },
+                onAmount = { viewModel.setSurroundSmartSteeringAmount(it) }
+            )
+        } else {
+            SpeakerSetupPanel(
+                config = config,
+                accent = SurroundAmber,
+                sevenOne = sevenOne,
+                embedded = false,
+                onTest = { viewModel.setSurroundTestChannel(it) },
+                onCalibration = { viewModel.setSurroundCalibration(it) },
+                onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
+                onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
+                onBassManagement = { viewModel.setSurroundBassManagement(it) }
+            )
+        }
+
+        // A/B: hold to hear the plain stereo original.
+        HoldOriginalButton(SurroundAmber, enabled = uiState.isPlaying) { viewModel.setSurroundHoldOriginal(it) }
         Spacer(Modifier.height(8.dp))
     }
 }

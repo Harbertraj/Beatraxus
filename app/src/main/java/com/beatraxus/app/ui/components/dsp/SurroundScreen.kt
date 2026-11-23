@@ -47,7 +47,12 @@ import com.beatraxus.app.ui.theme.Icon
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,6 +122,8 @@ import com.beatraxus.app.model.SURROUND_TRIM_MIN_DB
 import com.beatraxus.app.model.SurroundChannel
 import com.beatraxus.app.model.SurroundLayout
 import com.beatraxus.app.model.sanitizeSurroundTrims
+import com.beatraxus.app.model.SURROUND_DISTANCE_DEFAULT_M
+import com.beatraxus.app.model.sanitizeSurroundDistances
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.theme.DspPaletteState
 import com.beatraxus.app.ui.utils.LocalLiveAudioLevel
@@ -160,85 +167,16 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
     }
     val trims = sanitizeSurroundTrims(config.surroundChannelTrimsDb)
 
-    // 360° move. Orbit travels along the chosen style; Gyro follow keeps the sound fixed in the room while the phone
-    // turns. Dragging the orb, tapping Center or leaving the mode stops both.
-    var orbit by remember { mutableStateOf(false) }
-    var gyro by remember { mutableStateOf(false) }
-    var orbitStyle by rememberSaveable { mutableStateOf(0) }
-    var orbitSeconds by rememberSaveable { mutableStateOf(SURROUND_ORBIT_DEFAULT_SECONDS) }
-    var orbitBase by remember { mutableStateOf(config.surroundPositionDistance) }
-    val latestConfig by rememberUpdatedState(config)
-    LaunchedEffect(orbit, config.surroundMoveEnabled) {
-        if (!orbit || !config.surroundMoveEnabled) return@LaunchedEffect
-        val styles = SurroundOrbitPattern.entries
-        val first = styles[orbitStyle.coerceIn(0, styles.size - 1)]
-        // A circle or spiral carries on from where the orb is now; the other styles start at their own beginning.
-        var phase = if (first == SurroundOrbitPattern.CIRCLE || first == SurroundOrbitPattern.SPIRAL) {
-            latestConfig.surroundPositionAngleDeg / 360f
-        } else 0f
-        var last = androidx.compose.runtime.withFrameNanos { it }
-        var acc = 0f
-        try {
-            while (true) {
-                val now = androidx.compose.runtime.withFrameNanos { it }
-                acc += (now - last) / 1_000_000_000f
-                last = now
-                if (acc >= ORBIT_STEP_S) {
-                    phase = advanceSurroundOrbitPhase(phase, acc, orbitSeconds)
-                    val style = styles[orbitStyle.coerceIn(0, styles.size - 1)]
-                    val (angle, distance) = surroundOrbitPoint(style, phase, orbitBase)
-                    viewModel.setSurroundPosition(angle, distance)
-                    acc = 0f
-                }
-            }
-        } finally {
-            // Spiral and Figure 8 breathe in and out; when the orbit stops the distance goes back to the one the
-            // user chose, so the slider and the next orbit start from it (not from wherever the breath stopped).
-            viewModel.setSurroundDistance(orbitBase)
-        }
-    }
-
-    // Gyro follow: the phone's heading when the mode starts is "straight ahead of the sound". Turning right moves
-    // the sound to the left of you by the same angle, like head tracking. Uses the rotation-vector sensor.
-    val context = LocalContext.current
-    val sensorManager = remember(context) { context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
-    val motionSensor = remember(sensorManager) {
-        sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
-            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
-    }
-    DisposableEffect(gyro, config.surroundMoveEnabled, motionSensor) {
-        if (!gyro || !config.surroundMoveEnabled || sensorManager == null || motionSensor == null) {
-            return@DisposableEffect onDispose { }
-        }
-        val rotation = FloatArray(9)
-        val anchor = latestConfig.surroundPositionAngleDeg
-        var startHeading: Float? = null
-        var shown = anchor
-        var lastPushNs = 0L
-        val listener = object : SensorEventListener {
-            override fun onSensorChanged(event: SensorEvent) {
-                SensorManager.getRotationMatrixFromVector(rotation, event.values)
-                val heading = surroundPhoneHeadingDeg(rotation) ?: return
-                val start = startHeading ?: heading.also { startHeading = it }
-                shown = smoothSurroundAngle(shown, surroundGyroAngle(anchor, heading, start), 0.25f)
-                val c = latestConfig
-                // At most 25 updates a second, and only when the sound really moved (saves the settings store).
-                if (event.timestamp - lastPushNs >= 40_000_000L && surroundAngleGap(shown, c.surroundPositionAngleDeg) >= 0.4f) {
-                    lastPushNs = event.timestamp
-                    viewModel.setSurroundPosition(shown, c.surroundPositionDistance)
-                }
-            }
-
-            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
-        }
-        sensorManager.registerListener(listener, motionSensor, SensorManager.SENSOR_DELAY_GAME)
-        onDispose { sensorManager.unregisterListener(listener) }
-    }
+    // 360° move (orbit / gyro follow): state and sensor / frame loops live in a controller shared with the video sheet.
+    val move = rememberSurroundMoveController(
+        config,
+        onPosition = { a, d -> viewModel.setSurroundPosition(a, d) },
+        onDistance = { viewModel.setSurroundDistance(it) }
+    )
     val moveState = if (config.surroundMoveEnabled) {
         MoveState(config.surroundPositionAngleDeg, config.surroundPositionDistance) { angle, distance ->
-            orbit = false
-            gyro = false
-            orbitBase = distance
+            move.stop()
+            move.orbitBase = distance
             viewModel.setSurroundPosition(angle, distance)
         }
     } else null
@@ -285,13 +223,173 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             )
         }
 
-        // Everything below softly dims while surround is off, but stays editable so layouts can be pre-set.
+        // Everything below softly dims while surround is off. Layout and preset chips stay tappable so a layout can be
+        // pre-set, but every bar, fader, slider and the room orb is locked until the master switch is on.
+        CompositionLocalProvider(LocalSurroundControlsEnabled provides config.surroundEnabled) {
         Column(
             modifier = Modifier.alpha(if (config.surroundEnabled) 1f else 0.6f),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // ── Stage view ────────────────────────────────────────────────────────────────────────────────
-            SurroundStageView(plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor, moveState)
+            // ── Shared by the Studio DSP surround page and the video player's surround sheet ──────────────────────────────
+
+/**
+ * False while the Surround master switch is off: every bar, fader, slider and the room orb ignores touches (they
+ * would change values that nothing is using). Defaults to true outside the surround screens.
+ */
+internal val LocalSurroundControlsEnabled = compositionLocalOf { true }
+
+/** State of the 360° move helpers: auto orbit, gyro follow and the distance the user chose for an orbit. */
+@Stable
+internal class SurroundMoveController(initialDistance: Float, val gyroAvailable: Boolean) {
+    var orbit by mutableStateOf(false)
+    var gyro by mutableStateOf(false)
+    var orbitStyle by mutableStateOf(0)
+    var orbitSeconds by mutableStateOf(SURROUND_ORBIT_DEFAULT_SECONDS)
+    var orbitBase by mutableStateOf(initialDistance)
+
+    /** Dragging the orb, tapping Center or leaving the mode stops both helpers. */
+    fun stop() {
+        orbit = false
+        gyro = false
+    }
+}
+
+/**
+ * Creates the move controller and runs its two loops. Orbit travels along the chosen style; Gyro follow keeps the
+ * sound fixed in the room while the phone turns (the heading when the mode starts is "straight ahead of the
+ * sound"; uses the rotation-vector sensor). [onPosition] / [onDistance] write the settings.
+ */
+@Composable
+internal fun rememberSurroundMoveController(
+    config: DspConfig,
+    onPosition: (Float, Float) -> Unit,
+    onDistance: (Float) -> Unit
+): SurroundMoveController {
+    val context = LocalContext.current
+    val sensorManager = remember(context) { context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager }
+    val motionSensor = remember(sensorManager) {
+        sensorManager?.getDefaultSensor(Sensor.TYPE_GAME_ROTATION_VECTOR)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+    }
+    val c = remember(motionSensor) { SurroundMoveController(config.surroundPositionDistance, motionSensor != null) }
+    val latestConfig by rememberUpdatedState(config)
+    val latestOnPosition by rememberUpdatedState(onPosition)
+    val latestOnDistance by rememberUpdatedState(onDistance)
+
+    LaunchedEffect(c.orbit, config.surroundMoveEnabled) {
+        if (!c.orbit || !config.surroundMoveEnabled) return@LaunchedEffect
+        val styles = SurroundOrbitPattern.entries
+        val first = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
+        // A circle or spiral carries on from where the orb is now; the other styles start at their own beginning.
+        var phase = if (first == SurroundOrbitPattern.CIRCLE || first == SurroundOrbitPattern.SPIRAL) {
+            latestConfig.surroundPositionAngleDeg / 360f
+        } else 0f
+        var last = androidx.compose.runtime.withFrameNanos { it }
+        var acc = 0f
+        try {
+            while (true) {
+                val now = androidx.compose.runtime.withFrameNanos { it }
+                acc += (now - last) / 1_000_000_000f
+                last = now
+                if (acc >= ORBIT_STEP_S) {
+                    phase = advanceSurroundOrbitPhase(phase, acc, c.orbitSeconds)
+                    val style = styles[c.orbitStyle.coerceIn(0, styles.size - 1)]
+                    val (angle, distance) = surroundOrbitPoint(style, phase, c.orbitBase)
+                    latestOnPosition(angle, distance)
+                    acc = 0f
+                }
+            }
+        } finally {
+            // Spiral and Figure 8 breathe in and out; when the orbit stops the distance goes back to the one the
+            // user chose, so the slider and the next orbit start from it (not from wherever the breath stopped).
+            latestOnDistance(c.orbitBase)
+        }
+    }
+
+    DisposableEffect(c.gyro, config.surroundMoveEnabled, motionSensor) {
+        if (!c.gyro || !config.surroundMoveEnabled || sensorManager == null || motionSensor == null) {
+            return@DisposableEffect onDispose { }
+        }
+        val rotation = FloatArray(9)
+        val anchor = latestConfig.surroundPositionAngleDeg
+        var startHeading: Float? = null
+        var shown = anchor
+        var lastPushNs = 0L
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                SensorManager.getRotationMatrixFromVector(rotation, event.values)
+                val heading = surroundPhoneHeadingDeg(rotation) ?: return
+                val start = startHeading ?: heading.also { startHeading = it }
+                shown = smoothSurroundAngle(shown, surroundGyroAngle(anchor, heading, start), 0.25f)
+                val cfg = latestConfig
+                // At most 25 updates a second, and only when the sound really moved (saves the settings store).
+                if (event.timestamp - lastPushNs >= 40_000_000L && surroundAngleGap(shown, cfg.surroundPositionAngleDeg) >= 0.4f) {
+                    lastPushNs = event.timestamp
+                    latestOnPosition(shown, cfg.surroundPositionDistance)
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit
+        }
+        sensorManager.registerListener(listener, motionSensor, SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sensorManager.unregisterListener(listener) }
+    }
+    return c
+}
+
+/** The "Sound position" card of the 360° move mode, wired to a [SurroundMoveController]. */
+@Composable
+internal fun SurroundMoveSection(
+    config: DspConfig,
+    accent: Color,
+    sevenOne: Boolean,
+    move: SurroundMoveController,
+    onDistance: (Float) -> Unit,
+    onSpot: (String) -> Unit,
+    onCenter: () -> Unit
+) {
+    PositionPanel(
+        config = config,
+        accent = accent,
+        sevenOne = sevenOne,
+        // While an orbit runs the live distance breathes (Spiral / Figure 8); the slider shows the distance the
+        // user chose, so the thumb stays where they put it.
+        distanceValue = if (move.orbit) move.orbitBase else config.surroundPositionDistance,
+        orbit = move.orbit,
+        onOrbit = {
+            if (it) move.gyro = false
+            move.orbit = it
+        },
+        gyro = move.gyro,
+        gyroAvailable = move.gyroAvailable,
+        onGyro = { if (it) move.orbit = false; move.gyro = it },
+        orbitStyle = move.orbitStyle,
+        onOrbitStyle = { move.orbitStyle = it },
+        orbitSeconds = move.orbitSeconds,
+        onOrbitSeconds = { move.orbitSeconds = it },
+        onDistance = {
+            move.orbitBase = sanitizeSurroundDistance(it)
+            // While orbiting, the orbit applies the new base itself on its next step.
+            if (!move.orbit) onDistance(it)
+        },
+        onSpot = { name ->
+            move.stop()
+            BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name }?.let { move.orbitBase = it.distance }
+            onSpot(name)
+        },
+        onCenter = {
+            move.stop()
+            move.orbitBase = SURROUND_POSITION_MIN_DISTANCE
+            onCenter()
+        }
+    )
+}
+
+// ── Stage view ────────────────────────────────────────────────────────────────────────────────
+            SurroundStageView(
+                plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor, moveState,
+                distancesM = if (config.surroundCalibrationEnabled) config.surroundSpeakerDistancesM else null
+            )
 
             // ── Which speakers receive sound right now ────────────────────────────────────────────────────
             ActiveChannelStrip(plannedChannels, look)
@@ -319,7 +417,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 fallback -> "This output device only accepts stereo, so playback stays in stereo."
                 config.surroundEnabled && config.surroundLayout == SurroundLayout.STEREO -> "Layout is Stereo, so nothing is upmixed. Pick 5.1, 7.1 or Auto."
                 config.surroundEnabled && plannedChannels > 2 && !uiState.isPlaying -> "Ready. Surround starts with the next play."
-                !config.surroundEnabled -> "Surround is off. Audio plays exactly as before."
+                !config.surroundEnabled -> "Surround is off. Audio plays exactly as before. Turn it on to use the level bars and sliders."
                 else -> null
             }
             if (note != null) {
@@ -335,8 +433,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             // ── Channel levels only, or place the sound anywhere around you ───────────────────────────────
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 LayoutButton("Channel levels", Icons.Rounded.Tune, !config.surroundMoveEnabled, accent, Modifier.weight(1f)) {
-                    orbit = false
-                    gyro = false
+                    move.stop()
                     viewModel.setSurroundMoveEnabled(false)
                 }
                 LayoutButton("360° move", Icons.Rounded.Sync, config.surroundMoveEnabled, accent, Modifier.weight(1f)) {
@@ -345,42 +442,14 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             }
 
             if (config.surroundMoveEnabled) {
-                PositionPanel(
+                SurroundMoveSection(
                     config = config,
                     accent = accent,
                     sevenOne = plannedChannels >= 8,
-                    // While an orbit runs the live distance breathes (Spiral / Figure 8); the slider shows the
-                    // distance the user chose, so the thumb stays where they put it.
-                    distanceValue = if (orbit) orbitBase else config.surroundPositionDistance,
-                    orbit = orbit,
-                    onOrbit = {
-                        if (it) gyro = false
-                        orbit = it
-                    },
-                    gyro = gyro,
-                    gyroAvailable = motionSensor != null,
-                    onGyro = { if (it) orbit = false; gyro = it },
-                    orbitStyle = orbitStyle,
-                    onOrbitStyle = { orbitStyle = it },
-                    orbitSeconds = orbitSeconds,
-                    onOrbitSeconds = { orbitSeconds = it },
-                    onDistance = {
-                        orbitBase = sanitizeSurroundDistance(it)
-                        // While orbiting, the orbit applies the new base itself on its next step.
-                        if (!orbit) viewModel.setSurroundDistance(it)
-                    },
-                    onSpot = { name ->
-                        orbit = false
-                        gyro = false
-                        BUILT_IN_SURROUND_POSITIONS.firstOrNull { it.name == name }?.let { orbitBase = it.distance }
-                        viewModel.applySurroundPositionPreset(name)
-                    },
-                    onCenter = {
-                        orbit = false
-                        gyro = false
-                        orbitBase = SURROUND_POSITION_MIN_DISTANCE
-                        viewModel.resetSurroundPosition()
-                    }
+                    move = move,
+                    onDistance = { viewModel.setSurroundDistance(it) },
+                    onSpot = { viewModel.applySurroundPositionPreset(it) },
+                    onCenter = { viewModel.resetSurroundPosition() }
                 )
             }
 
@@ -509,6 +578,7 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 onAmount = { viewModel.setSurroundSmartSteeringAmount(it) }
             )
         }
+        }
     }
 }
 
@@ -548,6 +618,72 @@ internal fun speakerDistanceFactor(trimDb: Float): Float {
 }
 
 /**
+ * Distance of a speaker from the listener on the stage for its real distance in metres (Speaker setup > Distance
+ * delay): [SURROUND_DISTANCE_DEFAULT_M] = on the ring, nearer speakers come clearly closer, farther ones step back
+ * a little (the room is small, so the far side is compressed).
+ */
+internal fun speakerMetresFactor(metres: Float): Float {
+    val ratio = (metres / SURROUND_DISTANCE_DEFAULT_M).coerceIn(0.2f, 4f)
+    return if (ratio <= 1f) 0.42f + 0.58f * ratio else 1f + 0.18f * ((ratio - 1f) / 3f)
+}
+
+private const val STAGE_SPEAKER_MIN_R = 0.5f
+private const val STAGE_SPEAKER_MAX_R = 1.22f
+private const val STAGE_SPEAKER_MIN_GAP = 0.25f
+
+/**
+ * Floor-plan position (x sideways, y towards the screen, in ring units) of every speaker in [SPEAKER_SPOTS] order.
+ * A louder speaker stands closer ([trimsDb]); with [distancesM] each speaker's real distance moves it too. Cabinets
+ * that would end up on top of each other are pushed apart (fixed number of passes, so dragging a slider never
+ * makes them jump), and everything stays inside the room.
+ */
+internal fun surroundStageLayout(trimsDb: List<Float>, distancesM: List<Float>?): List<Offset> {
+    val metres = distancesM?.let { sanitizeSurroundDistances(it) }
+    val n = SPEAKER_SPOTS.size
+    val xs = FloatArray(n)
+    val ys = FloatArray(n)
+    for ((i, spot) in SPEAKER_SPOTS.withIndex()) {
+        val a = spot.angleDeg * PI.toFloat() / 180f
+        var r = spot.radius * speakerDistanceFactor(trimsDb.getOrElse(spot.channel.ordinal) { 0f })
+        if (metres != null) r *= speakerMetresFactor(metres[spot.channel.ordinal])
+        r = r.coerceIn(STAGE_SPEAKER_MIN_R, STAGE_SPEAKER_MAX_R)
+        xs[i] = sin(a) * r
+        ys[i] = cos(a) * r
+    }
+    for (pass in 0 until 12) {
+        var moved = false
+        for (i in 0 until n) for (j in i + 1 until n) {
+            var dx = xs[j] - xs[i]
+            var dy = ys[j] - ys[i]
+            var d = sqrt(dx * dx + dy * dy)
+            if (d >= STAGE_SPEAKER_MIN_GAP) continue
+            if (d < 1e-4f) {
+                // Exactly on top of each other: separate sideways, by the speaker's own side of the room.
+                dx = if (SPEAKER_SPOTS[j].angleDeg >= SPEAKER_SPOTS[i].angleDeg) 1f else -1f
+                dy = 0f
+                d = 1f
+            }
+            val push = (STAGE_SPEAKER_MIN_GAP - d) / 2f + 0.002f
+            val ux = dx / d
+            val uy = dy / d
+            xs[i] -= ux * push; ys[i] -= uy * push
+            xs[j] += ux * push; ys[j] += uy * push
+            moved = true
+        }
+        for (i in 0 until n) {
+            val r = sqrt(xs[i] * xs[i] + ys[i] * ys[i])
+            if (r > STAGE_SPEAKER_MAX_R) {
+                xs[i] *= STAGE_SPEAKER_MAX_R / r; ys[i] *= STAGE_SPEAKER_MAX_R / r
+            } else if (r < STAGE_SPEAKER_MIN_R && r > 1e-4f) {
+                xs[i] *= STAGE_SPEAKER_MIN_R / r; ys[i] *= STAGE_SPEAKER_MIN_R / r
+            }
+        }
+        if (!moved) break
+    }
+    return List(n) { Offset(xs[it], ys[it]) }
+}
+
+/**
  * The same room view for other screens (the video player's surround sheet). Uses the user's Surround Screen
  * appearance settings and the level trims shown in the sheet.
  */
@@ -557,7 +693,13 @@ fun SurroundStageCard(
     trimsDb: List<Float>,
     isPlaying: Boolean,
     statusText: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** Speaker distances in metres (L R C SL SR BL BR SW); null = ignore them (Distance delay is off). */
+    distancesM: List<Float>? = null,
+    /** 360° move: where the sound orb sits and what to do when it is placed. Null = no orb. */
+    moveAngleDeg: Float = 0f,
+    moveDistance: Float = SURROUND_POSITION_MIN_DISTANCE,
+    onMove: ((angleDeg: Float, distance: Float) -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val look by remember { com.beatraxus.app.repository.AppearancePreferences(context).appearanceConfig }
@@ -565,7 +707,9 @@ fun SurroundStageCard(
     Box(modifier = modifier) {
         SurroundStageView(
             channels, sanitizeSurroundTrims(trimsDb), look, isPlaying,
-            statusText, surroundAccent(look)
+            statusText, surroundAccent(look),
+            move = onMove?.let { MoveState(moveAngleDeg, moveDistance, it) },
+            distancesM = distancesM
         )
     }
 }
@@ -605,9 +749,26 @@ private fun SurroundStageView(
     isPlaying: Boolean,
     statusText: String,
     statusColor: Color,
-    move: MoveState? = null
+    move: MoveState? = null,
+    distancesM: List<Float>? = null
 ) {
     val pal = DspPaletteState.current
+    val controlsOn = LocalSurroundControlsEnabled.current
+    // Where the speakers stand: level trims and (with Distance delay on) the real distances move them. A change
+    // glides over a fraction of a second instead of jumping.
+    val targetLayout = remember(trimsDb, distancesM) { surroundStageLayout(trimsDb, distancesM) }
+    var shownLayout by remember { mutableStateOf(targetLayout) }
+    LaunchedEffect(targetLayout) {
+        val from = shownLayout
+        if (from == targetLayout) return@LaunchedEffect
+        val progress = Animatable(0f)
+        progress.animateTo(1f, tween(220)) {
+            val f = value
+            shownLayout = List(targetLayout.size) { i ->
+                Offset(from[i].x + (targetLayout[i].x - from[i].x) * f, from[i].y + (targetLayout[i].y - from[i].y) * f)
+            }
+        }
+    }
     val glow = surroundAccent(look)
     val latestMove by rememberUpdatedState(move)
 
@@ -638,7 +799,7 @@ private fun SurroundStageView(
             .background(bgTone(0xFF07090D))
             .border(1.dp, Brush.verticalGradient(listOf(glow.copy(0.40f), Color.White.copy(0.05f))), shape)
             .then(
-                if (move != null) {
+                if (move != null && controlsOn) {
                     Modifier
                         .pointerInput(Unit) {
                             detectTapGestures { p ->
@@ -687,9 +848,8 @@ private fun SurroundStageView(
         // A louder speaker stands closer to the listener, a quieter one further away, so every level change
         // (slider or preset) visibly moves its speaker.
         fun spotPos(spot: SpeakerSpot): Offset {
-            val a = spot.angleDeg * PI.toFloat() / 180f
-            val r = spot.radius * speakerDistanceFactor(trimsDb.getOrElse(spot.channel.ordinal) { 0f })
-            return floorPoint(sin(a) * r, cos(a) * r)
+            val p = shownLayout[SPEAKER_SPOTS.indexOf(spot)]
+            return floorPoint(p.x, p.y)
         }
 
         Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1.02f)) {
@@ -940,10 +1100,14 @@ private fun PositionPanel(
             value = distance,
             onValueChange = onDistance,
             valueRange = SURROUND_POSITION_MIN_DISTANCE..SURROUND_POSITION_MAX_DISTANCE,
+            enabled = LocalSurroundControlsEnabled.current,
             colors = SliderDefaults.colors(
                 thumbColor = accent,
                 activeTrackColor = accent,
-                inactiveTrackColor = Color.White.copy(0.12f)
+                inactiveTrackColor = Color.White.copy(0.12f),
+                disabledThumbColor = accent.copy(0.35f),
+                disabledActiveTrackColor = accent.copy(0.25f),
+                disabledInactiveTrackColor = Color.White.copy(0.08f)
             )
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -987,10 +1151,14 @@ private fun PositionPanel(
             value = SURROUND_ORBIT_MIN_SECONDS + SURROUND_ORBIT_MAX_SECONDS - orbitSeconds,
             onValueChange = { onOrbitSeconds(SURROUND_ORBIT_MIN_SECONDS + SURROUND_ORBIT_MAX_SECONDS - it) },
             valueRange = SURROUND_ORBIT_MIN_SECONDS..SURROUND_ORBIT_MAX_SECONDS,
+            enabled = LocalSurroundControlsEnabled.current,
             colors = SliderDefaults.colors(
                 thumbColor = accent,
                 activeTrackColor = accent,
-                inactiveTrackColor = Color.White.copy(0.12f)
+                inactiveTrackColor = Color.White.copy(0.12f),
+                disabledThumbColor = accent.copy(0.35f),
+                disabledActiveTrackColor = accent.copy(0.25f),
+                disabledInactiveTrackColor = Color.White.copy(0.08f)
             )
         )
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -1036,7 +1204,7 @@ private fun PositionPanel(
  * Only a stereo song that is upmixed is affected; a real 5.1 / 7.1 soundtrack keeps its own channels.
  */
 @Composable
-private fun UpmixLabPanel(
+internal fun UpmixLabPanel(
     config: DspConfig,
     accent: Color,
     onEnabled: (Boolean) -> Unit,
@@ -1090,10 +1258,14 @@ private fun UpmixLabPanel(
                 value = value,
                 onValueChange = { onKnob(knob, it) },
                 valueRange = knob.min..knob.max,
+                enabled = LocalSurroundControlsEnabled.current,
                 colors = SliderDefaults.colors(
                     thumbColor = accent,
                     activeTrackColor = accent,
-                    inactiveTrackColor = Color.White.copy(0.12f)
+                    inactiveTrackColor = Color.White.copy(0.12f),
+                    disabledThumbColor = accent.copy(0.35f),
+                    disabledActiveTrackColor = accent.copy(0.25f),
+                    disabledInactiveTrackColor = Color.White.copy(0.08f)
                 )
             )
             Text(knob.hint, color = Color.White.copy(0.45f), fontSize = 10.sp, lineHeight = 14.sp)
@@ -1519,6 +1691,7 @@ private fun TrimColumn(label: String, valueDb: Float, active: Boolean, color: Co
 @Composable
 private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: (Float) -> Unit) {
     val latestOnChange by rememberUpdatedState(onChange)
+    val controlsOn = LocalSurroundControlsEnabled.current
     var heightPx by remember { mutableLongStateOf(1L) }
     fun toDb(y: Float): Float {
         val h = heightPx.toFloat().coerceAtLeast(1f)
@@ -1531,13 +1704,15 @@ private fun TrimSlider(valueDb: Float, active: Boolean, color: Color, onChange: 
             .width(30.dp)
             .height(128.dp)
             .onSizeChanged { heightPx = it.height.toLong() }
-            .pointerInput(Unit) {
+            .pointerInput(controlsOn) {
+                if (!controlsOn) return@pointerInput
                 detectTapGestures(
                     onDoubleTap = { latestOnChange(0f) },
                     onTap = { latestOnChange(toDb(it.y)) }
                 )
             }
-            .pointerInput(Unit) {
+            .pointerInput(controlsOn) {
+                if (!controlsOn) return@pointerInput
                 detectVerticalDragGestures { change, _ ->
                     change.consume()
                     latestOnChange(toDb(change.position.y))

@@ -121,7 +121,10 @@ private fun ResetLink(onClick: () -> Unit, accent: Color) {
 private fun accentSliderColors(accent: Color) = SliderDefaults.colors(
     thumbColor = accent,
     activeTrackColor = accent,
-    inactiveTrackColor = Color.White.copy(0.12f)
+    inactiveTrackColor = Color.White.copy(0.12f),
+    disabledThumbColor = accent.copy(0.35f),
+    disabledActiveTrackColor = accent.copy(0.25f),
+    disabledInactiveTrackColor = Color.White.copy(0.08f)
 )
 
 // ── Live meters and A/B hold ─────────────────────────────────────────────────────────────────────────────────
@@ -251,6 +254,7 @@ internal fun SmartSteeringPanel(
             value = config.surroundSmartSteeringAmount,
             onValueChange = onAmount,
             valueRange = 0f..1f,
+            enabled = LocalSurroundControlsEnabled.current,
             colors = accentSliderColors(accent)
         )
     }
@@ -291,7 +295,8 @@ internal fun SpeakerSetupPanel(
         SurroundChannel.entries.chunked(4).forEach { rowChannels ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 rowChannels.forEach { channel ->
-                    val enabled = sevenOne || !channel.sevenOneOnly
+                    // Test noise only makes sense while surround is on (the slider area is locked while it is off).
+                    val enabled = (sevenOne || !channel.sevenOneOnly) && LocalSurroundControlsEnabled.current
                     PresetChip(
                         name = channel.label,
                         selected = config.surroundTestChannel == channel.ordinal,
@@ -330,6 +335,7 @@ internal fun SpeakerSetupPanel(
                 value = distances[i],
                 onValueChange = { onDistance(i, it) },
                 valueRange = SURROUND_DISTANCE_MIN_M..SURROUND_DISTANCE_MAX_M,
+                enabled = LocalSurroundControlsEnabled.current,
                 colors = accentSliderColors(accent)
             )
         }

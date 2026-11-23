@@ -2776,7 +2776,8 @@ fun VideoSettingsSheetContent(
                 onPreset = { viewModel.applySurroundPreset(it) },
                 onTrim = { index, db -> viewModel.setSurroundChannelTrim(index, db) },
                 onResetTrims = { viewModel.resetSurroundTrims() },
-                onSaveCustom = { viewModel.saveSurroundCustomPreset() }
+                onSaveCustom = { viewModel.saveSurroundCustomPreset() },
+                viewModel = viewModel
             )
         }
 

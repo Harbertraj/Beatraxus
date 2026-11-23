@@ -74,6 +74,27 @@ import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.model.SavedEqPreset
 import com.beatraxus.app.model.sanitizeSurroundTrims
 import com.beatraxus.app.model.withSurroundPreset
+import com.beatraxus.app.model.SurroundLabKnob
+import com.beatraxus.app.model.parseSurroundPresetCode
+import com.beatraxus.app.model.sanitizeSurroundDistance
+import com.beatraxus.app.model.surroundPresetCode
+import com.beatraxus.app.model.withSurroundBassManagement
+import com.beatraxus.app.model.withSurroundCalibration
+import com.beatraxus.app.model.withSurroundDistance
+import com.beatraxus.app.model.withSurroundDistancesReset
+import com.beatraxus.app.model.withSurroundKnob
+import com.beatraxus.app.model.withSurroundHoldOriginal
+import com.beatraxus.app.model.withSurroundLab
+import com.beatraxus.app.model.withSurroundLabReset
+import com.beatraxus.app.model.withSurroundMove
+import com.beatraxus.app.model.withSurroundPosition
+import com.beatraxus.app.model.withSurroundPositionPreset
+import com.beatraxus.app.model.withSurroundPositionReset
+import com.beatraxus.app.model.withSurroundPresetCode
+import com.beatraxus.app.model.withSurroundSlotSaved
+import com.beatraxus.app.model.withSurroundSmartSteering
+import com.beatraxus.app.model.withSurroundSmartSteeringAmount
+import com.beatraxus.app.model.withSurroundTestChannel
 import com.beatraxus.app.model.withSurroundTrim
 import com.beatraxus.app.model.withSurroundTrimsReset
 import com.beatraxus.app.model.VideoRecentlyPlayedEntity
@@ -237,7 +258,9 @@ data class VideoSurroundSettings(
     /** Eight values in order L R C SL SR BL BR SW. */
     val trimsDb: List<Float> = DEFAULT_SURROUND_TRIMS_DB,
     val activePreset: String = "Default",
-    val customPresetSaved: Boolean = false
+    val customPresetSaved: Boolean = false,
+    /** The whole Studio DSP config: 360° move, Upmix Lab, speaker setup, smart steering and preset slots read it. */
+    val config: DspConfig = DspConfig()
 )
 
 private fun DspConfig.toVideoSurroundSettings() = VideoSurroundSettings(
@@ -245,7 +268,8 @@ private fun DspConfig.toVideoSurroundSettings() = VideoSurroundSettings(
     mode = surroundMode,
     trimsDb = sanitizeSurroundTrims(surroundChannelTrimsDb),
     activePreset = surroundActivePreset,
-    customPresetSaved = surroundCustomTrimsDb != null
+    customPresetSaved = surroundCustomTrimsDb != null,
+    config = this
 )
 
 enum class SleepTimerMode(val label: String) {
@@ -2334,6 +2358,55 @@ class VideoPlayerViewModel(
     fun resetSurroundTrims() = applySurroundConfig { it.withSurroundTrimsReset() }
 
     fun applySurroundPreset(name: String) = applySurroundConfig { it.withSurroundPreset(name) }
+
+    // 360° move, Upmix Lab, speaker setup, smart steering, preset slots: same settings as Studio DSP > Surround.
+    fun setSurroundMoveEnabled(enabled: Boolean) = applySurroundConfig { it.withSurroundMove(enabled) }
+
+    fun setSurroundPosition(angleDeg: Float, distance: Float) = applySurroundConfig { it.withSurroundPosition(angleDeg, distance) }
+
+    fun setSurroundDistance(distance: Float) {
+        val d = sanitizeSurroundDistance(distance)
+        if (kotlin.math.abs(latestDspConfig.surroundPositionDistance - d) < 0.005f) return
+        applySurroundConfig { it.withSurroundPosition(it.surroundPositionAngleDeg, d) }
+    }
+
+    fun applySurroundPositionPreset(name: String) = applySurroundConfig { it.withSurroundPositionPreset(name) }
+
+    fun resetSurroundPosition() = applySurroundConfig { it.withSurroundPositionReset() }
+
+    fun setSurroundLabEnabled(enabled: Boolean) = applySurroundConfig { it.withSurroundLab(enabled) }
+
+    fun setSurroundLabKnob(knob: SurroundLabKnob, value: Float) = applySurroundConfig { it.withSurroundKnob(knob, value) }
+
+    fun resetSurroundLab() = applySurroundConfig { it.withSurroundLabReset() }
+
+    fun setSurroundSmartSteering(enabled: Boolean) = applySurroundConfig { it.withSurroundSmartSteering(enabled) }
+
+    fun setSurroundSmartSteeringAmount(amount: Float) = applySurroundConfig { it.withSurroundSmartSteeringAmount(amount) }
+
+    fun setSurroundBassManagement(enabled: Boolean) = applySurroundConfig { it.withSurroundBassManagement(enabled) }
+
+    fun setSurroundCalibration(enabled: Boolean) = applySurroundConfig { it.withSurroundCalibration(enabled) }
+
+    fun setSurroundSpeakerDistance(index: Int, metres: Float) = applySurroundConfig { it.withSurroundDistance(index, metres) }
+
+    fun resetSurroundSpeakerDistances() = applySurroundConfig { it.withSurroundDistancesReset() }
+
+    /** Test noise on one speaker (SurroundChannel ordinal), -1 stops it. Not saved. */
+    fun setSurroundTestChannel(index: Int) = applySurroundConfig { it.withSurroundTestChannel(index) }
+
+    fun saveSurroundSlot(name: String) = applySurroundConfig { it.withSurroundSlotSaved(name) }
+
+    /** True while the A/B button is held: plain stereo instead of the surround mix. Not saved. */
+    fun setSurroundHoldOriginal(hold: Boolean) = applySurroundConfig { it.withSurroundHoldOriginal(hold) }
+
+    fun surroundPresetCodeText(): String = surroundPresetCode(latestDspConfig)
+
+    fun importSurroundPresetCode(text: String?): Boolean {
+        if (parseSurroundPresetCode(text) == null) return false
+        applySurroundConfig { it.withSurroundPresetCode(text) }
+        return true
+    }
 
     fun saveSurroundCustomPreset() = applySurroundConfig {
         it.copy(
