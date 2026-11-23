@@ -2388,6 +2388,9 @@ class VideoPlayerViewModel(
 
     fun setSurroundCalibration(enabled: Boolean) = applySurroundConfig { it.withSurroundCalibration(enabled) }
 
+    /** Live level (0..1) of every surround speaker for the room preview; false while no surround upmix runs. */
+    fun readSurroundLevels(dst: FloatArray): Boolean = VideoAudioBridge.getAudioEngine()?.getSurroundLevels(dst) ?: false
+
     fun setSurroundSpeakerDistance(index: Int, metres: Float) = applySurroundConfig { it.withSurroundDistance(index, metres) }
 
     fun resetSurroundSpeakerDistances() = applySurroundConfig { it.withSurroundDistancesReset() }

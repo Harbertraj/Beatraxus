@@ -22,6 +22,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -44,7 +45,7 @@ import com.beatraxus.app.model.SURROUND_ALL_SLOT_NAMES
 import com.beatraxus.app.model.surroundSlotFilled
 import com.beatraxus.app.ui.components.dsp.HoldOriginalButton
 import com.beatraxus.app.ui.components.dsp.SmartSteeringPanel
-import com.beatraxus.app.ui.components.dsp.SpeakerSetupPanel
+import com.beatraxus.app.ui.components.dsp.BassManagementPanel
 import com.beatraxus.app.ui.components.dsp.SurroundMoveSection
 import com.beatraxus.app.ui.components.dsp.SurroundStageCard
 import com.beatraxus.app.ui.components.dsp.UpmixLabPanel
@@ -78,13 +79,18 @@ internal fun VideoSurroundSection(
     viewModel: VideoPlayerViewModel
 ) {
     val settings = uiState.surroundSettings
-    // The full Studio DSP config: 360° move, Upmix Lab, speaker setup, smart steering and the preset slots live in it.
+    // The full Studio DSP config: 360° move, Upmix Lab, bass management, smart steering and the preset slots live in it.
     val config = settings.config
     val move = rememberSurroundMoveController(
         config,
         onPosition = { a, d -> viewModel.setSurroundPosition(a, d) },
         onDistance = { viewModel.setSurroundDistance(it) }
     )
+    // The Distance delay switch left the surround screens. Switch off what an earlier version left on, so nothing
+    // stays delayed with no control left to undo it.
+    LaunchedEffect(config.surroundCalibrationEnabled) {
+        if (config.surroundCalibrationEnabled) viewModel.setSurroundCalibration(false)
+    }
     // The simulator switch. With "Connect to audio mode" it adds the simulator to the DSP pipeline (ON) or skips it
     // (OFF); without audio mode ON runs the soundtrack through the simulator alone.
     val simulatorOn = uiState.surroundSimulatorEnabled
@@ -260,12 +266,14 @@ internal fun VideoSurroundSection(
             trimsDb = settings.trimsDb,
             isPlaying = uiState.isPlaying,
             statusText = previewStatus,
-            // Speaker setup > Distance delay: every speaker stands at its real distance in the preview.
-            distancesM = if (config.surroundCalibrationEnabled) config.surroundSpeakerDistancesM else null,
             // 360° move: drag the orb in the room to place the sound.
             moveAngleDeg = config.surroundPositionAngleDeg,
             moveDistance = config.surroundPositionDistance,
-            onMove = placeOrb
+            onMove = placeOrb,
+            // Live meters: every speaker in the preview shows what the soundtrack really sends to it.
+            levelSource = if (previewChannels > 2) {
+                { buffer: FloatArray -> viewModel.readSurroundLevels(buffer) }
+            } else null
         )
 
         // Nothing is upmixed on a stereo output, so mode / presets / levels have nothing to shape.
@@ -389,9 +397,9 @@ internal fun VideoSurroundSection(
                 )
             }
 
-        // ── Upmix Lab, Speaker setup (distances, test noise, bass management), Smart steering ────────
+        // ── Upmix Lab, Bass management, Smart steering ───────────────────────────────────────────────
         // Upmix Lab and Smart steering shape the stereo upmix only; a real 5.1 / 7.1 soundtrack keeps its channels,
-        // but Speaker setup (distance delay, test noise, bass management) still applies to it.
+        // but Bass management still applies to it.
         if (!discrete) {
             UpmixLabPanel(
                 config = config,
@@ -400,15 +408,10 @@ internal fun VideoSurroundSection(
                 onKnob = { knob, value -> viewModel.setSurroundLabKnob(knob, value) },
                 onReset = { viewModel.resetSurroundLab() }
             ) {
-                SpeakerSetupPanel(
+                BassManagementPanel(
                     config = config,
                     accent = SurroundAmber,
-                    sevenOne = sevenOne,
                     embedded = true,
-                    onTest = { viewModel.setSurroundTestChannel(it) },
-                    onCalibration = { viewModel.setSurroundCalibration(it) },
-                    onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
-                    onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
                     onBassManagement = { viewModel.setSurroundBassManagement(it) }
                 )
             }
@@ -419,15 +422,10 @@ internal fun VideoSurroundSection(
                 onAmount = { viewModel.setSurroundSmartSteeringAmount(it) }
             )
         } else {
-            SpeakerSetupPanel(
+            BassManagementPanel(
                 config = config,
                 accent = SurroundAmber,
-                sevenOne = sevenOne,
                 embedded = false,
-                onTest = { viewModel.setSurroundTestChannel(it) },
-                onCalibration = { viewModel.setSurroundCalibration(it) },
-                onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
-                onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
                 onBassManagement = { viewModel.setSurroundBassManagement(it) }
             )
         }

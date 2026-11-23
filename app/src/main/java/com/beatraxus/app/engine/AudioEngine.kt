@@ -1073,8 +1073,12 @@ class AudioEngine(
     private fun binauralChannelsForOutput(format: PcmAudioFormat): Int =
         resolveSurroundBinauralChannels(dspConfig, format.channels, format.isDoP, output.outputChannelCount())
 
-    /** Live level of every surround speaker for the room view; false while no surround upmix runs. */
-    fun getSurroundLevels(dst: FloatArray): Boolean = activeSession?.dspPipeline?.copySurroundLevels(dst) ?: false
+    /**
+     * Live level of every surround speaker for the room view (music, or the video soundtrack when video audio runs
+     * through the engine); false while no surround upmix runs.
+     */
+    fun getSurroundLevels(dst: FloatArray): Boolean =
+        (activeSession ?: videoSession)?.dspPipeline?.copySurroundLevels(dst) ?: false
 
     /**
      * True when the source already is a real 5.1 / 7.1 mix that the surround stage must keep discrete (only trims

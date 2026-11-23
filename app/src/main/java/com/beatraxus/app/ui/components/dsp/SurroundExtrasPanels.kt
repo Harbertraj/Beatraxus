@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,13 +15,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.SurroundSound
@@ -31,49 +28,30 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.beatraxus.app.model.DspConfig
 import com.beatraxus.app.model.SURROUND_ALL_SLOT_NAMES
-import com.beatraxus.app.model.SURROUND_DISTANCE_MAX_M
-import com.beatraxus.app.model.SURROUND_DISTANCE_MIN_M
-import com.beatraxus.app.model.SurroundChannel
-import com.beatraxus.app.model.SurroundLayout
-import com.beatraxus.app.model.sanitizeSurroundDistances
 import com.beatraxus.app.model.surroundSlotFilled
-import com.beatraxus.app.model.surroundSpeakerDelaysMs
 import com.beatraxus.app.ui.components.PremiumSwitch
 import com.beatraxus.app.ui.theme.Icon
-import com.beatraxus.app.viewmodel.PlayerViewModel
-import kotlin.math.log10
-import kotlin.math.max
 import kotlin.math.roundToInt
 
 /**
- * Studio DSP > Surround: headphone surround, live speaker meters, A/B hold, speaker setup (test noise, distances, bass
- * management), smart steering and the preset slot row. Each panel only edits [DspConfig] through the view model.
+ * Studio DSP > Surround: headphone surround, live A/B hold, bass management, smart steering and the preset slot row. Each panel only edits [DspConfig] through the view model.
  */
-
-private const val TEST_NOISE_SECONDS = 6
 
 private fun Modifier.extrasCard(accent: Color): Modifier = this
     .fillMaxWidth()
@@ -127,66 +105,7 @@ private fun accentSliderColors(accent: Color) = SliderDefaults.colors(
     disabledInactiveTrackColor = Color.White.copy(0.08f)
 )
 
-// ── Live meters and A/B hold ─────────────────────────────────────────────────────────────────────────────────
-
-/** One thin bar per speaker that rises and falls with the sound that really goes to it. */
-@Composable
-internal fun SurroundMeterStrip(
-    viewModel: PlayerViewModel,
-    running: Boolean,
-    channels: Int,
-    accent: Color
-) {
-    val levels = remember { FloatArray(8) }
-    val tick = remember { mutableLongStateOf(0L) }
-    LaunchedEffect(running) {
-        if (!running) {
-            levels.fill(0f)
-            tick.longValue++
-            return@LaunchedEffect
-        }
-        while (true) {
-            withFrameNanos { }
-            if (!viewModel.readSurroundLevels(levels)) levels.fill(0f)
-            tick.longValue++
-        }
-    }
-    Column(modifier = Modifier.extrasCard(accent), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        CardTitle("LIVE LEVELS", Icons.Rounded.GraphicEq, accent)
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SurroundChannel.entries.forEachIndexed { i, channel ->
-                val present = channels >= 8 || (channels >= 6 && !channel.sevenOneOnly) ||
-                    (channels < 6 && (channel == SurroundChannel.L || channel == SurroundChannel.R))
-                Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Canvas(modifier = Modifier.fillMaxWidth().height(46.dp)) {
-                        val t = tick.longValue // read here so only this drawing is redone every frame
-                        if (t < 0L) return@Canvas
-                        val radius = CornerRadius(4.dp.toPx())
-                        drawRoundRect(Color.White.copy(0.06f), Offset.Zero, size, radius)
-                        val v = if (present) levels[i].coerceIn(0f, 1f) else 0f
-                        // 54 dB of range: a quiet speaker still shows a sliver, a loud one fills the bar.
-                        val db = 20f * log10(max(v, 1e-4f))
-                        val frac = ((db + 54f) / 54f).coerceIn(0f, 1f)
-                        if (frac > 0.01f) {
-                            val h = size.height * frac
-                            drawRoundRect(
-                                accent.copy(if (present) 0.95f else 0.2f),
-                                Offset(0f, size.height - h),
-                                Size(size.width, h),
-                                radius
-                            )
-                        }
-                    }
-                    Text(
-                        channel.label,
-                        color = if (present) Color.White else Color.White.copy(0.3f),
-                        fontSize = 10.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-    }
-}
+// ── A/B hold ─────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** Press and hold: plain stereo as recorded; let go: the surround mix again. For comparing what the upmix does. */
 @Composable
@@ -260,95 +179,38 @@ internal fun SmartSteeringPanel(
     }
 }
 
-// ── Speaker setup: test noise, distances, bass management ────────────────────────────────────────────────────
+// ── Bass management ──────────────────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Bass management switch (what is left of the old Speaker setup panel: the distances now live in the room view and
+ * the level trims). [embedded] = drawn inside another card, without a card of its own.
+ */
 @Composable
-internal fun SpeakerSetupPanel(
+internal fun BassManagementPanel(
     config: DspConfig,
     accent: Color,
-    sevenOne: Boolean,
     embedded: Boolean = false,
-    onTest: (Int) -> Unit,
-    onCalibration: (Boolean) -> Unit,
-    onDistance: (Int, Float) -> Unit,
-    onResetDistances: () -> Unit,
     onBassManagement: (Boolean) -> Unit
 ) {
-    val distances = sanitizeSurroundDistances(config.surroundSpeakerDistancesM)
-    val delays = surroundSpeakerDelaysMs(distances, sevenOne)
-    // The test noise stops by itself, and when the panel leaves the screen, so it can never be left playing.
-    LaunchedEffect(config.surroundTestChannel) {
-        if (config.surroundTestChannel >= 0) {
-            kotlinx.coroutines.delay(TEST_NOISE_SECONDS * 1000L)
-            onTest(-1)
-        }
-    }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onTest(-1) } }
     Column(
         modifier = if (embedded) Modifier.fillMaxWidth() else Modifier.extrasCard(accent),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        CardTitle("SPEAKER SETUP", Icons.Rounded.SurroundSound, accent) {
-            ResetLink({ onResetDistances() }, accent)
-        }
-        Hint("Tap a speaker to play test noise on it for 6 seconds, everything else is muted. Tap it again to stop.")
-        SurroundChannel.entries.chunked(4).forEach { rowChannels ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                rowChannels.forEach { channel ->
-                    // Test noise only makes sense while surround is on (the slider area is locked while it is off).
-                    val enabled = (sevenOne || !channel.sevenOneOnly) && LocalSurroundControlsEnabled.current
-                    PresetChip(
-                        name = channel.label,
-                        selected = config.surroundTestChannel == channel.ordinal,
-                        enabled = enabled,
-                        accent = accent,
-                        modifier = Modifier.weight(1f)
-                    ) { onTest(if (config.surroundTestChannel == channel.ordinal) -1 else channel.ordinal) }
-                }
-            }
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "DISTANCE DELAY", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                letterSpacing = 0.8.sp, modifier = Modifier.weight(1f)
-            )
-            PremiumSwitch(checked = config.surroundCalibrationEnabled, onCheckedChange = onCalibration, accentColor = accent)
-        }
-        Hint("Set how far each speaker is from where you sit. Nearer speakers are delayed so every sound reaches you together.")
-        SurroundChannel.entries.forEachIndexed { i, channel ->
-            if (!sevenOne && channel.sevenOneOnly) return@forEachIndexed
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        if (embedded) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    channel.fullName.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black,
-                    letterSpacing = 0.6.sp, modifier = Modifier.weight(1f)
+                    "BASS MANAGEMENT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                    letterSpacing = 0.8.sp, modifier = Modifier.weight(1f)
                 )
-                Text(
-                    String.format(java.util.Locale.US, "%.1f m", distances[i]) +
-                        if (config.surroundCalibrationEnabled && delays[i] >= 0.05f) {
-                            String.format(java.util.Locale.US, "  +%.1f ms", delays[i])
-                        } else "",
-                    color = accent, fontSize = 10.sp, fontWeight = FontWeight.Black
-                )
+                PremiumSwitch(checked = config.surroundBassManagement, onCheckedChange = onBassManagement, accentColor = accent)
             }
-            Slider(
-                value = distances[i],
-                onValueChange = { onDistance(i, it) },
-                valueRange = SURROUND_DISTANCE_MIN_M..SURROUND_DISTANCE_MAX_M,
-                enabled = LocalSurroundControlsEnabled.current,
-                colors = accentSliderColors(accent)
-            )
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "BASS MANAGEMENT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                letterSpacing = 0.8.sp, modifier = Modifier.weight(1f)
-            )
-            PremiumSwitch(checked = config.surroundBassManagement, onCheckedChange = onBassManagement, accentColor = accent)
+        } else {
+            CardTitle("BASS MANAGEMENT", Icons.Rounded.SurroundSound, accent) {
+                PremiumSwitch(checked = config.surroundBassManagement, onCheckedChange = onBassManagement, accentColor = accent)
+            }
         }
         Hint(
-            "For small speakers: the main speakers stop below the bass cutoff (Upmix Lab > Bass cutoff, above) and the " +
+            "For small speakers: the main speakers stop below the bass cutoff (Upmix Lab > Bass cutoff) and the " +
                 "subwoofer plays the low end. Leave it off if your speakers are full range."
         )
     }

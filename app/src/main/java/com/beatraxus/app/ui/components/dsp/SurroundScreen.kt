@@ -133,6 +133,8 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
+import kotlin.math.log10
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sin
@@ -166,6 +168,12 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
         }
     }
     val trims = sanitizeSurroundTrims(config.surroundChannelTrimsDb)
+
+    // The Distance delay switch left this page (the room view and the channel levels cover it). Switch off what an
+    // earlier version left on, so nothing stays delayed with no control left to undo it.
+    LaunchedEffect(config.surroundCalibrationEnabled) {
+        if (config.surroundCalibrationEnabled) viewModel.setSurroundCalibration(false)
+    }
 
     // 360° move (orbit / gyro follow): state and sensor / frame loops live in a controller shared with the video sheet.
     val move = rememberSurroundMoveController(
@@ -233,7 +241,10 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
             // ── Stage view ────────────────────────────────────────────────────────────────────────────────
             SurroundStageView(
                 plannedChannels, trims, look, uiState.isPlaying, statusText, statusColor, moveState,
-                distancesM = if (config.surroundCalibrationEnabled) config.surroundSpeakerDistancesM else null
+                // Real per-speaker levels from the audio engine: every speaker in the room shows what it plays.
+                levelSource = if (config.surroundEnabled && plannedChannels > 2 && !forcedOff) {
+                    { buffer: FloatArray -> viewModel.readSurroundLevels(buffer) }
+                } else null
             )
 
             // ── Which speakers receive sound right now ────────────────────────────────────────────────────
@@ -269,9 +280,8 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 Text(note, color = Color.White.copy(0.55f), fontSize = 10.sp, lineHeight = 14.sp)
             }
 
-            // ── Live speaker levels, A/B hold ─────────────────────────────────────────────────────────────
+            // ── A/B hold ─────────────────────────────────────────────────────────────
             if (config.surroundEnabled && plannedChannels > 2) {
-                SurroundMeterStrip(viewModel, running = uiState.isPlaying && !forcedOff, channels = plannedChannels, accent = accent)
                 HoldOriginalButton(accent, enabled = uiState.isPlaying) { viewModel.setSurroundHoldOriginal(it) }
             }
 
@@ -347,15 +357,10 @@ fun PremiumSurroundCard(uiState: PlayerUiState, viewModel: PlayerViewModel) {
                 onKnob = { knob, value -> viewModel.setSurroundLabKnob(knob, value) },
                 onReset = { viewModel.resetSurroundLab() }
             ) {
-                SpeakerSetupPanel(
+                BassManagementPanel(
                     config = config,
                     accent = accent,
-                    sevenOne = plannedChannels >= 8 || config.surroundLayout == SurroundLayout.SEVEN_ONE,
                     embedded = true,
-                    onTest = { viewModel.setSurroundTestChannel(it) },
-                    onCalibration = { viewModel.setSurroundCalibration(it) },
-                    onDistance = { i, m -> viewModel.setSurroundSpeakerDistance(i, m) },
-                    onResetDistances = { viewModel.resetSurroundSpeakerDistances() },
                     onBassManagement = { viewModel.setSurroundBassManagement(it) }
                 )
             }
@@ -699,7 +704,9 @@ fun SurroundStageCard(
     /** 360° move: where the sound orb sits and what to do when it is placed. Null = no orb. */
     moveAngleDeg: Float = 0f,
     moveDistance: Float = SURROUND_POSITION_MIN_DISTANCE,
-    onMove: ((angleDeg: Float, distance: Float) -> Unit)? = null
+    onMove: ((angleDeg: Float, distance: Float) -> Unit)? = null,
+    /** Fills the 8 per-speaker output levels (L R C SL SR BL BR SW); null / false = no live meters. */
+    levelSource: ((FloatArray) -> Boolean)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val look by remember { com.beatraxus.app.repository.AppearancePreferences(context).appearanceConfig }
@@ -709,7 +716,8 @@ fun SurroundStageCard(
             channels, sanitizeSurroundTrims(trimsDb), look, isPlaying,
             statusText, surroundAccent(look),
             move = onMove?.let { MoveState(moveAngleDeg, moveDistance, it) },
-            distancesM = distancesM
+            distancesM = distancesM,
+            levelSource = levelSource
         )
     }
 }
@@ -750,7 +758,9 @@ private fun SurroundStageView(
     statusText: String,
     statusColor: Color,
     move: MoveState? = null,
-    distancesM: List<Float>? = null
+    distancesM: List<Float>? = null,
+    /** Fills the 8 per-speaker output levels (0..1, L R C SL SR BL BR SW order); false = none available right now. */
+    levelSource: ((FloatArray) -> Boolean)? = null
 ) {
     val pal = DspPaletteState.current
     val controlsOn = LocalSurroundControlsEnabled.current
@@ -782,8 +792,11 @@ private fun SurroundStageView(
 
     // Frame clock: only the draw phase reads it, so the page does not recompose every frame.
     var frame by remember { mutableLongStateOf(0L) }
-    LaunchedEffect(look.surroundAnimated) {
-        if (!look.surroundAnimated) { frame = 0L; return@LaunchedEffect }
+    val liveMeters = levelSource != null && isPlaying
+    val rawLevels = remember { FloatArray(8) }
+    val shownLevels = remember { FloatArray(8) }
+    LaunchedEffect(look.surroundAnimated, liveMeters) {
+        if (!look.surroundAnimated && !liveMeters) { frame = 0L; return@LaunchedEffect }
         while (true) {
             androidx.compose.runtime.withFrameNanos { frame = it }
         }
@@ -854,8 +867,21 @@ private fun SurroundStageView(
 
         Canvas(modifier = Modifier.fillMaxWidth().aspectRatio(1.02f)) {
             val k = density / 2.6f
-            val t = frame / 1_000_000_000f
+            val t = if (look.surroundAnimated) frame / 1_000_000_000f else 0f
+            if (frame < 0L) return@Canvas // read here so the live meters redraw every frame
             val live = levelProvider?.invoke()
+            // Per-speaker levels: quick rise, gentle fall. 54 dB of range, the same scale the old meter strip used.
+            var meters = false
+            if (liveMeters) {
+                meters = levelSource?.invoke(rawLevels) == true
+                for (n in 0 until 8) {
+                    val v = if (meters) {
+                        val db = 20f * log10(max(rawLevels[n].coerceIn(0f, 1f), 1e-4f))
+                        ((db + 54f) / 54f).coerceIn(0f, 1f)
+                    } else 0f
+                    shownLevels[n] = if (v >= shownLevels[n]) v else max(v, shownLevels[n] - 0.04f)
+                }
+            } else shownLevels.fill(0f)
             val level = when {
                 !isPlaying -> 0.18f
                 !look.surroundAnimated -> 0.5f
@@ -896,7 +922,9 @@ private fun SurroundStageView(
                     }
                     val i = spot.channel.ordinal
                     val gain = 10f.pow(trimsDb[i] / 20f).coerceIn(0.25f, 2.5f)
-                    val a = (0.10f + 0.16f * level) * (0.7f + 0.3f * gain.coerceAtMost(1.6f))
+                    // With live meters the output level already includes the trim, so only the speaker's own level counts.
+                    val a = if (meters) (0.04f + 0.30f * shownLevels[i])
+                    else (0.10f + 0.16f * level) * (0.7f + 0.3f * gain.coerceAtMost(1.6f))
                     drawPath(cone, Brush.linearGradient(listOf(c.copy(a * 1.6f), c.copy(0f)), at, me))
                 }
             }
@@ -913,7 +941,11 @@ private fun SurroundStageView(
                 val ps = (0.6f + 0.5f * stageDepthScale(-(at.y - cy) / ry)) // size follows depth
                 val ks = k * ps
                 val gainFactor = 10f.pow(trimsDb[index] / 20f).coerceIn(0.25f, 2.5f)
-                val energy = if (playing) (0.25f + 0.75f * level) * (0.6f + 0.4f * gainFactor.coerceAtMost(1.6f)) else 0f
+                val energy = when {
+                    !playing -> 0f
+                    meters -> 0.1f + 0.9f * shownLevels[index]
+                    else -> (0.25f + 0.75f * level) * (0.6f + 0.4f * gainFactor.coerceAtMost(1.6f))
+                }
                 val bodyH = if (spot.channel == SurroundChannel.SW) 28f * ks else 42f * ks
                 val body = Offset(at.x, at.y - bodyH * 0.5f)
 
@@ -934,6 +966,17 @@ private fun SurroundStageView(
                     }
                 }
                 drawSpeaker(spot.channel, at, ks, if (playing) c else Color(0xFF59606B), playing, look.surroundShowSpeakerIcons)
+
+                // Live level bar under the speaker (and its name tag): what this speaker really plays right now.
+                if (meters && playing) {
+                    val bw = 26.dp.toPx() * ps
+                    val bh = 3.dp.toPx()
+                    val bx = at.x - bw / 2f
+                    val by = at.y + if (look.surroundShowLabels) 21.dp.toPx() else 6.dp.toPx()
+                    drawRoundRect(Color.Black.copy(0.55f), Offset(bx, by), Size(bw, bh), CornerRadius(bh / 2f))
+                    val fw = bw * shownLevels[index]
+                    if (fw > 0.5f) drawRoundRect(c, Offset(bx, by), Size(fw, bh), CornerRadius(bh / 2f))
+                }
             }
 
             // Edge vignette frames the scene like a lens
@@ -1226,7 +1269,7 @@ internal fun UpmixLabPanel(
             Icon(Icons.Rounded.GraphicEq, null, tint = accent, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(
-                "UPMIX LAB & SPEAKER SETUP", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
+                "UPMIX LAB", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black,
                 letterSpacing = 1.5.sp, modifier = Modifier.weight(1f)
             )
             Row(
