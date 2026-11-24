@@ -4,10 +4,13 @@ import android.content.Context
 import com.beatraxus.app.BuildConfig
 import com.beatraxus.app.addons.AddonManager
 import com.beatraxus.app.addons.AddonManifest
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -33,6 +36,7 @@ object PluginRepositoryManager {
     private const val SCHEMA_VERSION = 1
 
     private val mutex = Mutex()
+    private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private lateinit var appContext: Context
     private var initialized = false
 
@@ -51,6 +55,11 @@ object PluginRepositoryManager {
         AddonManager.init(appContext)
         loadPersistedState()
         initialized = true
+        // Saved repositories are restored without their plugin lists, so reload each index in the
+        // background; otherwise the catalogue stays empty until the user taps REFRESH.
+        backgroundScope.launch {
+            _repositories.value.map { it.id }.forEach { refreshRepository(it) }
+        }
     }
 
     suspend fun addRepository(input: String): Result<PluginRepository> = withContext(Dispatchers.IO) {
