@@ -1,4 +1,4 @@
-name: Release Build
+name: Build APKs (Debug + Release)
 
 on:
   workflow_dispatch:
@@ -6,10 +6,12 @@ on:
       build_type:
         description: 'Build Type'
         required: true
-        default: 'release'
+        default: 'both'
         type: choice
         options:
+          - both
           - release
+          - debug
       enable_r8_timing:
         description: 'Enable R8 timing breakdown (-Dcom.android.tools.r8.printtimes=1)'
         required: false
@@ -26,12 +28,15 @@ on:
 
 jobs:
   build-release:
-    name: Build Signed Release APKs
+    name: Build APKs
     runs-on: ubuntu-latest
     timeout-minutes: 240
 
     steps:
+      # A debug-only run needs no secrets (missing keys just stay empty and the debug key signs the APK).
+      # Tag pushes have no inputs, so they build both and need everything below.
       - name: Verify Required GitHub Secrets
+        if: inputs.build_type != 'debug'
         env:
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
@@ -106,16 +111,22 @@ jobs:
           OPENSUBTITLES_API_KEY: ${{ secrets.OPENSUBTITLES_API_KEY }}
           JAMENDO_CLIENT_ID: ${{ secrets.JAMENDO_CLIENT_ID }}
         run: |
-          # Decode keystore outside repo directory to avoid accidental git tracking or artifact capture
-          echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
-
           # Write local.properties using printf without printing values to logs
           printf "LASTFM_API_KEY=%s\n" "$LASTFM_API_KEY" > local.properties
           printf "LASTFM_SECRET=%s\n" "$LASTFM_SECRET" >> local.properties
-          printf "RELEASE_STORE_FILE=%s\n" "$KEYSTORE_PATH" >> local.properties
-          printf "RELEASE_STORE_PASSWORD=%s\n" "$RELEASE_STORE_PASSWORD" >> local.properties
-          printf "RELEASE_KEY_ALIAS=%s\n" "$RELEASE_KEY_ALIAS" >> local.properties
-          printf "RELEASE_KEY_PASSWORD=%s\n" "$RELEASE_KEY_PASSWORD" >> local.properties
+
+          # Decode keystore outside repo directory to avoid accidental git tracking or artifact capture.
+          # Only when the secret exists: build.gradle.kts switches to release signing as soon as
+          # RELEASE_STORE_FILE points at a file, so an empty keystore would break a debug-only run.
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+            printf "RELEASE_STORE_FILE=%s\n" "$KEYSTORE_PATH" >> local.properties
+            printf "RELEASE_STORE_PASSWORD=%s\n" "$RELEASE_STORE_PASSWORD" >> local.properties
+            printf "RELEASE_KEY_ALIAS=%s\n" "$RELEASE_KEY_ALIAS" >> local.properties
+            printf "RELEASE_KEY_PASSWORD=%s\n" "$RELEASE_KEY_PASSWORD" >> local.properties
+          else
+            echo "No keystore secret: APKs will be signed with the debug key."
+          fi
           printf "TELEGRAM_API_ID=%s\n" "${TELEGRAM_API_ID:-0}" >> local.properties
           printf "TELEGRAM_API_HASH=%s\n" "$TELEGRAM_API_HASH" >> local.properties
           printf "PAXSENIX_API_KEY=%s\n" "$PAXSENIX_API_KEY" >> local.properties
@@ -129,11 +140,21 @@ jobs:
           printf "OPENSUBTITLES_API_KEY=%s\n" "$OPENSUBTITLES_API_KEY" >> local.properties
           printf "JAMENDO_CLIENT_ID=%s\n" "$JAMENDO_CLIENT_ID" >> local.properties
 
-      - name: Build Signed Release APKs
+      - name: Build APKs
         env:
           GRADLE_OPTS: "-Dorg.gradle.jvmargs=\"-Xmx10g -XX:+UseG1GC -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8\""
+          BUILD_TYPE: ${{ inputs.build_type }}
         run: |
           EXTRA_ARGS="--no-daemon --stacktrace"
+
+          # One Gradle run for both variants so they share configuration and compiled code.
+          # Tag pushes have no inputs (empty BUILD_TYPE) and build both.
+          case "$BUILD_TYPE" in
+            debug)   TASKS="assembleDebug" ;;
+            release) TASKS="assembleRelease" ;;
+            *)       TASKS="assembleDebug assembleRelease" ;;
+          esac
+          echo "Gradle tasks: $TASKS"
 
           if [ "${{ inputs.enable_r8_timing }}" = "true" ]; then
             EXTRA_ARGS="$EXTRA_ARGS -Dcom.android.tools.r8.printtimes=1"
@@ -143,25 +164,28 @@ jobs:
             EXTRA_ARGS="$EXTRA_ARGS --profile"
           fi
 
-          ./gradlew assembleRelease $EXTRA_ARGS
+          ./gradlew $TASKS $EXTRA_ARGS
 
       - name: Generate Job Summary
         if: always()
         run: |
           echo "### 🚀 Beatraxus Build Summary" >> $GITHUB_STEP_SUMMARY
 
-          if [ -d "app/build/outputs/apk/release" ]; then
-            echo "#### 📦 Generated APK Artifacts" >> $GITHUB_STEP_SUMMARY
-            echo "| File Name | Size |" >> $GITHUB_STEP_SUMMARY
-            echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
-            for apk in app/build/outputs/apk/release/*.apk; do
-              if [ -f "$apk" ]; then
-                fname=$(basename "$apk")
-                fsize=$(du -h "$apk" | cut -f1)
-                echo "| \`$fname\` | $fsize |" >> $GITHUB_STEP_SUMMARY
-              fi
-            done
-          fi
+          for variant in debug release; do
+            if [ -d "app/build/outputs/apk/$variant" ]; then
+              echo "#### 📦 Generated ${variant} APKs" >> $GITHUB_STEP_SUMMARY
+              echo "| File Name | Size |" >> $GITHUB_STEP_SUMMARY
+              echo "| --- | --- |" >> $GITHUB_STEP_SUMMARY
+              for apk in app/build/outputs/apk/$variant/*.apk; do
+                if [ -f "$apk" ]; then
+                  fname=$(basename "$apk")
+                  fsize=$(du -h "$apk" | cut -f1)
+                  echo "| \`$fname\` | $fsize |" >> $GITHUB_STEP_SUMMARY
+                fi
+              done
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
 
           MAPPING_FILE="app/build/outputs/mapping/release/mapping.txt"
           if [ -f "$MAPPING_FILE" ]; then
@@ -171,12 +195,22 @@ jobs:
             echo "\`$R8_INFO\`" >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Upload Debug APKs
+        if: success() && inputs.build_type != 'release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: beatraxus-debug-apks
+          retention-days: 14
+          if-no-files-found: error
+          path: app/build/outputs/apk/debug/*.apk
+
       - name: Upload Release APKs and Mapping
-        if: success()
+        if: success() && inputs.build_type != 'debug'
         uses: actions/upload-artifact@v4
         with:
           name: beatraxus-release-apks
           retention-days: 14
+          if-no-files-found: error
           path: |
             app/build/outputs/apk/release/*.apk
             app/build/outputs/mapping/release/*

@@ -204,7 +204,9 @@ Place `yamnet.tflite`, `genre_model.tflite`, `language_model.tflite` and `mood_m
 Output APKs are named `Beatraxus-v<version>-<abi>-<variant>.apk`.
 
 ### CI
-`.github/workflows/release.yml` builds signed release APKs on manual dispatch or on tags matching `v*`. It needs the GitHub secrets for the Last.fm keys and the keystore (`KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`).
+`.github/workflows/release.yml` builds debug and release APKs on manual dispatch (Actions > Build APKs > Run workflow, pick `both`, `release` or `debug`) or on tags matching `v*` (always both). The APKs are uploaded as the artifacts `beatraxus-debug-apks` and `beatraxus-release-apks`.
+
+A release build needs the GitHub secrets for the Last.fm keys and the keystore (`KEYSTORE_BASE64`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`). A debug-only run needs none; without the keystore secret it is signed with the debug key.
 
 ---
 
