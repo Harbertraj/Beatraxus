@@ -412,7 +412,8 @@ object PluginAdapterCatalog {
         "jellyfin" to setOf(PluginCategory.VIDEO_SOURCE),
         "emby" to setOf(PluginCategory.VIDEO_SOURCE),
         "stremio" to setOf(PluginCategory.VIDEO_SOURCE),
-        "ytxtube" to setOf(PluginCategory.VIDEO_SOURCE)
+        "ytxtube" to setOf(PluginCategory.VIDEO_SOURCE),
+        "youtube_audio" to setOf(PluginCategory.MUSIC_SOURCE)
     )
 
     fun supports(category: PluginCategory, adapterId: String): Boolean = category in adapters[adapterId].orEmpty()

@@ -85,6 +85,7 @@ object AddonManager {
             "jamendo" -> JamendoAddon(id, displayName, authType)
             "stremio" -> StremioAddon(id, displayName, authType)
             "ytxtube" -> YtxTubeAddon(id, displayName, authType)
+            "youtube_audio" -> YouTubeAudioAddon(id, displayName, authType)
             else -> null
         }
     }

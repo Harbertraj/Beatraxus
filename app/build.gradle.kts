@@ -165,6 +165,7 @@ configure<ApplicationExtension> {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     buildFeatures {
@@ -303,6 +304,9 @@ dependencies {
     implementation("io.getstream:stream-webrtc-android:1.3.8")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0")
+    // Native YouTube audio adapter (youtube_audio); resolved via JitPack, already in settings.gradle.kts
+    implementation("com.github.TeamNewPipe:NewPipeExtractor:v0.24.6")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     implementation("com.airbnb.android:lottie-compose:6.3.0")
     implementation("sh.calvin.reorderable:reorderable:2.3.2")

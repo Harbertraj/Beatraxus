@@ -349,3 +349,10 @@
 # by name through JNI, so they must not be renamed or stripped.
 -keep class io.github.anilbeesetti.nextlib.** { *; }
 -dontwarn io.github.anilbeesetti.nextlib.**
+
+# NewPipeExtractor (youtube_audio adapter)
+-keep class org.schabi.newpipe.extractor.** { *; }
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
+-dontwarn javax.script.**
+-dontwarn jdk.dynalink.**
