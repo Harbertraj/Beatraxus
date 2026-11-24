@@ -7,15 +7,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
+import java.io.IOException
 
 object AddonManager {
 
     private const val PREFS_NAME = "beatraxus_addons"
     private const val KEY_ADDED_IDS = "added_addon_ids"
+    private val VALID_ID = Regex("[A-Za-z0-9_]{1,64}")
 
     private var _allAddons = mutableListOf<MusicServiceAddon>()
-
-    // Ids of add-ons for protocols that no longer exist (the removed YouTube add-on); cleaned up on init.
     private val legacyRemovedIds = mutableSetOf<String>()
 
     private val _addedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -33,9 +33,7 @@ object AddonManager {
     fun init(context: Context) {
         if (initialized) return
         appContext = context.applicationContext
-
         loadAddonsFromDisk()
-
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         _addedIds.value = prefs.getStringSet(KEY_ADDED_IDS, emptySet())?.toSet() ?: emptySet()
         if (legacyRemovedIds.isNotEmpty()) {
@@ -43,7 +41,6 @@ object AddonManager {
             persist()
         }
         refreshLists()
-
         addedAddons.value.forEach { it.connect(appContext) }
         initialized = true
     }
@@ -52,37 +49,28 @@ object AddonManager {
         _allAddons.clear()
         val addonsDir = File(appContext.filesDir, "addons")
         if (!addonsDir.exists()) return
-
         val dirs = addonsDir.listFiles() ?: return
         for (dir in dirs) {
-            if (dir.isDirectory) {
-                val manifestFile = File(dir, "manifest.json")
-                if (manifestFile.exists()) {
-                    try {
-                        val json = JSONObject(manifestFile.readText())
-                        val id = json.getString("id")
-                        val displayName = json.getString("displayName")
-                        val authType = json.getString("authType")
-                        val protocol = json.getString("protocol")
-
-                        if (protocol == "youtube") {
-                            // The YouTube add-on was removed: delete its files and the saved API key.
-                            legacyRemovedIds += id
-                            appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                                .edit().remove("yt_api_key_$id").apply()
-                            AddonCredentialStore.clear(appContext, id)
-                            dir.deleteRecursively()
-                            continue
-                        }
-
-                        val addon = createAddonInstance(id, displayName, protocol, authType)
-                        if (addon != null) {
-                            _allAddons.add(addon)
-                        }
-                    } catch (e: Exception) {
-                        e.printStackTrace()
-                    }
+            if (!dir.isDirectory) continue
+            val manifestFile = File(dir, "manifest.json")
+            if (!manifestFile.exists()) continue
+            try {
+                val json = JSONObject(manifestFile.readText())
+                val id = json.getString("id")
+                val displayName = json.getString("displayName")
+                val authType = json.getString("authType")
+                val protocol = json.getString("protocol")
+                if (protocol == "youtube") {
+                    legacyRemovedIds += id
+                    appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                        .edit().remove("yt_api_key_$id").apply()
+                    AddonCredentialStore.clear(appContext, id)
+                    dir.deleteRecursively()
+                    continue
                 }
+                createAddonInstance(id, displayName, protocol, authType)?.let(_allAddons::add)
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }
@@ -101,21 +89,55 @@ object AddonManager {
         }
     }
 
+    /** Installs a remote declarative manifest only when its protocol has a built-in Kotlin adapter. */
+    fun installRemoteManifest(manifest: AddonManifest): Result<MusicServiceAddon> = runCatching {
+        check(initialized) { "AddonManager.init(context) must be called first" }
+        require(VALID_ID.matches(manifest.id)) { "Invalid add-on ID" }
+        require(manifest.displayName.isNotBlank() && manifest.displayName.length <= 80) { "Invalid add-on name" }
+        val addon = createAddonInstance(manifest.id, manifest.displayName, manifest.protocol, manifest.authType)
+            ?: throw IllegalArgumentException("No built-in adapter for protocol '${manifest.protocol}'")
+
+        val existing = findById(manifest.id)
+        if (existing != null) {
+            val existingManifest = File(File(appContext.filesDir, "addons"), manifest.id).resolve("manifest.json")
+            val existingProtocol = if (existingManifest.isFile) {
+                JSONObject(existingManifest.readText()).optString("protocol")
+            } else ""
+            require(existingProtocol == manifest.protocol) { "This add-on ID is already used by another protocol" }
+            return@runCatching existing
+        }
+
+        val addonsDir = File(appContext.filesDir, "addons")
+        if (!addonsDir.exists() && !addonsDir.mkdirs()) throw IOException("Could not create add-ons directory")
+        val targetDir = File(addonsDir, manifest.id)
+        if (targetDir.exists()) throw IOException("An add-on with this ID already exists")
+        val stagingDir = File(addonsDir, ".remote_${manifest.id}_${System.nanoTime()}")
+        if (!stagingDir.mkdirs()) throw IOException("Could not create add-on staging directory")
+        try {
+            val json = JSONObject()
+                .put("id", manifest.id)
+                .put("displayName", manifest.displayName)
+                .put("mediaType", manifest.mediaType)
+                .put("protocol", manifest.protocol)
+                .put("authType", manifest.authType)
+            File(stagingDir, "manifest.json").writeText(json.toString())
+            if (!stagingDir.renameTo(targetDir)) throw IOException("Could not install remote add-on")
+        } catch (error: Exception) {
+            stagingDir.deleteRecursively()
+            throw error
+        }
+        _allAddons.add(addon)
+        refreshLists()
+        addon
+    }
+
     fun installAddon(zipUri: Uri): Result<AddonPackage> {
         val result = AddonInstaller.installAddon(appContext, zipUri)
         if (result.isSuccess) {
-            val pkg = result.getOrNull()
-            if (pkg != null) {
-                val addon = createAddonInstance(
-                    pkg.manifest.id,
-                    pkg.manifest.displayName,
-                    pkg.manifest.protocol,
-                    pkg.manifest.authType
-                )
-                if (addon != null) {
+            result.getOrNull()?.let { pkg ->
+                createAddonInstance(pkg.manifest.id, pkg.manifest.displayName, pkg.manifest.protocol, pkg.manifest.authType)?.let { addon ->
                     _allAddons.removeAll { it.id == pkg.manifest.id }
                     _allAddons.add(addon)
-                    
                     refreshLists()
                 }
             }
@@ -123,16 +145,12 @@ object AddonManager {
         return result
     }
 
-    /**
-     * Installs a built-in preset (writes the same manifest.json a ZIP install would) and returns
-     * the add-on, or the existing instance if that preset is already installed.
-     */
     fun installPreset(preset: AddonPreset): MusicServiceAddon? {
         val existing = findById(preset.id)
         if (existing != null) return existing
         return try {
             val dir = File(File(appContext.filesDir, "addons"), preset.id)
-            dir.mkdirs()
+            if (!dir.exists() && !dir.mkdirs()) return null
             val manifest = JSONObject()
                 .put("id", preset.id)
                 .put("displayName", preset.displayName)
@@ -158,8 +176,15 @@ object AddonManager {
         addon.connect(context)
     }
 
+    /** Disable without deleting the provider's saved manifest or credentials. */
+    fun disableAddon(id: String) {
+        findById(id)?.disconnect()
+        _addedIds.value = _addedIds.value - id
+        persist()
+        refreshLists()
+    }
+
     fun uninstallAddon(id: String) {
-        // Sign the add-on out first so saved sign-in data doesn't outlive it.
         findById(id)?.disconnect()
         AddonInstaller.uninstallAddon(appContext, id)
         _allAddons.removeAll { it.id == id }
@@ -172,7 +197,6 @@ object AddonManager {
         addon.disconnect()
         _addedIds.value = _addedIds.value - addon.id
         persist()
-        
         AddonInstaller.uninstallAddon(appContext, addon.id)
         _allAddons.removeAll { it.id == addon.id }
         refreshLists()

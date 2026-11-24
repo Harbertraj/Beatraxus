@@ -63,6 +63,7 @@ fun StreamingAddonsScreen(
     val availableAddons by AddonManager.availableAddons.collectAsStateWithLifecycle()
     
     var showAddSheet by remember { mutableStateOf(false) }
+    var showPluginCenter by remember { mutableStateOf(false) }
     var addonToRemove by remember { mutableStateOf<MusicServiceAddon?>(null) }
     var addonToSignIn by remember { mutableStateOf<MediaServerAddon?>(null) }
     
@@ -266,6 +267,18 @@ fun StreamingAddonsScreen(
                         style = TextStyle(fontFamily = appFontFamily, fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
                     )
 
+                    ServiceCardContent(
+                        title = "Plugin repository",
+                        subtitle = "Add GitHub repositories and discover supported providers",
+                        icon = Icons.Rounded.Extension,
+                        color = Color(0xFF5EA9FF),
+                        isAvailable = true,
+                        onClick = {
+                            showAddSheet = false
+                            showPluginCenter = true
+                        }
+                    )
+
                     val installedIds = (addedAddons + availableAddons).map { it.id }.toSet()
                     val presets = AddonPresets.all.filter { it.id !in installedIds }
 
@@ -312,6 +325,10 @@ fun StreamingAddonsScreen(
                     )
                 }
             }
+        }
+
+        if (showPluginCenter) {
+            PluginCenterDialog(onDismiss = { showPluginCenter = false })
         }
 
         addonToRemove?.let { addon ->
