@@ -222,6 +222,9 @@ class OpticalFlowRenderer(
     private var estPerTick = 1
     /** Keeps the analysis steps from delaying the presenter: fewer steps per vsync while presenting is late or slow. */
     private val estimatePacer = EstimatePacer()
+    private val drawDetail = DrawDetailPolicy()
+    /** Lite picture pass for the frame being drawn (see [DrawDetailPolicy]); read by [setInterpInputs]. */
+    private var liteDraw = false
 
     // ---- vsync period estimation (late callbacks must never read as a slower panel: see VsyncPeriodEstimator) ----
     private val vsyncEstimator = VsyncPeriodEstimator()
@@ -473,7 +476,7 @@ class OpticalFlowRenderer(
         srcH = height
         appliedLevel = lv
         cancelEstimate()
-        estimatePacer.reset()
+        estimatePacer.reset(); drawDetail.reset(); liteDraw = false
         vsyncEstimator.reset()
         freeResources()
 
@@ -654,7 +657,7 @@ class OpticalFlowRenderer(
      */
     private fun reconfigureAnalysis(lv: QualityLevel, width: Int, height: Int) {
         cancelEstimate()
-        estimatePacer.reset()
+        estimatePacer.reset(); drawDetail.reset(); liteDraw = false
         val old = ArrayList<Int>()
         slots.forEach { sl -> sl.luma.forEach { old.add(it) }; old.add(sl.fw); old.add(sl.bw); old.add(sl.cut); old.add(sl.glob); old.add(sl.risk) }
         flowTex.forEach { dir -> dir.forEach { pair -> pair.forEach { old.add(it) } } }
@@ -1150,6 +1153,7 @@ class OpticalFlowRenderer(
 
         val lateNs = lateNowNs
         val workStart = System.nanoTime()
+        liteDraw = warp && drawDetail.update(pairComplexity, estimatePacer.share)
         drawOutput(a = a, b = b, alpha = alpha, warp = warp)
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
             fail(FallbackReason.GPU_ERROR, "eglSwapBuffers failed (0x${Integer.toHexString(EGL14.eglGetError())})", null)
@@ -1295,6 +1299,7 @@ class OpticalFlowRenderer(
         GLES30.glUniform1f(p.loc("uConsLo"), CONS_LO)
         GLES30.glUniform1f(p.loc("uConsHi"), CONS_HI)
         GLES30.glUniform1i(p.loc("uSharp"), if (PRESERVE_SHARPNESS) 1 else 0)
+        GLES30.glUniform1i(p.loc("uLite"), if (liteDraw) 1 else 0)
     }
 
     /** Writes the fusion map for this pair / phase (once per generated frame, at motion-search size). */

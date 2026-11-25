@@ -95,16 +95,21 @@ class MotionComplexityTest {
         assertEquals(3, MotionPlan.plan(MotionComplexity.STATIC, base.copy(searchRange = 3), true).searchRange)
     }
 
-    @Test fun fastAndComplexSearchWiderButNeverBeyondTheCap() {
+    @Test fun fastSearchWidensButComplexSearchStaysBoundedAndNeverExceedsThePreset() {
         assertEquals(base.searchRange + MotionPlan.FAST_EXTRA_RANGE, MotionPlan.plan(MotionComplexity.FAST, base, true).searchRange)
         val wide = base.copy(searchRange = 15)
-        assertEquals(MotionPlan.MAX_RANGE, MotionPlan.plan(MotionComplexity.COMPLEX, wide, true).searchRange)
+        assertEquals(MotionPlan.COMPLEX_MAX_RANGE, MotionPlan.plan(MotionComplexity.COMPLEX, wide, true).searchRange)
+        assertEquals(5, MotionPlan.plan(MotionComplexity.COMPLEX, base.copy(searchRange = 5), true).searchRange)
+        assertTrue(MotionPlan.plan(MotionComplexity.COMPLEX, base, true).searchRange <= base.searchRange)
     }
 
-    @Test fun complexMotionGetsSubpixelOnlyWhenTheGpuHasHeadroom() {
-        assertTrue(MotionPlan.plan(MotionComplexity.COMPLEX, base, gpuHeadroom = true).subpixel)
-        assertFalse(MotionPlan.plan(MotionComplexity.COMPLEX, base, gpuHeadroom = false).subpixel)
-        // FAST keeps the level's own choice
+    @Test fun complexMotionNeverAddsSubpixelWorkAndSuppressesPresetRefinementWithoutHeadroom() {
+        // Performance preset has no subpixel pass; GPU headroom must not turn it on for ambiguous motion.
+        assertFalse(MotionPlan.plan(MotionComplexity.COMPLEX, base, gpuHeadroom = true).subpixel)
+        val quality = AdaptiveQualityController.LADDER[1] // Balanced preset includes subpixel refinement.
+        assertTrue(MotionPlan.plan(MotionComplexity.COMPLEX, quality, gpuHeadroom = true).subpixel)
+        assertFalse(MotionPlan.plan(MotionComplexity.COMPLEX, quality, gpuHeadroom = false).subpixel)
+        // FAST keeps the level's own choice and its larger coherent-motion search.
         assertFalse(MotionPlan.plan(MotionComplexity.FAST, base, gpuHeadroom = true).subpixel)
     }
 
@@ -207,5 +212,29 @@ class MotionComplexityTest {
         repeat(2) { acc.onComplexity(MotionComplexity.SLOW) }
         repeat(2) { acc.onComplexity(MotionComplexity.COMPLEX) }
         assertEquals(MotionComplexity.COMPLEX.ordinal, acc.poll(1_000_000_001L)!!.motionComplexity)
+    }
+
+    @Test fun liteDrawStartsAtOnceForComplexMotionOrAPressuredPresenter() {
+        val d = DrawDetailPolicy()
+        assertFalse(d.update(MotionComplexity.SLOW, 1.0))
+        assertTrue(d.update(MotionComplexity.COMPLEX, 1.0))
+        d.reset()
+        assertTrue(d.update(MotionComplexity.SLOW, 0.5))
+    }
+
+    @Test fun liteDrawLeavesOnlyAfterAHoldSoItCannotFlicker() {
+        val d = DrawDetailPolicy()
+        d.update(MotionComplexity.COMPLEX, 1.0)
+        repeat(DrawDetailPolicy.EXIT_AFTER - 1) { assertTrue(d.update(MotionComplexity.SLOW, 1.0)) }
+        assertFalse(d.update(MotionComplexity.SLOW, 1.0))
+    }
+
+    @Test fun anotherComplexFrameRestartsTheHold() {
+        val d = DrawDetailPolicy()
+        d.update(MotionComplexity.COMPLEX, 1.0)
+        repeat(DrawDetailPolicy.EXIT_AFTER - 1) { d.update(MotionComplexity.SLOW, 1.0) }
+        assertTrue(d.update(MotionComplexity.COMPLEX, 1.0))
+        repeat(DrawDetailPolicy.EXIT_AFTER - 1) { assertTrue(d.update(MotionComplexity.SLOW, 1.0)) }
+        assertFalse(d.update(MotionComplexity.SLOW, 1.0))
     }
 }

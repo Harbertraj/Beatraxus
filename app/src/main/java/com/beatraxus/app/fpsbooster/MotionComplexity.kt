@@ -2,7 +2,7 @@ package com.beatraxus.app.fpsbooster
 
 import kotlin.math.hypot
 
-/** How demanding the motion of the current scene is. Ordered: a higher ordinal asks for more search effort. */
+/** Motion-scene classification. The ordinal is a severity ordering, not a request for more GPU search work. */
 enum class MotionComplexity(val label: String) {
     /** Nothing measured yet (or right after a cut): the quality level's own settings apply unchanged. */
     UNKNOWN("Unknown"),
@@ -27,8 +27,8 @@ enum class MotionComplexity(val label: String) {
  * block cost of 0.003-0.010; a cut or heavy occlusion matches far worse). They are meant to be tuned on real clips with
  * tools/fpsbooster_harness; every one is a named constant.
  *
- * Hysteresis: a harder scene is adopted at once (search effort is safety), an easier one only after
- * [RELAX_AFTER] consecutive easier pairs, so a single quiet pair in an action scene does not drop the search range.
+ * Hysteresis: a more severe classification is adopted at once, an easier one only after [RELAX_AFTER] consecutive
+ * easier pairs, so a single quiet pair in an action scene does not relax the processing policy.
  */
 class MotionComplexityClassifier {
     var current: MotionComplexity = MotionComplexity.UNKNOWN
@@ -108,13 +108,19 @@ object MotionPlan {
     const val MIN_RANGE = 6
     const val MAX_RANGE = 16
     const val FAST_EXTRA_RANGE = 4
+    /** Complex scenes are ambiguous; keep their coarse search bounded instead of expanding it to the FAST range. */
+    const val COMPLEX_MAX_RANGE = 8
 
     fun plan(c: MotionComplexity, base: QualityLevel, gpuHeadroom: Boolean): SearchPlan = when (c) {
         // Static: the shader already short-circuits unchanged pixels; the search only needs to confirm that.
         MotionComplexity.STATIC -> SearchPlan(minOf(base.searchRange, MIN_RANGE), false)
         MotionComplexity.FAST -> SearchPlan((base.searchRange + FAST_EXTRA_RANGE).coerceAtMost(MAX_RANGE), base.subpixel)
-        // Complex: widest search, and subpixel refinement even on the cheap rungs when the GPU has room for it.
-        MotionComplexity.COMPLEX -> SearchPlan((base.searchRange + FAST_EXTRA_RANGE).coerceAtMost(MAX_RANGE), base.subpixel || gpuHeadroom)
+        // Ambiguous motion: bound exhaustive search and never add refinement beyond the preset. Under GPU pressure,
+        // omit even the preset's subpixel pass; this keeps the expensive path from growing when matches are uncertain.
+        MotionComplexity.COMPLEX -> SearchPlan(
+            minOf(base.searchRange, COMPLEX_MAX_RANGE),
+            base.subpixel && gpuHeadroom
+        )
         // Slow / unknown / cut: exactly what the quality level says (CUT pairs are not interpolated at all).
         MotionComplexity.SLOW, MotionComplexity.UNKNOWN, MotionComplexity.CUT -> SearchPlan(base.searchRange, base.subpixel)
     }
@@ -133,4 +139,42 @@ object TargetBudget {
 
     /** Draw + swap time (ms) above which a high-rate target is overloaded; 0 for rates that keep the original policy. */
     fun drawBudgetMs(expectedFps: Float): Float = if (isHighRate(expectedFps)) periodMs(expectedFps) * DRAW_SHARE else 0f
+}
+
+/**
+ * Decides, per presented frame, whether the picture pass runs in its cheap "lite" form (no edge-aware vector vote, no
+ * bicubic resample, no dominant-motion fill-in, earlier fade to the plain blend). Pure Kotlin, unit tested on the JVM.
+ *
+ * Why: static and slow scenes are cheap to draw because the shader skips unchanged pixels, so the full-quality path was
+ * only ever paid for a few pixels. In complex motion (blur, dark flat areas, rack focus, many movers) nearly EVERY pixel
+ * takes the expensive path at the panel's full output rate, the draw gets late, [EstimatePacer] then starves the motion
+ * estimate, the estimate misses its source interval and the pair is shown as real frames: the rate collapses to the source
+ * rate right when the scene is hardest. Those are also the pixels whose vectors are least reliable, so the expensive
+ * refinement bought nothing there but glitches.
+ *
+ * Lite is entered at once (a late frame is the worse outcome) and left only after [EXIT_AFTER] consecutive frames that
+ * are neither complex nor under pressure, so it cannot flicker between two looks from one frame to the next.
+ */
+class DrawDetailPolicy {
+    var lite: Boolean = false
+        private set
+    private var calm = 0
+
+    fun reset() { lite = false; calm = 0 }
+
+    /**
+     * @param complexity classification of the pair being drawn
+     * @param pacerShare [EstimatePacer.share]: below 1.0 means the presenter was recently late or slow
+     */
+    fun update(complexity: MotionComplexity, pacerShare: Double): Boolean {
+        val wants = complexity == MotionComplexity.COMPLEX || pacerShare < 1.0
+        if (wants) { lite = true; calm = 0 }
+        else if (lite && ++calm >= EXIT_AFTER) { lite = false; calm = 0 }
+        return lite
+    }
+
+    companion object {
+        /** Frames (about half a second at 90 FPS) of calm before the full-quality picture pass is used again. */
+        const val EXIT_AFTER = 45
+    }
 }

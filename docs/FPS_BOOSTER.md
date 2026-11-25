@@ -837,9 +837,11 @@ Known limits (unchanged by this patch):
 * After every estimated pair the GPU's dominant-motion texel and cut texel are copied into a 32-byte PBO that the existing
   estimate fence already covers, and read only after the fence has signalled (no CPU wait). `MotionComplexityClassifier`
   turns them into Static / Slow / Fast / Complex / Scene cut with hysteresis (harder is adopted at once, easier after 3 pairs).
-* `MotionPlan` uses it to set the NEXT pair's coarse search range and subpixel refinement (static: 6, fast / complex: +4 up to 16,
-  complex + GPU headroom: subpixel even on cheap rungs). Per pair, so no texture is reallocated. The thresholds are starting
-  values: tune them on real clips with `tools/fpsbooster_harness`.
+* `MotionPlan` uses it to set the NEXT pair's coarse search range and subpixel refinement (static: at most 6, fast: +4 up
+  to 16, complex: at most 8 and never wider than the preset; complex keeps the preset subpixel pass only while the estimate
+  pacer has full headroom). Ambiguous motion no longer expands exhaustive search or adds refinement on the cheap rungs.
+  Per pair, so no texture is reallocated. The thresholds are starting values: tune them on real clips with
+  `tools/fpsbooster_harness`.
 * For targets above 60 FPS the quality controller also budgets the per-output-frame draw: overloaded above 60 % of one output
   period, severe above the whole period, and an upgrade needs the draw under 36 % of the period. 60 FPS and below are unchanged.
 * The adaptive ladder gained a last rung, Ultra Fast (320 px), appended so saved rung indices stay valid.

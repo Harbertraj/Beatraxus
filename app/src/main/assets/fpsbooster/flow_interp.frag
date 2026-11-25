@@ -69,6 +69,8 @@ uniform mat3 uColorDelta;    // hue + colour temperature matrix minus identity, 
 uniform float uConsLo;       // inconsistency (px) below which a warp is fully trusted
 uniform float uConsHi;       // ... and above which it is rejected
 uniform int uSharp;          // 1: keep generated frames as sharp as real ones (bicubic resample of one source frame)
+uniform int uLite;           // 1: cheap, conservative draw for ambiguous (complex) motion or a loaded GPU: no edge-aware vector
+                             //    refinement, no bicubic resample, no dominant-motion fill-in, earlier fade to the plain blend
 #if AI_DUMP
 uniform int uDumpPage;       // harness: which 4-float page of the training record to write
 #endif
@@ -232,8 +234,11 @@ vec4 flowRefine(sampler2D s, vec2 uv, vec2 v0, float kL, float kA, float kB) {
   }
   return mix(plain, acc / wsum, amt);
 }
-vec4 fwR(vec2 uv, vec2 f0, float t) { return flowRefine(uFw, uv, f0, -t, -t, 1.0 - t); }
-vec4 bwR(vec2 uv, vec2 b0, float t) { return flowRefine(uBw, uv, b0, -(1.0 - t), t, -(1.0 - t)); }
+// uLite: where the vectors are ambiguous the per-pixel photometric vote has nothing reliable to vote on (blur, dark or
+// flat areas), so it only costs time (8 fetches per boundary pixel, per field) and invents edges. Use the plain
+// trust-weighted block fetch instead.
+vec4 fwR(vec2 uv, vec2 f0, float t) { if (uLite == 1) return fw(uv - t * f0 / uWork); return flowRefine(uFw, uv, f0, -t, -t, 1.0 - t); }
+vec4 bwR(vec2 uv, vec2 b0, float t) { if (uLite == 1) return bw(uv - (1.0 - t) * b0 / uWork); return flowRefine(uBw, uv, b0, -(1.0 - t), t, -(1.0 - t)); }
 #else
 vec4 fwR(vec2 uv, vec2 f0, float t) { return fw(uv - t * f0 / uWork); }
 vec4 bwR(vec2 uv, vec2 b0, float t) { return bw(uv - (1.0 - t) * b0 / uWork); }
@@ -361,6 +366,9 @@ void main() {
 // =====================================================================================================================
 void main() {
   vec2 inv = 1.0 / uWork;
+  // Bicubic resampling is 5 fetches per sample and up to 4 samples per pixel: dropped in lite mode (a plain bilinear
+  // fetch is a little softer, but a late frame is worse than a slightly soft one).
+  bool sharp = (uSharp == 1) && (uLite == 0);
   vec3 pa = texture(uA, vUv).rgb;
   vec3 pb = texture(uB, vUv).rgb;
   vec3 nearest = (uT < 0.5) ? pa : pb;
@@ -368,7 +376,7 @@ void main() {
   // untrusted pixel soft while only the motion-compensated pixels were bicubic, so picture detail changed from
   // pixel to pixel and was visibly softer than normal playback. Use the same bicubic resample everywhere
   // (identical to a plain copy when the frame and the screen have the same size).
-  if (uSharp == 1) {
+  if (sharp) {
     if (uT < 0.5) nearest = sampleSharp(uA, vUv);
     else nearest = sampleSharp(uB, vUv);
   }
@@ -403,31 +411,31 @@ void main() {
       if (q0.x > AI_MIN_WEIGHT) { acc += q0.x * nearest; wsum += q0.x; }
       // 1: forward-flow warp of the nearer frame
       if (q0.y > AI_MIN_WEIGHT) {
-        vec3 c = (uSharp == 1) ? (nearA ? sampleSharp(uA, vUv + oFa) : sampleSharp(uB, vUv + oFb))
+        vec3 c = (sharp) ? (nearA ? sampleSharp(uA, vUv + oFa) : sampleSharp(uB, vUv + oFb))
                                : (nearA ? texture(uA, vUv + oFa).rgb : texture(uB, vUv + oFb).rgb);
         acc += q0.y * c; wsum += q0.y;
       }
       // 2: backward-flow warp of the nearer frame
       if (q0.z > AI_MIN_WEIGHT) {
-        vec3 c = (uSharp == 1) ? (nearA ? sampleSharp(uA, vUv + oBa) : sampleSharp(uB, vUv + oBb))
+        vec3 c = (sharp) ? (nearA ? sampleSharp(uA, vUv + oBa) : sampleSharp(uB, vUv + oBb))
                                : (nearA ? texture(uA, vUv + oBa).rgb : texture(uB, vUv + oBb).rgb);
         acc += q0.z * c; wsum += q0.z;
       }
       // 3: dominant-motion warp of the nearer frame
       if (q0.w > AI_MIN_WEIGHT) {
-        vec3 c = (uSharp == 1) ? (nearA ? sampleSharp(uA, vUv + oGa) : sampleSharp(uB, vUv + oGb))
+        vec3 c = (sharp) ? (nearA ? sampleSharp(uA, vUv + oGa) : sampleSharp(uB, vUv + oGb))
                                : (nearA ? texture(uA, vUv + oGa).rgb : texture(uB, vUv + oGb).rgb);
         acc += q0.w * c; wsum += q0.w;
       }
       // 4: forward-flow warp of the FARTHER frame (content that only the far frame shows)
       if (q1.x > AI_MIN_WEIGHT) {
-        vec3 c = (uSharp == 1) ? (nearA ? sampleSharp(uB, vUv + oFb) : sampleSharp(uA, vUv + oFa))
+        vec3 c = (sharp) ? (nearA ? sampleSharp(uB, vUv + oFb) : sampleSharp(uA, vUv + oFa))
                                : (nearA ? texture(uB, vUv + oFb).rgb : texture(uA, vUv + oFa).rgb);
         acc += q1.x * c; wsum += q1.x;
       }
       // 5: backward-flow warp of the farther frame
       if (q1.y > AI_MIN_WEIGHT) {
-        vec3 c = (uSharp == 1) ? (nearA ? sampleSharp(uB, vUv + oBb) : sampleSharp(uA, vUv + oBa))
+        vec3 c = (sharp) ? (nearA ? sampleSharp(uB, vUv + oBb) : sampleSharp(uA, vUv + oBa))
                                : (nearA ? texture(uB, vUv + oBb).rgb : texture(uA, vUv + oBa).rgb);
         acc += q1.y * c; wsum += q1.y;
       }
@@ -475,7 +483,7 @@ void main() {
       // used for the trust checks.
       vec3 wFw = mix(fa, fb, uT);
       vec3 wBw = mix(ba, bb, uT);
-      if (uSharp == 1) {
+      if (sharp) {
         bool nearA = uT < 0.5;
         if (wf > 0.001) {
           wFw = nearA ? sampleSharp(uA, vUv - uT * f.xy * inv)
@@ -498,7 +506,7 @@ void main() {
       rgb = mix(mix(pa, pb, uT), warped, conf);
 
       // --- fill-in with the dominant motion where the per-pixel flow is not trusted ---
-      if (conf < 0.95) {
+      if (conf < 0.95 && uLite == 0) {
         vec4 g4 = texelFetch(uGlobal, ivec2(0), 0);
         float gTrust = smoothstep(GLOBAL_MIN_SHARE, GLOBAL_MIN_SHARE + 0.25, g4.z)
                      * smoothstep(0.5 * GLOBAL_MIN_SPEED, GLOBAL_MIN_SPEED, length(g4.xy));
@@ -508,7 +516,7 @@ void main() {
           // stricter than the per-pixel check: here the colour agreement is the only evidence
           float wg = gTrust * (1.0 - smoothstep(0.04, 0.12, length(ga - gb))) * (1.0 - conf);
           vec3 gSrc = mix(ga, gb, uT);
-          if (uSharp == 1 && wg > 0.001) {
+          if (sharp && wg > 0.001) {
             gSrc = (uT < 0.5) ? sampleSharp(uA, vUv - uT * g4.xy * inv)
                               : sampleSharp(uB, vUv + (1.0 - uT) * g4.xy * inv);
           }
@@ -517,7 +525,10 @@ void main() {
       }
 #endif
       // flow unreliable around here: soft blend of the two real frames instead of patchwork
-      float risk = smoothstep(RISK_LO, RISK_HI, texture(uRisk, vUv).r);
+      // Lite: fade to the plain blend earlier, so an unreliable region shows two real frames mixed rather than a wrong warp.
+      float riskLo = (uLite == 1) ? RISK_LO * 0.6 : RISK_LO;
+      float riskHi = (uLite == 1) ? RISK_HI * 0.8 : RISK_HI;
+      float risk = smoothstep(riskLo, riskHi, texture(uRisk, vUv).r);
       rgb = mix(rgb, mix(pa, pb, uT), risk);
 
       if (uRifeValid == 1) {
