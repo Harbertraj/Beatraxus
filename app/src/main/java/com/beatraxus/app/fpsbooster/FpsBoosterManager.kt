@@ -49,6 +49,12 @@ class FpsBoosterManager(
         appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
     }.getOrNull()
     private var thermalListener: PowerManager.OnThermalStatusChangedListener? = null
+    /** Look-ahead thermal forecast combined with the OS status (see [ThermalTracker]). */
+    private val thermalTracker = ThermalTracker()
+    private var thermalHeadroom = -1f
+    private var thermalState = ThermalLevel.NONE
+    private var missedTotal = 0L
+    private var shedTotal = 0L
 
     /** Rung the renderer should start with. */
     val initialLevel: QualityLevel get() = controller.level
@@ -69,6 +75,7 @@ class FpsBoosterManager(
     fun onWindow(w: WindowStats, sourceFps: Float, workEdge: Int, addedDelayMs: Float) {
         if (finished) return
         droppedTotal += w.dropped
+        shedTotal += w.shed
         // Pause, seek or a stalled source produce almost no frames: that says nothing about load.
         var evaluate = w.sourceFrames >= 3
         if (graceWindows > 0) { graceWindows--; evaluate = false }
@@ -83,7 +90,11 @@ class FpsBoosterManager(
                 FramePacing.achievableFps(plan.targetFps, panelRates).toFloat(),
                 currentRate
             )
-            val d = controller.onWindow(w, sourceFps, expected, thermal)
+            // Thermal: OS status plus the 10 s forecast (once per window, as the API asks). 90 / 120 react at lower headroom.
+            thermalHeadroom = readThermalHeadroom()
+            thermalState = thermalTracker.update(thermal, thermalHeadroom, TargetBudget.isHighRate(expected))
+            missedTotal += FramePacing.missedOutputs(expected, w.durationNs, w.presented)
+            val d = controller.onWindow(w, sourceFps, expected, thermalState)
             if (d.changed) {
                 graceWindows = CHANGE_GRACE_WINDOWS
                 DeviceTuning.rememberLevel(appContext, plan, controller.index)
@@ -104,6 +115,10 @@ class FpsBoosterManager(
                 interpolationPct = w.interpolationPct,
                 motionComplexity = MotionComplexity.fromOrdinal(w.motionComplexity).takeIf { it != MotionComplexity.UNKNOWN }?.label ?: "",
                 droppedFrames = droppedTotal,
+                missedVsyncs = missedTotal,
+                deadlineShedFrames = shedTotal,
+                thermalState = thermalState.label,
+                thermalHeadroom = thermalHeadroom,
                 estimateLatencyMs = w.avgEstimateMs,
                 drawMs = w.avgDrawMs,
                 addedDelayMs = addedDelayMs,
@@ -119,6 +134,14 @@ class FpsBoosterManager(
             finished = true
             listener.onFallback(fallback)
         }
+    }
+
+    /** `getThermalHeadroom(10 s)` (API 30+); negative when the device does not report it. */
+    private fun readThermalHeadroom(): Float {
+        val pm = power ?: return -1f
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return -1f
+        val h = runCatching { pm.getThermalHeadroom(THERMAL_FORECAST_S) }.getOrDefault(Float.NaN)
+        return if (h.isFinite() && h >= 0f) h else -1f
     }
 
     /** Call after a settings change that re-paces or reallocates the pipeline without creating a new manager. */
@@ -144,5 +167,6 @@ class FpsBoosterManager(
         const val TAG = "FpsBoosterMgr"
         const val START_GRACE_WINDOWS = 3
         const val CHANGE_GRACE_WINDOWS = 2
+        const val THERMAL_FORECAST_S = 10
     }
 }

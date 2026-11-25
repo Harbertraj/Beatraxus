@@ -237,6 +237,8 @@ class OpticalFlowRenderer(
     private val acc = StatsAccumulator()
     /** Tells generated / original / repeated frames apart so the statistics are never inflated by repeats. */
     private val frameClassifier = FrameClassifier()
+    /** Shows a cheap real frame instead of a generated one when a 90 / 120 FPS frame is already a whole vsync late. */
+    private val deadline = FrameDeadlinePolicy()
 
     // ---- motion complexity (see MotionComplexity.kt) ----
     // The dominant-motion texel and the cut texel of every finished pair are copied into a small PBO right before the
@@ -507,6 +509,7 @@ class OpticalFlowRenderer(
         dirty = true
         acc.reset()
         frameClassifier.reset()
+        deadline.reset()
         complexityClassifier.reset(); pairComplexity = MotionComplexity.UNKNOWN; complexityPending = false
         if (pendingFrame) { pendingFrame = false; onFrameAvailable() }
     }
@@ -1081,11 +1084,14 @@ class OpticalFlowRenderer(
         }
 
         val newest = queue.last()
+        // How far behind its due time this frame is being produced (also used for the drop count and the estimate pacer below).
+        val lateNowNs = if (nextDueNs != 0L) vsyncNs - nextDueNs else 0L
         var a = newest
         var b = newest
         var alpha = 1f
         var warp = false
         var hold = 0L
+        var shedThisFrame = false
         if (queue.size >= 2 && wantsInterpolation()) {
             hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs, estimateLatency.smoothedNs)
             val content = FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold)
@@ -1104,6 +1110,12 @@ class OpticalFlowRenderer(
                 // queued behind a running one would delay this very frame - and never for a pair that was skipped.
                 if (!b.hasFlow && !b.flowSkipped && !b.flowPending && !b.flowDeferred && !gpuBusy()) beginEstimate(a, b, System.nanoTime())
                 warp = b.hasFlow
+                if (warp && !deadline.shouldGenerate(cadence.effectiveTarget(targetFps).toFloat(), lateNowNs, vsyncPeriodNs)) {
+                    // Already a vsync behind on this frame: a full warp would make the next ones late too. A real frame
+                    // is shown instead (counted as original / repeated, never as generated) so the queue can drain.
+                    warp = false
+                    shedThisFrame = true
+                }
                 if (!warp) {
                     // No flow for this pair (estimate skipped or still running): the nearest REAL frame by phase,
                     // not always b - which would jump ahead by up to one source frame for the first half.
@@ -1135,7 +1147,7 @@ class OpticalFlowRenderer(
             acc.onDropped(((vsyncNs - nextDueNs) / step).toInt().coerceIn(1, 8))
         }
 
-        val lateNs = if (nextDueNs != 0L) vsyncNs - nextDueNs else 0L
+        val lateNs = lateNowNs
         val workStart = System.nanoTime()
         drawOutput(a = a, b = b, alpha = alpha, warp = warp)
         if (!EGL14.eglSwapBuffers(eglDisplay, eglSurface)) {
@@ -1152,6 +1164,7 @@ class OpticalFlowRenderer(
         lastDrawnAlpha = alpha; lastDrawnWarp = warp
         dirty = false
         acc.onPresented(frameClassifier.classify(warp, alpha, a.tsNs, b.tsNs))
+        if (shedThisFrame) acc.onShed()   // only a frame that was really presented counts
     }
 
     // ---- Performance hint (ADPF, Android 12+) ----

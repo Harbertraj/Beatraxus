@@ -20,7 +20,9 @@ data class WindowStats(
     /** Presented frames that repeated the source frame already on screen (see [FrameKind.REPEATED]). */
     val repeated: Int = 0,
     /** Dominant [MotionComplexity] (ordinal) of the pairs estimated in this window; 0 = unknown / not measured. */
-    val motionComplexity: Int = 0
+    val motionComplexity: Int = 0,
+    /** Presented frames that were shown as a cheap real frame because the deadline was already missed (see [FrameDeadlinePolicy]). */
+    val shed: Int = 0
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -64,7 +66,15 @@ data class BoosterStats(
     /** Share (0..100) of presented frames that were synthesised: generated / presented, never inflated by repeats. */
     val interpolationPct: Float = 0f,
     /** Dominant motion complexity of the last window (label of [MotionComplexity]); empty when not measured. */
-    val motionComplexity: String = ""
+    val motionComplexity: String = "",
+    /** Output frames that were due but not presented, summed over the session (never negative, never estimated from the target). */
+    val missedVsyncs: Long = 0,
+    /** Frames shown as a cheap real frame to catch up after a missed deadline, summed over the session. */
+    val deadlineShedFrames: Long = 0,
+    /** Thermal state the quality controller acted on (OS status combined with the forecast): None / Light / Moderate / Severe. */
+    val thermalState: String = "",
+    /** Look-ahead thermal headroom (1.0 = throttling expected); negative when the device does not report it. */
+    val thermalHeadroom: Float = -1f
 ) {
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
@@ -88,6 +98,7 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var cadenceVsyncs = 0
     private var displayHz = 0f
     private val complexityCount = IntArray(MotionComplexity.entries.size)
+    private var shed = 0
 
     fun onSourceFrame() { source++ }
     /** Latest cadence of the presenter (see [CadenceGovernor]); reported with every window. */
@@ -105,6 +116,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     }
     /** Complexity the motion estimate of one pair was planned with; the window reports the most frequent known one. */
     fun onComplexity(c: MotionComplexity) { complexityCount[c.ordinal]++ }
+    /** A frame that the deadline policy showed as a cheap real frame (it is also counted by [onPresented]). */
+    fun onShed() { shed++ }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
     fun onDrawMs(ms: Float) { drawSum += ms; drawN++ }
@@ -130,7 +143,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             displayHz = displayHz,
             original = original,
             repeated = repeated,
-            motionComplexity = dominantComplexity()
+            motionComplexity = dominantComplexity(),
+            shed = shed
         )
         reset(nowNs)
         return w
@@ -146,6 +160,7 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
 
     fun reset(nowNs: Long = 0L) {
         complexityCount.fill(0)
+        shed = 0
         start = nowNs; source = 0; presented = 0; generated = 0; original = 0; repeated = 0; dropped = 0
         estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0; skipped = 0
     }

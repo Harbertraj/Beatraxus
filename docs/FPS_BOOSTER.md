@@ -843,3 +843,17 @@ Known limits (unchanged by this patch):
 * For targets above 60 FPS the quality controller also budgets the per-output-frame draw: overloaded above 60 % of one output
   period, severe above the whole period, and an upgrade needs the draw under 36 % of the period. 60 FPS and below are unchanged.
 * The adaptive ladder gained a last rung, Ultra Fast (320 px), appended so saved rung indices stay valid.
+
+## 120 FPS: deadline-aware generation and predictive thermal control
+
+* `FrameDeadlinePolicy`: for targets above 60 FPS, a frame that is already a whole vsync late is shown as the nearest real frame
+  instead of a full warp, so the GPU queue can drain. It is never faked (counted as original / repeated, not generated), capped at
+  4 in a row, and resumes generating once the lateness is back under half a vsync. The count is shown as "Deadline-shed frames".
+* `ThermalTracker`: the OS thermal status is combined with `getThermalHeadroom(10 s)` (API 30+, read once per window). 90 / 120 FPS
+  targets react earlier (light at 0.70, moderate at 0.85 headroom; 0.80 / 0.92 otherwise). Light blocks climbing back up, moderate
+  forces a step down. A forecast alone never stops the booster; only the OS "severe" status does. Relaxing needs 3 cool readings
+  and a 0.05 hysteresis band.
+* `AdaptiveQualityController` at 90 / 120 FPS: re-evaluates every window (60 FPS keeps its 2-window cooldown), steps two rungs when a
+  window is over its whole frame period (draw or shed share above 30 %), and treats more than 10 % shed frames as overload.
+* Statistics added: thermal state and headroom, missed vsyncs (due but not presented, summed over judged windows), deadline-shed frames.
+* The RIFE and Classic renderers do not use the deadline policy yet; it lives in the optical-flow presenter.

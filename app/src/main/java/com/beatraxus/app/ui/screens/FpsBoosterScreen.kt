@@ -219,6 +219,11 @@ fun FpsBoosterSheetContent(
                     StatLine("Repeated (no new picture)", "%.1f frames/s".format(stats.repeatedFps))
                     StatLine("Interpolated share", "%.0f %%".format(stats.interpolationPct))
                     if (stats.motionComplexity.isNotEmpty()) StatLine("Motion", stats.motionComplexity)
+                    StatLine("Missed vsyncs", "%d".format(stats.missedVsyncs))
+                    if (stats.deadlineShedFrames > 0) StatLine("Deadline-shed frames", "%d".format(stats.deadlineShedFrames))
+                    if (stats.thermalState.isNotEmpty()) {
+                        StatLine("Thermal", if (stats.thermalHeadroom >= 0f) "%s (headroom %.2f)".format(stats.thermalState, stats.thermalHeadroom) else stats.thermalState)
+                    }
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
                     if (stats.cadenceVsyncs > 0) {
                         StatLine(

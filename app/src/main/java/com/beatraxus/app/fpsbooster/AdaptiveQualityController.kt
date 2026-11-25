@@ -1,8 +1,8 @@
 package com.beatraxus.app.fpsbooster
 
 /** Android thermal status (PowerManager.THERMAL_STATUS_*), reduced to what the controller needs. */
-enum class ThermalLevel {
-    NONE, LIGHT, MODERATE, SEVERE;
+enum class ThermalLevel(val label: String) {
+    NONE("None"), LIGHT("Light"), MODERATE("Moderate"), SEVERE("Severe");
 
     companion object {
         /** 0 none, 1 light, 2 moderate, 3 severe, 4 critical, 5 emergency, 6 shutdown. */
@@ -50,7 +50,8 @@ data class QualityDecision(val level: QualityLevel, val changed: Boolean, val fa
  *    is too heavy for the device).
  *  - For a target above 60 FPS a window is also overloaded when the average draw + swap exceeds [TargetBudget.DRAW_SHARE]
  *    of one output period (severe above the whole period), and upgrades need the draw well inside that budget.
- *  - Overload steps down one rung (at most once per [COOLDOWN] windows) when adaptive resolution is on. The
+ *  - A window where more than [SHED_RATIO] of the frames had to be shown cheaply (deadline policy) is overloaded too.
+ *  - Overload steps down one rung (at most once per [COOLDOWN] windows; every window for 90 / 120 FPS targets) when adaptive resolution is on. The
  *    booster is NEVER switched off because of load: at the lowest rung (or with adaptive resolution off) it
  *    keeps running and the presenter simply drops what it cannot produce. Only a severe thermal state stops it.
  *  - Sustained headroom ([UPGRADE_AFTER] calm windows, thermals normal, battery saver off) steps back up;
@@ -82,6 +83,11 @@ class AdaptiveQualityController(
         const val DROP_RATIO = 0.05f
         /** Share of source frames whose motion estimate was skipped (GPU still busy) above which a window is overloaded. */
         const val SKIP_RATIO = 0.05f
+        /** Share of presented frames that the deadline policy had to show as cheap real frames (see [FrameDeadlinePolicy]). */
+        const val SHED_RATIO = 0.10f
+        const val SEVERE_SHED_RATIO = 0.30f
+        /** High-rate targets (90 / 120) re-evaluate after every window: one second at 11 / 8 ms frames is a lot of lost frames. */
+        const val HIGH_RATE_COOLDOWN = 1
 
         val LADDER: List<QualityLevel> = listOf(
             QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
@@ -140,15 +146,18 @@ class AdaptiveQualityController(
         val drawOver = drawBudgetMs > 0f && w.avgDrawMs > drawBudgetMs
         val drawSevere = drawBudgetMs > 0f && w.avgDrawMs > TargetBudget.periodMs(expectedPresentFps)
         val drawCalm = drawBudgetMs == 0f || w.avgDrawMs < drawBudgetMs * 0.6f
+        val shedRatio = if (w.presented > 0) w.shed.toFloat() / w.presented else 0f
+        val highRate = TargetBudget.isHighRate(expectedPresentFps)
+        val cooldown = if (highRate) HIGH_RATE_COOLDOWN else COOLDOWN
         val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f || skipRatio > SKIP_RATIO ||
-            drawOver
+            drawOver || shedRatio > SHED_RATIO
         val severeOverload = w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER ||
             skipRatio > SEVERE_SKIP_RATIO ||
             dropRatio > SEVERE_DROP_RATIO ||
             missRatio > SEVERE_MISS_RATIO ||
-            drawSevere
+            drawSevere || shedRatio > SEVERE_SHED_RATIO
         val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f &&
-            w.skippedEstimates == 0 && drawCalm
+            w.skippedEstimates == 0 && drawCalm && w.shed == 0
 
         calmStreak = if (calm) calmStreak + 1 else 0
 
@@ -162,16 +171,18 @@ class AdaptiveQualityController(
 
         if (!overloaded && lastChangeWasUpgrade && windowsSinceUpgrade != Int.MAX_VALUE && windowsSinceUpgrade >= UPGRADE_HOLD) failedUpgrades = 0
 
-        if (severeOverload && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
+        if (severeOverload && index < LADDER.lastIndex && sinceChange >= cooldown && index == before) {
             // A device that cannot finish even one source-frame pair in time needs an immediate
             // quality reduction, regardless of the optional adaptive-resolution preference.
+            // A 90 / 120 FPS target that is over its whole frame period (draw or shed share) is just as far off: two rungs.
             val steps = if (skipRatio > SEVERE_SKIP_RATIO ||
-                w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER) 2 else 1
+                w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER ||
+                (highRate && (drawSevere || shedRatio > SEVERE_SHED_RATIO))) 2 else 1
             index = (index + steps).coerceAtMost(LADDER.lastIndex)
             calmStreak = 0
             lastChangeWasUpgrade = false
             upgradeBlock = maxOf(upgradeBlock, UPGRADE_BLOCK)
-        } else if (overloaded && adaptive && index < LADDER.lastIndex && sinceChange >= COOLDOWN && index == before) {
+        } else if (overloaded && adaptive && index < LADDER.lastIndex && sinceChange >= cooldown && index == before) {
             index++
             // Most pairs got no motion estimate at all: one rung is not going to be enough, so do not spend two more
             // seconds of stuttering finding that out.
