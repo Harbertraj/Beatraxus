@@ -98,6 +98,7 @@ class FpsBoosterManager(
         if (finished) return
         droppedTotal += w.dropped
         shedTotal += w.shed
+        missedTotal += w.missedVsyncs   // real late frames reported by the presenter; not "target minus rendered"
         // Pause, seek or a stalled source produce almost no frames: that says nothing about load.
         var evaluate = w.sourceFrames >= 3
         if (graceWindows > 0) { graceWindows--; evaluate = false }
@@ -115,7 +116,6 @@ class FpsBoosterManager(
             // Thermal: OS status plus the 10 s forecast (once per window, as the API asks). 90 / 120 react at lower headroom.
             thermalHeadroom = readThermalHeadroom()
             thermalState = thermalTracker.update(thermal, thermalHeadroom, TargetBudget.isHighRate(expected))
-            missedTotal += FramePacing.missedOutputs(expected, w.durationNs, w.presented)
             val d = controller.onWindow(w, sourceFps, expected, thermalState)
             if (d.changed) {
                 graceWindows = CHANGE_GRACE_WINDOWS

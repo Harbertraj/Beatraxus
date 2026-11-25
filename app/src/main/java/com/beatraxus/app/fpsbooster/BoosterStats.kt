@@ -22,7 +22,9 @@ data class WindowStats(
     /** Dominant [MotionComplexity] (ordinal) of the pairs estimated in this window; 0 = unknown / not measured. */
     val motionComplexity: Int = 0,
     /** Presented frames that were shown as a cheap real frame because the deadline was already missed (see [FrameDeadlinePolicy]). */
-    val shed: Int = 0
+    val shed: Int = 0,
+    /** Vsyncs by which due output frames were late, summed over the window (a frame presented k vsyncs late adds k). */
+    val missedVsyncs: Int = 0
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -105,6 +107,7 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var displayHz = 0f
     private val complexityCount = IntArray(MotionComplexity.entries.size)
     private var shed = 0
+    private var missedVsyncs = 0
 
     fun onSourceFrame() { source++ }
     /** Latest cadence of the presenter (see [CadenceGovernor]); reported with every window. */
@@ -124,6 +127,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     fun onComplexity(c: MotionComplexity) { complexityCount[c.ordinal]++ }
     /** A frame that the deadline policy showed as a cheap real frame (it is also counted by [onPresented]). */
     fun onShed() { shed++ }
+    /** A due frame that was presented [n] vsyncs after it was due. Frames deliberately not re-presented are NOT misses. */
+    fun onMissedVsyncs(n: Int) { missedVsyncs += n }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
     fun onDrawMs(ms: Float) { drawSum += ms; drawN++ }
@@ -150,7 +155,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             original = original,
             repeated = repeated,
             motionComplexity = dominantComplexity(),
-            shed = shed
+            shed = shed,
+            missedVsyncs = missedVsyncs
         )
         reset(nowNs)
         return w
@@ -167,6 +173,7 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     fun reset(nowNs: Long = 0L) {
         complexityCount.fill(0)
         shed = 0
+        missedVsyncs = 0
         start = nowNs; source = 0; presented = 0; generated = 0; original = 0; repeated = 0; dropped = 0
         estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0; skipped = 0
     }

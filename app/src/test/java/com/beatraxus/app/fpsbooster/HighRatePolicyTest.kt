@@ -236,6 +236,17 @@ class HighRatePolicyTest {
         assertEquals(0, acc.poll(2_000_000_002L)!!.shed)
     }
 
+    @Test fun missedVsyncsCountOnlyLateFramesNotUnpresentedOnes() {
+        val acc = StatsAccumulator(windowNs = 1_000_000_000L)
+        acc.poll(1L)
+        repeat(36) { acc.onPresented(FrameKind.ORIGINAL) }        // only 36 of 60 frames were presented...
+        acc.onMissedVsyncs(3); acc.onMissedVsyncs(1)               // ...but just two of them were actually late
+        val w = acc.poll(1_000_000_001L)!!
+        assertEquals(4, w.missedVsyncs)                            // not 60 - 36 = 24
+        acc.onSourceFrame()
+        assertEquals(0, acc.poll(2_000_000_002L)!!.missedVsyncs)
+    }
+
     @Test fun thermalLevelsHaveLabels() {
         assertEquals(listOf("None", "Light", "Moderate", "Severe"), ThermalLevel.entries.map { it.label })
     }

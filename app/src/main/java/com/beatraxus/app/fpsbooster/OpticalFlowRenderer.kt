@@ -1145,6 +1145,7 @@ class OpticalFlowRenderer(
         // Frames that were due but could not be produced in time (GPU / thread stall).
         if (nextDueNs != 0L && vsyncNs - nextDueNs > step + vsyncPeriodNs / 2) {
             acc.onDropped(((vsyncNs - nextDueNs) / step).toInt().coerceIn(1, 8))
+            acc.onMissedVsyncs(((vsyncNs - nextDueNs) / vsyncPeriodNs).toInt().coerceIn(1, 16))
         }
 
         val lateNs = lateNowNs
@@ -1156,7 +1157,8 @@ class OpticalFlowRenderer(
         }
         val drawMs = (System.nanoTime() - workStart) / 1e6f
         acc.onDrawMs(drawMs)
-        estimatePacer.onPresented(lateNs >= vsyncPeriodNs, drawMs, vsyncPeriodNs / 1e6f)
+        // "slow" is judged against the OUTPUT step (2 vsyncs at 60 FPS on 120 Hz), not one panel vsync: 5 ms of draw+swap is normal there
+        estimatePacer.onPresented(lateNs >= vsyncPeriodNs, drawMs, step / 1e6f)
         pumpEstimate()
         reportWorkDuration(System.nanoTime() - workStart, step)
         nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, step)

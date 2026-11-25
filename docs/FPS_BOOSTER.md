@@ -855,7 +855,7 @@ Known limits (unchanged by this patch):
   and a 0.05 hysteresis band.
 * `AdaptiveQualityController` at 90 / 120 FPS: re-evaluates every window (60 FPS keeps its 2-window cooldown), steps two rungs when a
   window is over its whole frame period (draw or shed share above 30 %), and treats more than 10 % shed frames as overload.
-* Statistics added: thermal state and headroom, missed vsyncs (due but not presented, summed over judged windows), deadline-shed frames.
+* Statistics added: thermal state and headroom, missed vsyncs (vsyncs by which a due frame was late, reported by the presenter; a frame deliberately kept on screen is not a miss), deadline-shed frames.
 * The RIFE and Classic renderers do not use the deadline policy yet; it lives in the optical-flow presenter.
 
 ## Automatic target selection (60 / 90 / 120)
