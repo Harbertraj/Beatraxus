@@ -233,6 +233,8 @@ class OpticalFlowRenderer(
 
     // ---- stats ----
     private val acc = StatsAccumulator()
+    /** Tells generated / original / repeated frames apart so the statistics are never inflated by repeats. */
+    private val frameClassifier = FrameClassifier()
     /**
      * True while the previous motion estimate has not finished on the GPU. When the fence has signalled, its
      * latency (frame arrival -> flow ready) is recorded here, for the stats and for the hold.
@@ -492,6 +494,7 @@ class OpticalFlowRenderer(
         lastDrawnA = null; lastDrawnB = null
         dirty = true
         acc.reset()
+        frameClassifier.reset()
         if (pendingFrame) { pendingFrame = false; onFrameAvailable() }
     }
 
@@ -1092,7 +1095,7 @@ class OpticalFlowRenderer(
         lastDrawnA = a; lastDrawnB = b; lastDrawnTsA = a.tsNs; lastDrawnTsB = b.tsNs
         lastDrawnAlpha = alpha; lastDrawnWarp = warp
         dirty = false
-        acc.onPresented(generatedFrame = warp && alpha > 0.02f && alpha < 0.98f)
+        acc.onPresented(frameClassifier.classify(warp, alpha, a.tsNs, b.tsNs))
     }
 
     // ---- Performance hint (ADPF, Android 12+) ----

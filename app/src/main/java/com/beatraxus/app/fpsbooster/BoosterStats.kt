@@ -14,7 +14,11 @@ data class WindowStats(
     val skippedEstimates: Int = 0,
     /** Vsyncs between two presented frames (0 = unknown) and the panel rate it was computed for: see [CadenceGovernor]. */
     val cadenceVsyncs: Int = 0,
-    val displayHz: Float = 0f
+    val displayHz: Float = 0f,
+    /** Presented frames that were a decoded source frame shown for the first time (see [FrameKind.ORIGINAL]). */
+    val original: Int = 0,
+    /** Presented frames that repeated the source frame already on screen (see [FrameKind.REPEATED]). */
+    val repeated: Int = 0
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -22,6 +26,12 @@ data class WindowStats(
     val renderedFps: Float get() = if (seconds > 0f) presented / seconds else 0f
     /** Synthesised frames per second. */
     val generatedFps: Float get() = if (seconds > 0f) generated / seconds else 0f
+    /** Real source frames shown for the first time, per second. */
+    val originalFps: Float get() = if (seconds > 0f) original / seconds else 0f
+    /** Repeated source frames per second: presented, but no new picture. */
+    val repeatedFps: Float get() = if (seconds > 0f) repeated / seconds else 0f
+    /** Share (0..100) of presented frames that were really synthesised. */
+    val interpolationPct: Float get() = if (presented > 0) 100f * generated / presented else 0f
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
 }
@@ -45,7 +55,12 @@ data class BoosterStats(
     val cadenceVsyncs: Int = 0,
     val displayHz: Float = 0f,
     /** False when the presenter had to use a rate other than the target to keep the cadence even. */
-    val cadenceExact: Boolean = true
+    val cadenceExact: Boolean = true,
+    /** Real source frames shown for the first time per second, and repeats of an already shown frame per second. */
+    val originalFps: Float = 0f,
+    val repeatedFps: Float = 0f,
+    /** Share (0..100) of presented frames that were synthesised: generated / presented, never inflated by repeats. */
+    val interpolationPct: Float = 0f
 ) {
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
@@ -57,6 +72,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var source = 0
     private var presented = 0
     private var generated = 0
+    private var original = 0
+    private var repeated = 0
     private var dropped = 0
     private var estSum = 0f
     private var estMax = 0f
@@ -70,7 +87,17 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     fun onSourceFrame() { source++ }
     /** Latest cadence of the presenter (see [CadenceGovernor]); reported with every window. */
     fun onCadence(vsyncsPerFrame: Int, hz: Float) { cadenceVsyncs = vsyncsPerFrame; displayHz = hz }
-    fun onPresented(generatedFrame: Boolean) { presented++; if (generatedFrame) generated++ }
+    /** Legacy two-way form: true = generated, false = a real (original) frame. Prefer the [FrameKind] overload. */
+    fun onPresented(generatedFrame: Boolean) { onPresented(if (generatedFrame) FrameKind.GENERATED else FrameKind.ORIGINAL) }
+    /** One presented output frame, classified by [FrameClassifier]: generated, original or repeated. */
+    fun onPresented(kind: FrameKind) {
+        presented++
+        when (kind) {
+            FrameKind.GENERATED -> generated++
+            FrameKind.ORIGINAL -> original++
+            FrameKind.REPEATED -> repeated++
+        }
+    }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
     fun onDrawMs(ms: Float) { drawSum += ms; drawN++ }
@@ -93,14 +120,16 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             avgDrawMs = if (drawN > 0) drawSum / drawN else 0f,
             skippedEstimates = skipped,
             cadenceVsyncs = cadenceVsyncs,
-            displayHz = displayHz
+            displayHz = displayHz,
+            original = original,
+            repeated = repeated
         )
         reset(nowNs)
         return w
     }
 
     fun reset(nowNs: Long = 0L) {
-        start = nowNs; source = 0; presented = 0; generated = 0; dropped = 0
+        start = nowNs; source = 0; presented = 0; generated = 0; original = 0; repeated = 0; dropped = 0
         estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0; skipped = 0
     }
 }

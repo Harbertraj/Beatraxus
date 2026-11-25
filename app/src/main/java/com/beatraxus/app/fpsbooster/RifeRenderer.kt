@@ -114,6 +114,7 @@ class RifeRenderer(
     // ---- Safeguard Helpers ----
     private val regularizer = TimestampRegularizer()
     private val statsAcc = StatsAccumulator()
+    private val frameClassifier = FrameClassifier()
 
     // ---- Sizes ----
     private var srcW = 0
@@ -614,7 +615,7 @@ class RifeRenderer(
 
         val drawDurationMs = (System.nanoTime() - workStartNs) / 1e6f
         statsAcc.onDrawMs(drawDurationMs)
-        statsAcc.onPresented(warp)
+        statsAcc.onPresented(frameClassifier.classify(warp, alpha, (if (interpolate) p!! else c).tsNs, c.tsNs))
 
         nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, stepNs)
         lastDrawnCur = c
@@ -667,6 +668,9 @@ class RifeRenderer(
                     targetFps = targetFps,
                     renderedFps = win.renderedFps,
                     generatedFps = win.generatedFps,
+                    originalFps = win.originalFps,
+                    repeatedFps = win.repeatedFps,
+                    interpolationPct = win.interpolationPct,
                     droppedFrames = win.dropped.toLong(),
                     estimateLatencyMs = win.avgEstimateMs,
                     drawMs = win.avgDrawMs,

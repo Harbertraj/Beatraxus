@@ -10,8 +10,8 @@ import com.beatraxus.app.motionboost.MotionBoostTiming
 object FramePacing {
 
     /** Phase window treated as "a real source frame" rather than a generated one. */
-    private const val GENERATED_MIN = 0.02f
-    private const val GENERATED_MAX = 0.98f
+    private const val GENERATED_MIN = FrameClassifier.GENERATED_MIN
+    private const val GENERATED_MAX = FrameClassifier.GENERATED_MAX
 
     /** One output frame: built from source frames [pair] and [pair]+1 at position [alpha] (0 = pair, 1 = pair+1). */
     data class OutputFrame(val pair: Int, val alpha: Float, val timeNs: Long, val interpolated: Boolean) {

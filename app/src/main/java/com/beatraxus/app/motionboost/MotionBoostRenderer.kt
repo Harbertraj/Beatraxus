@@ -29,6 +29,7 @@ import com.beatraxus.app.fpsbooster.VsyncPeriodEstimator
 import com.beatraxus.app.fpsbooster.StatsAccumulator
 import com.beatraxus.app.fpsbooster.FramePts
 import com.beatraxus.app.fpsbooster.TimestampRegularizer
+import com.beatraxus.app.fpsbooster.FrameClassifier
 import com.beatraxus.app.fpsbooster.WindowStats
 import com.beatraxus.app.model.VideoOrientation
 import java.util.concurrent.CountDownLatch
@@ -120,6 +121,7 @@ class MotionBoostRenderer(
     // ---- Safeguard Helpers ----
     private val regularizer = TimestampRegularizer()
     private val statsAcc = StatsAccumulator()
+    private val frameClassifier = FrameClassifier()
 
     // ---- sizes ----
     private var srcW = 0
@@ -616,7 +618,7 @@ class MotionBoostRenderer(
 
         val drawDurationMs = (System.nanoTime() - workStartNs) / 1e6f
         statsAcc.onDrawMs(drawDurationMs)
-        statsAcc.onPresented(warp)
+        statsAcc.onPresented(frameClassifier.classify(warp, alpha, (if (interpolate) p!! else c).tsNs, c.tsNs))
 
         nextDueNs = MotionBoostTiming.nextDueOnGrid(vsyncNs, stepNs)
         reportWorkDuration((drawDurationMs * 1e6f).toLong(), stepNs)

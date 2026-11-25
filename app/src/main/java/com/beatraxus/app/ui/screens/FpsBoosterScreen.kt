@@ -214,7 +214,10 @@ fun FpsBoosterSheetContent(
                     StatLine("Engine", stats.engine.label + if (stats.qualityLabel.isNotEmpty()) " · ${stats.qualityLabel}" else "")
                     StatLine("Source", "%.1f FPS".format(stats.sourceFps))
                     StatLine("Target", "${if (plan.active) plan.targetFps else stats.targetFps} FPS")
-                    StatLine("Generated", "%.1f frames/s".format(stats.generatedFps))
+                    StatLine("Generated (new frames)", "%.1f frames/s".format(stats.generatedFps))
+                    StatLine("Original (real frames)", "%.1f frames/s".format(stats.originalFps))
+                    StatLine("Repeated (no new picture)", "%.1f frames/s".format(stats.repeatedFps))
+                    StatLine("Interpolated share", "%.0f %%".format(stats.interpolationPct))
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
                     if (stats.cadenceVsyncs > 0) {
                         StatLine(
