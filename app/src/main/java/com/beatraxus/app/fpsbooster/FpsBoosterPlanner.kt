@@ -23,8 +23,18 @@ data class BoosterPlan(
     val engine: BoosterEngine,        // never AUTO once resolved
     val quality: BoosterQuality,
     /** Why the booster is not running (or was adjusted); shown in the UI. Null when running as asked. */
-    val note: String?
+    val note: String?,
+    /**
+     * Targets this session may run at, ascending: only ones the panel shows evenly (see [TargetGovernor.candidates]). The run-time
+     * [TargetGovernor] moves between them; [targetFps] is where it starts. Manual mode: up to the user's target.
+     */
+    val candidates: List<Int> = listOf(targetFps),
+    /** True in Auto mode: the highest candidate is the ceiling the governor may climb to. */
+    val auto: Boolean = false
 ) {
+    /** The highest target this plan allows (the user's choice in manual mode). */
+    val ceilingFps: Int get() = maxOf(candidates.maxOrNull() ?: 0, targetFps)
+
     companion object {
         fun inactive(note: String) =
             BoosterPlan(false, 0, BoosterEngine.OPTICAL_FLOW, BoosterQuality.BALANCED, note)
@@ -43,7 +53,8 @@ data class BoosterPlan(
  *    usable target is used and the user is told.
  *  - An explicitly chosen engine is never replaced by a different one for speed or frame-rate reasons (RIFE AI and Hybrid
  *    stay RIFE AI and Hybrid). It changes only when it cannot run at all: RIFE model missing, or no float render targets.
- *  - AUTO mode only acts on sources below 45 fps and picks the highest usable of 60 / 30 above 1.2x the source.
+ *  - AUTO mode only acts on sources below 45 fps. It starts at the highest usable of 60 / 30 above 1.2x the source and may climb
+ *    to the highest target the panel shows evenly (see [TargetGovernor]) once the device has proven it can sustain it.
  *  - Battery saver caps the target at 60 and the quality at PERFORMANCE.
  */
 object FpsBoosterPlanner {
@@ -171,7 +182,13 @@ object FpsBoosterPlanner {
             )
         }
 
-        return BoosterPlan(true, wanted, engine, quality, note)
+        // Targets the run-time governor may move between. Auto: everything the panel shows evenly up to the ceiling (battery
+        // saver: 60), starting at [wanted] (60 where possible) and climbing only when the device proves it can. Manual: up to the
+        // user's own choice, which is the ceiling; it can still step DOWN when the device cannot sustain it.
+        val auto = settings.mode == BoosterMode.AUTO
+        val candidates = (TargetGovernor.candidates(if (auto) ceiling else wanted, caps.panelRates, source.fps, auto) + wanted)
+            .distinct().sorted()
+        return BoosterPlan(true, wanted, engine, quality, note, candidates, auto)
     }
 
     /**

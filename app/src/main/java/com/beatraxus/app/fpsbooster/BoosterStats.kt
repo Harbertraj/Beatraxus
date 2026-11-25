@@ -74,7 +74,13 @@ data class BoosterStats(
     /** Thermal state the quality controller acted on (OS status combined with the forecast): None / Light / Moderate / Severe. */
     val thermalState: String = "",
     /** Look-ahead thermal headroom (1.0 = throttling expected); negative when the device does not report it. */
-    val thermalHeadroom: Float = -1f
+    val thermalHeadroom: Float = -1f,
+    /** What the user selected (manual) or the ceiling Auto may reach; [targetFps] is what is actually running now. */
+    val requestedTargetFps: Int = 0,
+    /** True in Auto mode: the target is chosen by the device's measured headroom. */
+    val autoTarget: Boolean = false,
+    /** Why the running target differs from the requested one (null when it does not), or what Auto last did. */
+    val targetNote: String? = null
 ) {
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f

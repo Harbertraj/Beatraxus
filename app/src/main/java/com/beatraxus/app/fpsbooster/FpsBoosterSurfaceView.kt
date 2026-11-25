@@ -85,10 +85,6 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         this.plan = plan
         this.settings = settings
         applied = key
-        renderer?.setTargetFps(plan.targetFps)
-        rifeRenderer?.setTargetFps(plan.targetFps)
-        hybridRenderer?.setTargetFps(plan.targetFps)
-        applyDisplayMode()
         if (needsNewSession && (renderer != null || rifeRenderer != null || hybridRenderer != null)) {
             startManager()
             manager?.let { mgr ->
@@ -99,6 +95,19 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         } else if (targetChanged) {
             manager?.updatePlan(plan)
         }
+        // The target the renderers and the display run at is the governor's (it may be below the plan's), not the plan's own.
+        applyTarget(manager?.currentTarget ?: plan.targetFps)
+    }
+
+    /** Output target to use for a new renderer: the run-time governor's current one, else the plan's. */
+    private fun effectiveTarget(p: BoosterPlan) = manager?.currentTarget ?: p.targetFps
+
+    /** Applies an output target (initial, or chosen at run time by the governor) to every live renderer and the display mode. */
+    private fun applyTarget(fps: Int) {
+        renderer?.setTargetFps(fps)
+        rifeRenderer?.setTargetFps(fps)
+        hybridRenderer?.setTargetFps(fps)
+        applyDisplayMode()
     }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
@@ -152,6 +161,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 }
             }
             override fun onStats(stats: BoosterStats) { if (manager === created) listener?.onStats(stats) }
+            override fun onTargetFps(fps: Int) { if (manager === created) applyTarget(fps) }
             override fun onFallback(reason: FallbackReason) { if (manager === created) listener?.onFallback(reason, null) }
         })
         manager = created
@@ -184,7 +194,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                     }
                 }, context.applicationContext, p.quality)
                 hybridRenderer = createdHybrid
-                createdHybrid.setTargetFps(p.targetFps)
+                createdHybrid.setTargetFps(effectiveTarget(p))
                 manager?.let { createdHybrid.setLevel(it.initialLevel) }
                 createdHybrid.setColorGrade(brightness, contrast, saturation)
                 createdHybrid.setColorTune(hue, temperature)
@@ -219,7 +229,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                     }
                 }, context.applicationContext, p.quality)
                 rifeRenderer = createdRife
-                createdRife.setTargetFps(p.targetFps)
+                createdRife.setTargetFps(effectiveTarget(p))
                 manager?.let { createdRife.setLevel(it.initialLevel) }
                 createdRife.setColorGrade(brightness, contrast, saturation)
                 createdRife.setColorTune(hue, temperature)
@@ -249,7 +259,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                     }
                 }, context.applicationContext)
                 renderer = created
-                created.setTargetFps(p.targetFps)
+                created.setTargetFps(effectiveTarget(p))
                 manager?.let { created.setLevel(it.initialLevel) }
                 created.setColorGrade(brightness, contrast, saturation)
                 created.setColorTune(hue, temperature)
@@ -298,7 +308,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
      * Refresh Rate unless the target needs another mode (45 / 90 FPS on a 120 Hz window, 120 FPS on a 60 Hz one).
      */
     private fun applyDisplayMode() {
-        val target = plan?.targetFps ?: return
+        val target = manager?.currentTarget ?: plan?.targetFps ?: return
         displaySession.start(target)
     }
 

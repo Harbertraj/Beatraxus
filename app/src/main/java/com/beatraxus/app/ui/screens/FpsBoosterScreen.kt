@@ -122,7 +122,7 @@ fun FpsBoosterSheetContent(
             }
         }
         Hint(
-            if (s.mode == BoosterMode.AUTO) "Auto picks the target for each video."
+            if (s.mode == BoosterMode.AUTO) "Auto starts at 60 FPS (or where this phone last settled), then moves up to the highest rate it can sustain, up to the display's best, and steps down when it cannot."
             else "Your display runs at ${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz. " +
                 "Only targets it can show evenly are selectable: a target must divide one of these rates into whole frames " +
                 "(45 and 90 need a 90 Hz mode), otherwise motion judders."
@@ -213,7 +213,14 @@ fun FpsBoosterSheetContent(
                 } else {
                     StatLine("Engine", stats.engine.label + if (stats.qualityLabel.isNotEmpty()) " · ${stats.qualityLabel}" else "")
                     StatLine("Source", "%.1f FPS".format(stats.sourceFps))
-                    StatLine("Target", "${if (plan.active) plan.targetFps else stats.targetFps} FPS")
+                    // The running target (the governor may be below what was asked for), never the plan's own number.
+                    StatLine("Target", when {
+                        stats.autoTarget && stats.requestedTargetFps > 0 -> "${stats.targetFps} FPS (Auto, up to ${stats.requestedTargetFps})"
+                        stats.requestedTargetFps > 0 && stats.targetFps != stats.requestedTargetFps ->
+                            "${stats.targetFps} FPS (${stats.requestedTargetFps} selected)"
+                        else -> "${stats.targetFps} FPS"
+                    })
+                    stats.targetNote?.let { StatLine("Target change", it) }
                     StatLine("Generated (new frames)", "%.1f frames/s".format(stats.generatedFps))
                     StatLine("Original (real frames)", "%.1f frames/s".format(stats.originalFps))
                     StatLine("Repeated (no new picture)", "%.1f frames/s".format(stats.repeatedFps))

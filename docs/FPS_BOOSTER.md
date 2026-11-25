@@ -857,3 +857,20 @@ Known limits (unchanged by this patch):
   window is over its whole frame period (draw or shed share above 30 %), and treats more than 10 % shed frames as overload.
 * Statistics added: thermal state and headroom, missed vsyncs (due but not presented, summed over judged windows), deadline-shed frames.
 * The RIFE and Classic renderers do not use the deadline policy yet; it lives in the optical-flow presenter.
+
+## Automatic target selection (60 / 90 / 120)
+
+* `TargetGovernor` chooses the output rate at run time. It only moves between the targets the panel shows evenly and that are
+  worth running for this source (`FpsBoosterPlanner` builds the list into `BoosterPlan.candidates`).
+* **Auto mode** starts at 60 FPS (30 if 60 cannot be paced), or where this phone last settled (`DeviceTuning.learnedTarget`),
+  and climbs to the panel's best clean rate. **Manual mode** keeps the user's target as the ceiling. Both can step DOWN when the
+  device cannot sustain the target ("never force 90 / 120"); manual waits for 5 failing windows, auto for 2.
+* The target drops only once quality has been spent first: the quality ladder must already be at Minimal or lower and the load
+  still over budget (or 3 windows of "moderate" heat at 90 / 120). A severe overload drops it after 1 window in auto, 2 in manual.
+  With adaptive resolution off the target is the only lever, so it drops straight away.
+* It climbs only after 15 calm windows in a row, the ladder at Performance or better, no heat, a panel that is showing the higher
+  rate right now, and a measured draw within 1.5x the next target's draw budget (the ladder gives part of that back).
+  A failed climb blocks that target for 30, 60, 120, 240 windows; a climb that holds for 20 windows forgets its failures.
+* Lowering the target gives the quality ladder back up to 2 rungs at once; raising it keeps the rung until it has proven itself.
+* The statistics show the running target, what was requested, and why they differ. Not governed: the Classic engine's own
+  surface view, which has no run-time manager.

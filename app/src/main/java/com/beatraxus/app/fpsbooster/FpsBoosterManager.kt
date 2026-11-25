@@ -26,13 +26,23 @@ class FpsBoosterManager(
         fun onQualityLevel(level: QualityLevel)
         fun onStats(stats: BoosterStats)
         fun onFallback(reason: FallbackReason)
+        /** The run-time governor moved the output target (see [TargetGovernor]); apply it to the renderer and the display mode. */
+        fun onTargetFps(fps: Int) {}
     }
 
     private val appContext = runCatching { context.applicationContext }.getOrDefault(context)
+    /** Run-time output-target selection (60 / 90 / 120): starts where this phone last settled, see [TargetGovernor]. */
+    private var governor = buildGovernor(plan)
+    /** What the user selected (manual) or the Auto ceiling; the plan's own target is the one running now. */
+    private var requestedTarget = plan.ceilingFps.let { if (plan.auto) it else plan.targetFps }
+    private var targetNote: String? = null
+    private val adaptive = settings.adaptiveResolution
+    init { this.plan = plan.copy(targetFps = governor.target); noteInitialTarget() }
+
     // Starts where the last session on this phone settled, so a heavy preset does not stutter through the same
     // step-downs on every video. It still climbs back up on its own when the phone has headroom.
     private val controller = AdaptiveQualityController(
-        plan.quality, settings.adaptiveResolution, settings.batterySaver, DeviceTuning.learnedLevel(appContext, plan)
+        plan.quality, settings.adaptiveResolution, settings.batterySaver, DeviceTuning.learnedLevel(appContext, this.plan)
     )
     private var thermal = ThermalLevel.NONE
     private var droppedTotal = 0L
@@ -58,6 +68,18 @@ class FpsBoosterManager(
 
     /** Rung the renderer should start with. */
     val initialLevel: QualityLevel get() = controller.level
+
+    /** The output target running now (the renderers and the display mode must use this, not the plan the UI built). */
+    val currentTarget: Int get() = plan.targetFps
+
+    private fun buildGovernor(p: BoosterPlan): TargetGovernor =
+        TargetGovernor.forPlan(p, DeviceTuning.learnedTarget(appContext, p))
+
+    private fun noteInitialTarget() {
+        targetNote = if (!plan.auto && plan.targetFps < requestedTarget) {
+            "${requestedTarget} FPS selected: starting at ${plan.targetFps} FPS, which is what this device sustained last time"
+        } else null
+    }
 
     init {
         val pm = power
@@ -101,6 +123,9 @@ class FpsBoosterManager(
                 listener.onQualityLevel(d.level)
             }
             fallback = d.fallback
+            if (fallback == null) applyTargetDecision(
+                governor.onWindow(controller.verdict, controller.index, adaptive, thermalState, w)
+            )
         }
         listener.onStats(
             BoosterStats(
@@ -108,6 +133,9 @@ class FpsBoosterManager(
                 engine = plan.engine,
                 sourceFps = sourceFps,
                 targetFps = plan.targetFps,
+                requestedTargetFps = requestedTarget,
+                autoTarget = plan.auto,
+                targetNote = targetNote,
                 renderedFps = w.renderedFps,
                 generatedFps = w.generatedFps,
                 originalFps = w.originalFps,
@@ -136,6 +164,28 @@ class FpsBoosterManager(
         }
     }
 
+    /** Applies a [TargetGovernor] decision: new target for the renderers, a fresh ladder position, a note for the user. */
+    private fun applyTargetDecision(gd: TargetDecision) {
+        if (!gd.changed || gd.target == plan.targetFps) return
+        val old = plan.targetFps
+        val lowered = gd.target < old
+        val rungBefore = controller.index
+        plan = plan.copy(targetFps = gd.target)
+        controller.onTargetChanged(lowered)
+        graceWindows = CHANGE_GRACE_WINDOWS
+        DeviceTuning.rememberTarget(appContext, plan, gd.target)
+        DeviceTuning.rememberLevel(appContext, plan, controller.index)
+        targetNote = when {
+            plan.auto && lowered -> "Auto: stepped down from $old to ${gd.target} FPS because ${gd.reason?.text}"
+            plan.auto -> "Auto: raised from $old to ${gd.target} FPS because ${gd.reason?.text}"
+            gd.target < requestedTarget -> "$requestedTarget FPS selected: running at ${gd.target} FPS because ${gd.reason?.text}"
+            else -> null
+        }
+        runCatching { Log.i(TAG, "target $old -> ${gd.target} FPS (${gd.reason}), rung ${controller.index}") }
+        if (controller.index != rungBefore) listener.onQualityLevel(controller.level)
+        listener.onTargetFps(gd.target)
+    }
+
     /** `getThermalHeadroom(10 s)` (API 30+); negative when the device does not report it. */
     private fun readThermalHeadroom(): Float {
         val pm = power ?: return -1f
@@ -149,7 +199,10 @@ class FpsBoosterManager(
 
     /** Updates the plan (e.g. on target FPS change) and resets grace windows. */
     fun updatePlan(newPlan: BoosterPlan) {
-        plan = newPlan
+        governor = buildGovernor(newPlan)
+        requestedTarget = if (newPlan.auto) newPlan.ceilingFps else newPlan.targetFps
+        plan = newPlan.copy(targetFps = governor.target)
+        noteInitialTarget()
         restartGrace()
     }
 

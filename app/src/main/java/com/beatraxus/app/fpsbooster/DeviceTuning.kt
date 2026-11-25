@@ -117,4 +117,21 @@ object DeviceTuning {
     fun rememberLevel(context: Context, plan: BoosterPlan, index: Int) {
         runCatching { prefs(context).edit().putInt(levelKey(plan), index).apply() }
     }
+
+    // ---- 3. Learned output target ----------------------------------------------------------------------------------
+
+    /** Keyed by what stays fixed for a session: device, engine, quality and the ceiling (Auto, or the user's chosen target). */
+    private fun targetKey(plan: BoosterPlan) =
+        "tgt_${build()}_${plan.engine.name}_${plan.quality.name}_${if (plan.auto) "auto" else "max${plan.ceilingFps}"}"
+
+    /** The output target the last session of this kind ended on (what the phone sustained), or null. */
+    fun learnedTarget(context: Context, plan: BoosterPlan): Int? = runCatching {
+        val p = prefs(context)
+        val key = targetKey(plan)
+        if (p.contains(key)) p.getInt(key, 0).takeIf { it > 0 } else null
+    }.getOrNull()
+
+    fun rememberTarget(context: Context, plan: BoosterPlan, target: Int) {
+        runCatching { prefs(context).edit().putInt(targetKey(plan), target).apply() }
+    }
 }

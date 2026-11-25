@@ -88,6 +88,8 @@ class AdaptiveQualityController(
         const val SEVERE_SHED_RATIO = 0.30f
         /** High-rate targets (90 / 120) re-evaluate after every window: one second at 11 / 8 ms frames is a lot of lost frames. */
         const val HIGH_RATE_COOLDOWN = 1
+        /** Rungs the ladder gives back when the target is lowered (see [onTargetChanged]). */
+        const val TARGET_DROP_RECOVERY = 2
 
         val LADDER: List<QualityLevel> = listOf(
             QualityLevel("Quality", 1280, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, true),
@@ -114,12 +116,28 @@ class AdaptiveQualityController(
         private set
     val level: QualityLevel get() = LADDER[index]
 
+    /** How the most recent window was judged; read by [TargetGovernor] to decide the output target. */
+    var verdict: LoadVerdict = LoadVerdict.NORMAL
+        private set
+
     private var calmStreak = 0
     private var sinceChange = COOLDOWN
     private var upgradeBlock = 0
     private var lastChangeWasUpgrade = false
     private var windowsSinceUpgrade = Int.MAX_VALUE
     private var failedUpgrades = 0
+
+    /**
+     * The output target changed. A LOWER target roughly halves the per-second work, so the ladder gives back up to
+     * [TARGET_DROP_RECOVERY] rungs at once instead of climbing one calm streak at a time (never above the best rung, and
+     * only when adaptive resolution is on). A higher target keeps the rung: the new target must prove itself first.
+     */
+    fun onTargetChanged(lowered: Boolean) {
+        if (lowered && adaptive) index = maxOf(bestIndex, index - TARGET_DROP_RECOVERY)
+        calmStreak = 0
+        sinceChange = 0
+        lastChangeWasUpgrade = false
+    }
 
     /**
      * @param sourceFps  measured source frame rate (falls back to 24 when unknown)
@@ -160,6 +178,12 @@ class AdaptiveQualityController(
             w.skippedEstimates == 0 && drawCalm && w.shed == 0
 
         calmStreak = if (calm) calmStreak + 1 else 0
+        verdict = when {
+            severeOverload -> LoadVerdict.SEVERE
+            overloaded -> LoadVerdict.OVERLOADED
+            calm -> LoadVerdict.CALM
+            else -> LoadVerdict.NORMAL
+        }
 
         var changed = false
         val before = index
