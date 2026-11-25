@@ -23,6 +23,8 @@ import com.beatraxus.app.colorgrade.ColorTune
 import com.beatraxus.app.deinterlace.DeinterlaceGlsl
 import com.beatraxus.app.model.VideoOrientation
 import com.beatraxus.app.motionboost.MotionBoostTiming
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
@@ -235,6 +237,15 @@ class OpticalFlowRenderer(
     private val acc = StatsAccumulator()
     /** Tells generated / original / repeated frames apart so the statistics are never inflated by repeats. */
     private val frameClassifier = FrameClassifier()
+
+    // ---- motion complexity (see MotionComplexity.kt) ----
+    // The dominant-motion texel and the cut texel of every finished pair are copied into a small PBO right before the
+    // estimate fence is created, so the fence that already retires the estimate also covers the copy: the CPU never waits
+    // for it (it is mapped only after the fence has signalled). The result plans the NEXT pair's search effort.
+    private val complexityClassifier = MotionComplexityClassifier()
+    private var pairComplexity = MotionComplexity.UNKNOWN
+    private var complexityPbo = 0
+    private var complexityPending = false
     /**
      * True while the previous motion estimate has not finished on the GPU. When the fence has signalled, its
      * latency (frame arrival -> flow ready) is recorded here, for the stats and for the hold.
@@ -254,6 +265,7 @@ class OpticalFlowRenderer(
                 acc.onEstimateMs(max(0L, doneNs - estFirstSubmitNs) / 1e6f)
                 estimateLatency.onSample(doneNs - fenceStartNs)
                 GLES30.glDeleteSync(fence); fence = 0L
+                if (complexityPending) consumeComplexity()
                 false
             }
             GLES30.GL_WAIT_FAILED -> { GLES30.glDeleteSync(fence); fence = 0L; false }
@@ -495,6 +507,7 @@ class OpticalFlowRenderer(
         dirty = true
         acc.reset()
         frameClassifier.reset()
+        complexityClassifier.reset(); pairComplexity = MotionComplexity.UNKNOWN; complexityPending = false
         if (pendingFrame) { pendingFrame = false; onFrameAvailable() }
     }
 
@@ -864,6 +877,46 @@ class OpticalFlowRenderer(
             GLES30.glDeleteSync(fence)
             fence = 0L
         }
+        complexityPending = false
+    }
+
+    /** Copies the dominant-motion texel (offset 0) and the cut texel (offset 16) of [b] into the complexity PBO; GPU-side, non-blocking. */
+    private fun queueComplexityReadback(b: Slot) {
+        if (complexityPbo == 0) {
+            val id = IntArray(1)
+            GLES30.glGenBuffers(1, id, 0)
+            complexityPbo = id[0]
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, complexityPbo)
+            GLES30.glBufferData(GLES30.GL_PIXEL_PACK_BUFFER, COMPLEXITY_BYTES, null, GLES30.GL_STREAM_READ)
+        } else {
+            GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, complexityPbo)
+        }
+        bindTarget(b.glob, 1, 1)
+        GLES30.glReadPixels(0, 0, 1, 1, GLES30.GL_RGBA, GLES30.GL_FLOAT, 0)
+        bindTarget(b.cut, 1, 1)
+        GLES30.glReadPixels(0, 0, 1, 1, GLES30.GL_RGBA, GLES30.GL_FLOAT, 16)
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
+        complexityPending = true
+    }
+
+    /** Called once the estimate fence has signalled: the PBO is ready, so mapping it does not wait for the GPU. */
+    private fun consumeComplexity() {
+        complexityPending = false
+        if (complexityPbo == 0) return
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, complexityPbo)
+        val mapped = GLES30.glMapBufferRange(GLES30.GL_PIXEL_PACK_BUFFER, 0, COMPLEXITY_BYTES, GLES30.GL_MAP_READ_BIT) as? ByteBuffer
+        if (mapped != null) {
+            val f = mapped.order(ByteOrder.nativeOrder()).asFloatBuffer()
+            val c = complexityClassifier.onPair(
+                dominantX = f.get(0), dominantY = f.get(1), support = f.get(2),
+                meanCost = f.get(4), poorShare = f.get(5), cutVerdict = f.get(6),
+                workEdge = if (levelW.isNotEmpty()) max(levelW[0], levelH[0]) else 0
+            )
+            GLES30.glUnmapBuffer(GLES30.GL_PIXEL_PACK_BUFFER)
+            pairComplexity = if (c == MotionComplexity.CUT) MotionComplexity.UNKNOWN else c
+            acc.onComplexity(c)
+        }
+        GLES30.glBindBuffer(GLES30.GL_PIXEL_PACK_BUFFER, 0)
     }
 
     private fun pumpEstimate() {
@@ -887,18 +940,20 @@ class OpticalFlowRenderer(
         estFirstSubmitNs = 0L
 
         val n = levelW.size
+        // Search effort of THIS pair from the scene's measured complexity (1-pair lag). Per pair, so it costs no reallocation.
+        val plan = MotionPlan.plan(pairComplexity, level, gpuHeadroom = estimatePacer.share >= 1.0)
 
         // Forward flow search per pyramid level
         for (lvl in n - 1 downTo 0) {
             val fA = flowTex[0][lvl][0]
             val fB = flowTex[0][lvl][1]
-            val sub = lvl == 0 && level.subpixel
+            val sub = lvl == 0 && plan.subpixel
             val exact = levels.needsExactCost(lvl)
             val gScale = if (lvl < n - 1) levels.globalScale(lvl) else 0f
             val g = globalCoarse[0]
 
             if (lvl == n - 1) {
-                estSteps.add { search(a.luma[lvl], b.luma[lvl], fB, fA, lvl, 2, level.searchRange, false, -1, g, 0f, false) }
+                estSteps.add { search(a.luma[lvl], b.luma[lvl], fB, fA, lvl, 2, plan.searchRange, false, -1, g, 0f, false) }
             } else {
                 val parentRes = flowTex[0][lvl + 1][1]
                 estSteps.add { search(a.luma[lvl], b.luma[lvl], parentRes, fA, lvl, 0, 0, false, lvl + 1, g, gScale, false) }
@@ -913,13 +968,13 @@ class OpticalFlowRenderer(
         for (lvl in n - 1 downTo 0) {
             val fA = flowTex[1][lvl][0]
             val fB = flowTex[1][lvl][1]
-            val sub = lvl == 0 && level.subpixel
+            val sub = lvl == 0 && plan.subpixel
             val exact = levels.needsExactCost(lvl)
             val gScale = if (lvl < n - 1) levels.globalScale(lvl) else 0f
             val g = globalCoarse[1]
 
             if (lvl == n - 1) {
-                estSteps.add { search(b.luma[lvl], a.luma[lvl], fB, fA, lvl, 2, level.searchRange, false, -1, g, 0f, false) }
+                estSteps.add { search(b.luma[lvl], a.luma[lvl], fB, fA, lvl, 2, plan.searchRange, false, -1, g, 0f, false) }
             } else {
                 val parentRes = flowTex[1][lvl + 1][1]
                 estSteps.add { search(b.luma[lvl], a.luma[lvl], parentRes, fA, lvl, 0, 0, false, lvl + 1, g, gScale, false) }
@@ -984,6 +1039,7 @@ class OpticalFlowRenderer(
         estSteps.add {
             b.hasFlow = true
             b.flowSkipped = false
+            queueComplexityReadback(b)
             fence = GLES30.glFenceSync(GLES30.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
             fenceStartNs = estArrivalNs
             GLES30.glFlush()
@@ -1311,6 +1367,8 @@ class OpticalFlowRenderer(
             freeResources()
             if (oesTexture != 0) GLES30.glDeleteTextures(1, intArrayOf(oesTexture), 0)
             if (fbo != 0) GLES30.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
+            if (complexityPbo != 0) GLES30.glDeleteBuffers(1, intArrayOf(complexityPbo), 0)
+            complexityPbo = 0
             listOf(copyProg, lumaProg, downProg, searchProg, consProg, cutProg, riskProg, globalProg, interpProg, blitProg, aiInterpProg, fuseProg).forEach { it?.delete() }
         }
         surfaceTexture = null
@@ -1386,6 +1444,8 @@ class OpticalFlowRenderer(
         /** Generated frames are resampled bicubically from the nearest real frame, so they are as sharp as the original. */
         private const val PRESERVE_SHARPNESS = true
         private const val CUT_MEAN = 0.12f
+        /** Two RGBA32F texels: dominant motion (offset 0) and cut verdict (offset 16). */
+        private const val COMPLEXITY_BYTES = 32
         private const val CUT_POOR = 0.10f
         /** Work px per texel of the regional risk map (risk_map.frag). Keep in sync with RISK_CELL in new_engine.py. */
         private const val RISK_CELL = 16

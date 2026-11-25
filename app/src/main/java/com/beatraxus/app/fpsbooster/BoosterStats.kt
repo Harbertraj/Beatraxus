@@ -18,7 +18,9 @@ data class WindowStats(
     /** Presented frames that were a decoded source frame shown for the first time (see [FrameKind.ORIGINAL]). */
     val original: Int = 0,
     /** Presented frames that repeated the source frame already on screen (see [FrameKind.REPEATED]). */
-    val repeated: Int = 0
+    val repeated: Int = 0,
+    /** Dominant [MotionComplexity] (ordinal) of the pairs estimated in this window; 0 = unknown / not measured. */
+    val motionComplexity: Int = 0
 ) {
     private val seconds get() = durationNs / 1e9f
     val sourceFps: Float get() = if (seconds > 0f) sourceFrames / seconds else 0f
@@ -60,7 +62,9 @@ data class BoosterStats(
     val originalFps: Float = 0f,
     val repeatedFps: Float = 0f,
     /** Share (0..100) of presented frames that were synthesised: generated / presented, never inflated by repeats. */
-    val interpolationPct: Float = 0f
+    val interpolationPct: Float = 0f,
+    /** Dominant motion complexity of the last window (label of [MotionComplexity]); empty when not measured. */
+    val motionComplexity: String = ""
 ) {
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
@@ -83,6 +87,7 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
     private var skipped = 0
     private var cadenceVsyncs = 0
     private var displayHz = 0f
+    private val complexityCount = IntArray(MotionComplexity.entries.size)
 
     fun onSourceFrame() { source++ }
     /** Latest cadence of the presenter (see [CadenceGovernor]); reported with every window. */
@@ -98,6 +103,8 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             FrameKind.REPEATED -> repeated++
         }
     }
+    /** Complexity the motion estimate of one pair was planned with; the window reports the most frequent known one. */
+    fun onComplexity(c: MotionComplexity) { complexityCount[c.ordinal]++ }
     fun onDropped(n: Int = 1) { dropped += n }
     fun onEstimateMs(ms: Float) { estSum += ms; estN++; if (ms > estMax) estMax = ms }
     fun onDrawMs(ms: Float) { drawSum += ms; drawN++ }
@@ -122,13 +129,23 @@ class StatsAccumulator(private val windowNs: Long = 1_000_000_000L) {
             cadenceVsyncs = cadenceVsyncs,
             displayHz = displayHz,
             original = original,
-            repeated = repeated
+            repeated = repeated,
+            motionComplexity = dominantComplexity()
         )
         reset(nowNs)
         return w
     }
 
+    /** Most frequent complexity of the window, ignoring UNKNOWN and CUT (ties go to the harder class); UNKNOWN when none was measured. */
+    private fun dominantComplexity(): Int {
+        var best = MotionComplexity.UNKNOWN.ordinal
+        var bestN = 0
+        for (i in 1 until MotionComplexity.CUT.ordinal) if (complexityCount[i] > 0 && complexityCount[i] >= bestN) { best = i; bestN = complexityCount[i] }
+        return best
+    }
+
     fun reset(nowNs: Long = 0L) {
+        complexityCount.fill(0)
         start = nowNs; source = 0; presented = 0; generated = 0; original = 0; repeated = 0; dropped = 0
         estSum = 0f; estMax = 0f; estN = 0; drawSum = 0f; drawN = 0; skipped = 0
     }

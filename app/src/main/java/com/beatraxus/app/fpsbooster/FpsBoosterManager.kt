@@ -102,6 +102,7 @@ class FpsBoosterManager(
                 originalFps = w.originalFps,
                 repeatedFps = w.repeatedFps,
                 interpolationPct = w.interpolationPct,
+                motionComplexity = MotionComplexity.fromOrdinal(w.motionComplexity).takeIf { it != MotionComplexity.UNKNOWN }?.label ?: "",
                 droppedFrames = droppedTotal,
                 estimateLatencyMs = w.avgEstimateMs,
                 drawMs = w.avgDrawMs,

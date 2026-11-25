@@ -41,13 +41,15 @@ data class QualityDecision(val level: QualityLevel, val changed: Boolean, val fa
  * policy is unit tested; the manager feeds it one [WindowStats] per second.
  *
  * Policy:
- *  - The ladder is QUALITY > BALANCED > PERFORMANCE > MINIMAL. It starts at the user's preset and never goes
+ *  - The ladder is QUALITY > BALANCED > PERFORMANCE > MINIMAL > ULTRA FAST. It starts at the user's preset and never goes
  *    above it. Battery saver starts (and stays capped) at PERFORMANCE.
  *  - A window is *overloaded* when the motion estimate takes longer than the budget (a share of the source
  *    frame interval), the presenter dropped more than 5 % of its output frames, or more than 5 % of the source
  *    frames could not get a motion estimate because the GPU was still busy with the previous one (those pairs
  *    are shown as real frames; with the estimate measured on every pair this is the clearest sign that a preset
  *    is too heavy for the device).
+ *  - For a target above 60 FPS a window is also overloaded when the average draw + swap exceeds [TargetBudget.DRAW_SHARE]
+ *    of one output period (severe above the whole period), and upgrades need the draw well inside that budget.
  *  - Overload steps down one rung (at most once per [COOLDOWN] windows) when adaptive resolution is on. The
  *    booster is NEVER switched off because of load: at the lowest rung (or with adaptive resolution off) it
  *    keeps running and the presenter simply drops what it cannot produce. Only a severe thermal state stops it.
@@ -87,7 +89,10 @@ class AdaptiveQualityController(
             QualityLevel("Performance", 640, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false),
             // Only reachable with adaptive resolution on. Only the motion-search size shrinks: the shown frame stays at
             // the video's own resolution (a 1280 px frame cap here made 1080p / 4K video visibly softer).
-            QualityLevel("Minimal", 480, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false)
+            QualityLevel("Minimal", 480, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false),
+            // Last resort, only reachable with adaptive resolution on (and appended, so saved rung indices stay valid).
+            // Reached when even Minimal cannot hold a 90 / 120 FPS output frame budget.
+            QualityLevel("Ultra Fast", 320, FRAME_EDGE_ORIGINAL, FlowPyramid.COARSEST_RANGE, false)
         )
 
         fun indexFor(q: BoosterQuality) = when (q) {
@@ -128,13 +133,22 @@ class AdaptiveQualityController(
         val missed = FramePacing.missedOutputs(expectedPresentFps, w.durationNs, w.presented)
         val missRatio = if (expectedPresentFps > 0f) missed / (expectedPresentFps * w.durationNs / 1e9f) else 0f
         val skipRatio = if (w.sourceFrames > 0) w.skippedEstimates.toFloat() / w.sourceFrames else 0f
-        val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f || skipRatio > SKIP_RATIO
+        // High-rate targets (90 / 120) have an output-frame budget of 11 / 8 ms. The draw + swap of every output frame has
+        // to fit in it, which the per-source-frame estimate budget above does not see. 60 FPS and below keep the policy
+        // they always had (drawBudget = 0 disables these terms).
+        val drawBudgetMs = TargetBudget.drawBudgetMs(expectedPresentFps)
+        val drawOver = drawBudgetMs > 0f && w.avgDrawMs > drawBudgetMs
+        val drawSevere = drawBudgetMs > 0f && w.avgDrawMs > TargetBudget.periodMs(expectedPresentFps)
+        val drawCalm = drawBudgetMs == 0f || w.avgDrawMs < drawBudgetMs * 0.6f
+        val overloaded = w.avgEstimateMs > budgetMs || dropRatio > DROP_RATIO || missRatio > 0.15f || skipRatio > SKIP_RATIO ||
+            drawOver
         val severeOverload = w.avgEstimateMs > interval * SEVERE_LATENCY_MULTIPLIER ||
             skipRatio > SEVERE_SKIP_RATIO ||
             dropRatio > SEVERE_DROP_RATIO ||
-            missRatio > SEVERE_MISS_RATIO
+            missRatio > SEVERE_MISS_RATIO ||
+            drawSevere
         val calm = !overloaded && w.avgEstimateMs < budgetMs * 0.45f && dropRatio == 0f && missRatio < 0.03f &&
-            w.skippedEstimates == 0
+            w.skippedEstimates == 0 && drawCalm
 
         calmStreak = if (calm) calmStreak + 1 else 0
 

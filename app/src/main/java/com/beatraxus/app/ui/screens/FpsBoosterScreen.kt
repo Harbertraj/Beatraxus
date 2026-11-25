@@ -218,6 +218,7 @@ fun FpsBoosterSheetContent(
                     StatLine("Original (real frames)", "%.1f frames/s".format(stats.originalFps))
                     StatLine("Repeated (no new picture)", "%.1f frames/s".format(stats.repeatedFps))
                     StatLine("Interpolated share", "%.0f %%".format(stats.interpolationPct))
+                    if (stats.motionComplexity.isNotEmpty()) StatLine("Motion", stats.motionComplexity)
                     StatLine("Rendered", "%.1f FPS".format(stats.renderedFps))
                     if (stats.cadenceVsyncs > 0) {
                         StatLine(
