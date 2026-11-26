@@ -48,6 +48,30 @@ class MultipleModeTest {
         assertEquals(0, MultipleMode.phaseCount(60, 0f))
     }
 
+    // ---- measured rate ----
+
+    @Test fun measuredRatesSnapToStandardRates() {
+        assertEquals(25f, SourceRate.snap(24.8f), 0f)
+        assertEquals(25f, SourceRate.snap(25.1f), 0f)
+        assertEquals(23.976f, SourceRate.snap(23.9f), 0f)   // film rates 23.976 and 24 both give a 5x multiple
+        assertEquals(24f, SourceRate.snap(24.05f), 0f)
+        assertEquals(23.976f, SourceRate.snap(23.98f), 0f)
+        assertEquals(29.97f, SourceRate.snap(29.8f), 0f)
+        assertEquals(37.3f, SourceRate.snap(37.3f), 0f)    // not near a standard rate: unchanged
+        assertEquals(0f, SourceRate.snap(0f), 0f)
+    }
+
+    @Test fun aMeasured24Point8IsA25FpsFileSoNoMultipleFits() {
+        val p = FpsBoosterPlanner.plan(multiple, caps(hz90), src(24.8f))
+        assertFalse(p.phaseLock)
+        assertTrue(p.note!!.contains("25.0"))
+    }
+
+    @Test fun aMeasured23Point9IsAFilmSoFiveTimesFits() {
+        val p = FpsBoosterPlanner.plan(multiple, caps(hz120), src(23.9f))
+        assertTrue(p.phaseLock); assertEquals(120, p.targetFps)
+    }
+
     // ---- planner ----
 
     @Test fun plannerPicksFiveTimesFor24FpsOn120Hz() {

@@ -64,6 +64,26 @@ object MultipleMode {
 }
 
 /**
+ * Snaps a frame rate to the nearest standard video rate (within [TOLERANCE]): a rate measured from presentation times is never
+ * exact (24.8 for a 25 FPS file), and a whole multiple is decided on the nominal rate. Anything else is returned unchanged.
+ */
+object SourceRate {
+    private val NOMINAL = floatArrayOf(23.976f, 24f, 25f, 29.97f, 30f, 48f, 50f, 59.94f, 60f)
+    const val TOLERANCE = 0.025f
+
+    fun snap(fps: Float): Float {
+        if (fps <= 0f) return fps
+        var best = fps
+        var bestErr = Float.MAX_VALUE
+        for (n in NOMINAL) {
+            val err = kotlin.math.abs(fps - n) / n
+            if (err < bestErr) { bestErr = err; best = n }
+        }
+        return if (bestErr <= TOLERANCE) best else fps
+    }
+}
+
+/**
  * Locks the output frames to the source frame grid (pure Kotlin, unit tested on the JVM).
  *
  * With n outputs per source frame the generated frames should sit at 1/n, 2/n ... (n-1)/n of the way between two real frames and

@@ -46,6 +46,8 @@ import com.beatraxus.app.fpsbooster.BoosterBenchmarkRunner
 import com.beatraxus.app.fpsbooster.BoosterPlan
 import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterStats
+import com.beatraxus.app.fpsbooster.BoosterStyle
+import com.beatraxus.app.fpsbooster.SourceRate
 import com.beatraxus.app.fpsbooster.DeviceCaps
 import com.beatraxus.app.fpsbooster.FallbackReason
 import com.beatraxus.app.fpsbooster.FpsBoosterPlanner
@@ -945,6 +947,9 @@ class VideoPlayerViewModel(
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // A rate learned from the previous video's measurement must not carry over to the next one.
+                measuredRate = 0f; measuredRateWindows = 0
+                if (measuredRateApplied) { measuredRateApplied = false; _uiState.update { withFpsPlan(it.copy(sourceFps = 0f)) } }
                 firstFrameRendered = false
                 firstFrameWatchdog?.cancel()
                 updateCurrentVideo()
@@ -1575,7 +1580,26 @@ class VideoPlayerViewModel(
         updateVideoEffects()
     }
 
+    // Multiple style needs the video's rate to choose a whole multiple. Many files (MKV, variable frame rate) declare none, so the
+    // plan was made with 0 and said "not known yet". Once the renderer has measured the same standard rate for a few windows in a row,
+    // it is used for the plan (only for the Multiple style, and only while the file itself declared nothing).
+    private val MEASURED_RATE_WINDOWS = 3
+    private var measuredRate = 0f
+    private var measuredRateWindows = 0
+    private var measuredRateApplied = false
+
+    private fun learnSourceRate(stats: BoosterStats) {
+        val s = _uiState.value
+        if (s.fpsBooster.style != BoosterStyle.MULTIPLE || s.sourceFps > 0f || !stats.running || stats.sourceFps <= 0f) return
+        val nominal = SourceRate.snap(stats.sourceFps)
+        if (nominal == measuredRate) measuredRateWindows++ else { measuredRate = nominal; measuredRateWindows = 1 }
+        if (measuredRateWindows < MEASURED_RATE_WINDOWS) return
+        measuredRateApplied = true
+        _uiState.update { withFpsPlan(it.copy(sourceFps = nominal)) }
+    }
+
     fun updateFpsBoosterStats(stats: BoosterStats) {
+        learnSourceRate(stats)
         val activePlan = _uiState.value.fpsBoosterPlan
         val updatedStats = if (activePlan.active && activePlan.targetFps > 0 && stats.targetFps != activePlan.targetFps) {
             stats.copy(targetFps = activePlan.targetFps)

@@ -137,16 +137,20 @@ object FpsBoosterPlanner {
         var multipleNote: String? = null
         if (settings.style == BoosterStyle.MULTIPLE) {
             if (settings.mode == BoosterMode.AUTO && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
-            multipleOptions = MultipleMode.options(source.fps, caps.panelRates, ceiling)
+            val nominalFps = SourceRate.snap(source.fps)
+            multipleOptions = MultipleMode.options(nominalFps, caps.panelRates, ceiling)
             if (multipleOptions.isEmpty()) {
                 multipleNote = if (source.fps <= 0f) "Multiple: the video's frame rate is not known yet, using Generate"
-                else String.format(Locale.US, "Multiple: no whole multiple of %.1f FPS fits this display evenly, using Generate", source.fps)
+                else String.format(
+                    Locale.US,
+                    "Multiple: no whole multiple of %.1f FPS fits this display evenly (24 and 30 FPS videos do), using Generate", nominalFps
+                )
             } else {
                 val want = settings.multiple
                 val exact = if (want > 0) multipleOptions.firstOrNull { it.n == want } else null
                 multiplePick = exact ?: multipleOptions.last()
                 if (want > 0 && exact == null) {
-                    multipleNote = String.format(Locale.US, "%dx of %.1f FPS does not fit this display evenly, using %dx", want, source.fps, multiplePick.n)
+                    multipleNote = String.format(Locale.US, "%dx of %.1f FPS does not fit this display evenly, using %dx", want, nominalFps, multiplePick.n)
                 }
             }
         }
@@ -158,7 +162,7 @@ object FpsBoosterPlanner {
             // Auto starts at the lowest multiple and may climb; a manual choice starts at it and may only step down.
             wanted = if (settings.mode == BoosterMode.AUTO) multipleOptions.first().targetFps else pickedMultiple.targetFps
             note = multipleNote ?: engineNote ?: String.format(
-                Locale.US, "Multiple: %dx of %.1f FPS = %d FPS", pickedMultiple.n, source.fps, pickedMultiple.targetFps
+                Locale.US, "Multiple: %dx of %.1f FPS = %d FPS", pickedMultiple.n, SourceRate.snap(source.fps), pickedMultiple.targetFps
             )
         } else if (settings.mode == BoosterMode.AUTO) {
             if (source.fps > 0f && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
