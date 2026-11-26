@@ -103,7 +103,11 @@ data class FpsBoosterSettings(
      * with this on the player's clock is moved by the same amount (see [com.beatraxus.app.engine.AutoDelayRamp]).
      * On by default; the user's own audio delay stays on top of it.
      */
-    val avSync: Boolean = true
+    val avSync: Boolean = true,
+    /** [BoosterStyle.GENERATE]: any target rate (the original behaviour). [BoosterStyle.MULTIPLE]: a whole multiple of the video's rate, phase-locked. */
+    val style: BoosterStyle = BoosterStyle.GENERATE,
+    /** Multiple style: the multiplier (2..5) the user picked, 0 = the highest one the display shows evenly. */
+    val multiple: Int = 0
 ) {
     val isOn: Boolean get() = mode != BoosterMode.OFF
 
@@ -111,7 +115,8 @@ data class FpsBoosterSettings(
         /** Builds settings from raw stored values; unknown / missing / corrupt values fall back to defaults. */
         fun fromStored(
             mode: String?, targetFps: Int?, engine: String?, quality: String?,
-            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null, avSync: Boolean? = null
+            adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null, avSync: Boolean? = null,
+            style: String? = null, multiple: Int? = null
         ) = FpsBoosterSettings(
             mode = BoosterMode.fromName(mode),
             targetFps = BoosterTargets.sanitize(targetFps ?: BoosterTargets.DEFAULT),
@@ -121,7 +126,9 @@ data class FpsBoosterSettings(
             batterySaver = batterySaver ?: false,
             showStats = showStats ?: true,
             aiFusion = aiFusion ?: false,
-            avSync = avSync ?: true
+            avSync = avSync ?: true,
+            style = BoosterStyle.fromName(style),
+            multiple = (multiple ?: 0).let { if (it in MultipleMode.MIN_N..MultipleMode.MAX_N) it else 0 }
         )
 
         /**
@@ -157,6 +164,8 @@ object FpsBoosterPrefs {
     const val SHOW_STATS = "fpsb_stats"
     const val AI_FUSION = "fpsb_ai_fusion"
     const val AV_SYNC = "fpsb_av_sync"
+    const val STYLE = "fpsb_style"
+    const val MULTIPLE = "fpsb_multiple"
     const val MIGRATED = "fpsb_migrated_v1"
     const val BENCH = "fpsb_bench"
     const val BENCH_SKIPPED = "fpsb_bench_skipped"

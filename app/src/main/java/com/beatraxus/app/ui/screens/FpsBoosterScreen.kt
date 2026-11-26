@@ -30,6 +30,8 @@ import com.beatraxus.app.fpsbooster.BenchmarkState
 import com.beatraxus.app.fpsbooster.BoosterEngine
 import com.beatraxus.app.fpsbooster.AiFusionVerdict
 import com.beatraxus.app.fpsbooster.BoosterMode
+import com.beatraxus.app.fpsbooster.BoosterStyle
+import com.beatraxus.app.fpsbooster.MultipleMode
 import com.beatraxus.app.fpsbooster.BoosterQuality
 import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterTargets
@@ -105,6 +107,19 @@ fun FpsBoosterSheetContent(
             )
         }
 
+        SectionLabel("Method")
+        ChipRow {
+            BoosterStyle.entries.forEach { st ->
+                Chip(st.label, s.style == st) { onSettingsChange(s.copy(style = st)) }
+            }
+        }
+        Hint(
+            if (s.style == BoosterStyle.MULTIPLE)
+                "Multiple: the output is a whole multiple of the video's frame rate (24 FPS x5 = 120 FPS on a 120 Hz display). Real frames stay untouched and every new frame sits at the same distance between two real ones, with a little more delay: the steadiest look. If no whole multiple fits the display (25 FPS on 60 / 90 / 120 Hz), Generate is used and you are told."
+            else
+                "Generate: any target frame rate you choose (24 FPS to 60 FPS, etc.). Every output frame is generated at its own point in time."
+        )
+
         SectionLabel("FPS Booster")
         ChipRow {
             BoosterMode.entries.forEach { m ->
@@ -112,6 +127,22 @@ fun FpsBoosterSheetContent(
             }
         }
 
+        if (s.style == BoosterStyle.MULTIPLE) {
+            SectionLabel("Multiple")
+            ChipRow {
+                Chip("Auto", s.multiple == 0 || s.mode == BoosterMode.AUTO, enabled = s.mode != BoosterMode.AUTO) { onSettingsChange(s.copy(multiple = 0)) }
+                (MultipleMode.MIN_N..MultipleMode.MAX_N).forEach { n ->
+                    Chip("${n}x", s.multiple == n && s.mode != BoosterMode.AUTO, enabled = s.mode != BoosterMode.AUTO) {
+                        onSettingsChange(s.copy(multiple = n))
+                    }
+                }
+            }
+            Hint(
+                if (s.mode == BoosterMode.AUTO) "Auto picks the lowest whole multiple the display shows evenly and climbs only while the phone keeps up."
+                else "Auto uses the highest whole multiple the display shows evenly. Your display runs at " +
+                    "${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz; a multiple that does not fit it falls back to the next one."
+            )
+        } else {
         SectionLabel("Target FPS")
         ChipRow {
             BoosterTargets.ALL.forEach { fps ->
@@ -127,6 +158,7 @@ fun FpsBoosterSheetContent(
                 "Only targets it can show evenly are selectable: a target must divide one of these rates into whole frames " +
                 "(45 and 90 need a 90 Hz mode), otherwise motion judders."
         )
+        }
 
         SectionLabel("Engine")
         ChipRow {

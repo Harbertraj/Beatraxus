@@ -30,7 +30,9 @@ data class BoosterPlan(
      */
     val candidates: List<Int> = listOf(targetFps),
     /** True in Auto mode: the highest candidate is the ceiling the governor may climb to. */
-    val auto: Boolean = false
+    val auto: Boolean = false,
+    /** Multiple style: the output is a whole multiple of the video's rate and is phase-locked to it (see [PhaseLock]). */
+    val phaseLock: Boolean = false
 ) {
     /** The highest target this plan allows (the user's choice in manual mode). */
     val ceilingFps: Int get() = maxOf(candidates.maxOrNull() ?: 0, targetFps)
@@ -128,9 +130,37 @@ object FpsBoosterPlanner {
             ceiling = 60
         }
 
+        // Multiple style: a whole multiple of the video's rate that the panel shows evenly, phase-locked to the source (see
+        // [MultipleMode]). When none fits (25 FPS on a 60 / 90 / 120 Hz panel) it says so and the normal Generate rules apply.
+        var multipleOptions: List<MultipleOption> = emptyList()
+        var multiplePick: MultipleOption? = null
+        var multipleNote: String? = null
+        if (settings.style == BoosterStyle.MULTIPLE) {
+            if (settings.mode == BoosterMode.AUTO && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
+            multipleOptions = MultipleMode.options(source.fps, caps.panelRates, ceiling)
+            if (multipleOptions.isEmpty()) {
+                multipleNote = if (source.fps <= 0f) "Multiple: the video's frame rate is not known yet, using Generate"
+                else String.format(Locale.US, "Multiple: no whole multiple of %.1f FPS fits this display evenly, using Generate", source.fps)
+            } else {
+                val want = settings.multiple
+                val exact = if (want > 0) multipleOptions.firstOrNull { it.n == want } else null
+                multiplePick = exact ?: multipleOptions.last()
+                if (want > 0 && exact == null) {
+                    multipleNote = String.format(Locale.US, "%dx of %.1f FPS does not fit this display evenly, using %dx", want, source.fps, multiplePick.n)
+                }
+            }
+        }
+
         val wanted: Int
         var note: String? = engineNote
-        if (settings.mode == BoosterMode.AUTO) {
+        val pickedMultiple = multiplePick
+        if (pickedMultiple != null) {
+            // Auto starts at the lowest multiple and may climb; a manual choice starts at it and may only step down.
+            wanted = if (settings.mode == BoosterMode.AUTO) multipleOptions.first().targetFps else pickedMultiple.targetFps
+            note = multipleNote ?: engineNote ?: String.format(
+                Locale.US, "Multiple: %dx of %.1f FPS = %d FPS", pickedMultiple.n, source.fps, pickedMultiple.targetFps
+            )
+        } else if (settings.mode == BoosterMode.AUTO) {
             if (source.fps > 0f && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
             val floor = if (source.fps > 0f) source.fps * 1.2f else 0f
             val pick = listOf(60, 30).filter { it <= ceiling && it > floor && usable(caps, it) }.firstOrNull()
@@ -186,6 +216,11 @@ object FpsBoosterPlanner {
         // saver: 60), starting at [wanted] (60 where possible) and climbing only when the device proves it can. Manual: up to the
         // user's own choice, which is the ceiling; it can still step DOWN when the device cannot sustain it.
         val auto = settings.mode == BoosterMode.AUTO
+        if (pickedMultiple != null) {
+            val list = multipleOptions.map { it.targetFps }.filter { it <= (if (auto) ceiling else pickedMultiple.targetFps) }
+            return BoosterPlan(true, wanted, engine, quality, note, (list + wanted).distinct().sorted(), auto, phaseLock = true)
+        }
+        if (multipleNote != null && note == null) note = multipleNote
         val candidates = (TargetGovernor.candidates(if (auto) ceiling else wanted, caps.panelRates, source.fps, auto) + wanted)
             .distinct().sorted()
         return BoosterPlan(true, wanted, engine, quality, note, candidates, auto)

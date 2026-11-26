@@ -124,6 +124,9 @@ class OpticalFlowRenderer(
 
     @Volatile private var released = false
     @Volatile private var targetFps = 60
+    /** Multiple style: the output is a whole multiple of the source rate and is locked to the source frame grid (see [PhaseLock]). */
+    @Volatile private var phaseLockOn = false
+    private val phaseLock = PhaseLock()
     @Volatile private var level: QualityLevel = AdaptiveQualityController.LADDER[1]
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
@@ -300,6 +303,8 @@ class OpticalFlowRenderer(
     }
 
     fun setTargetFps(fps: Int) { targetFps = fps.coerceIn(1, 240) }
+
+    fun setPhaseLock(on: Boolean) { phaseLockOn = on }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
         this.brightness = brightness
@@ -1053,7 +1058,8 @@ class OpticalFlowRenderer(
             estB = null
         }
 
-        val ticksAvail = max(1, ((0.5 * frameIntervalNs) / vsyncPeriodNs).toInt())
+        // Multiple style holds the picture back a little longer, so the analysis may be spread over more vsyncs (lighter slices).
+        val ticksAvail = max(1, (((if (phaseLockOn) 0.75 else 0.5) * frameIntervalNs) / vsyncPeriodNs).toInt())
         estPerTick = max(1, kotlin.math.ceil(estSteps.size.toDouble() / ticksAvail).toInt())
         estIdx = 0
         pumpEstimate()
@@ -1097,9 +1103,21 @@ class OpticalFlowRenderer(
         var shedThisFrame = false
         if (queue.size >= 2 && wantsInterpolation()) {
             hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs, estimateLatency.smoothedNs)
+            // Multiple style: whole multiple of the source -> a little more hold (time for each estimate) and the content time
+            // is nudged onto the source grid, so generated frames sit at fixed positions between two real frames.
+            val sourceFpsNow = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
+            val lockN = if (phaseLockOn) MultipleMode.phaseCount(cadence.effectiveTarget(targetFps), sourceFpsNow) else 0
+            if (lockN >= MultipleMode.MIN_N) hold += MultipleMode.extraHoldNs(frameIntervalNs) - phaseLock.offsetNs
+            else if (phaseLock.offsetNs != 0L) phaseLock.reset()
             val content = FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold)
             val pick = FrameSelection.pick(queue.size, { queue[it].tsNs }, content)
             a = queue[pick.a]; b = queue[pick.b]; alpha = pick.alpha
+            if (lockN >= MultipleMode.MIN_N && pick.a != pick.b) {
+                val snapped = phaseLock.lock(alpha, lockN, frameIntervalNs)
+                alpha = snapped
+                // On the grid at 0 / 1 the real frame itself is shown: no warp, no generated frame.
+                if (snapped <= 0f) { b = a; alpha = 1f } else if (snapped >= 1f) { a = b; alpha = 1f }
+            }
             // frames older than the pair are no longer needed
             var i = 0
             while (i < pick.a && queue.isNotEmpty()) {

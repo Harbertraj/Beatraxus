@@ -107,6 +107,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
         renderer?.setTargetFps(fps)
         rifeRenderer?.setTargetFps(fps)
         hybridRenderer?.setTargetFps(fps)
+        renderer?.setPhaseLock(plan?.phaseLock == true)   // Multiple style (the Optical flow presenter)
         applyDisplayMode()
     }
 
@@ -260,6 +261,7 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 }, context.applicationContext)
                 renderer = created
                 created.setTargetFps(effectiveTarget(p))
+                created.setPhaseLock(p.phaseLock)
                 manager?.let { created.setLevel(it.initialLevel) }
                 created.setColorGrade(brightness, contrast, saturation)
                 created.setColorTune(hue, temperature)

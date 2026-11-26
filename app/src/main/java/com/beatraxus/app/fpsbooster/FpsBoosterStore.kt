@@ -30,7 +30,9 @@ object FpsBoosterStore {
             batterySaver = if (prefs.contains(FpsBoosterPrefs.BATTERY)) prefs.getBoolean(FpsBoosterPrefs.BATTERY, false) else null,
             showStats = if (prefs.contains(FpsBoosterPrefs.SHOW_STATS)) prefs.getBoolean(FpsBoosterPrefs.SHOW_STATS, true) else null,
             aiFusion = if (prefs.contains(FpsBoosterPrefs.AI_FUSION)) prefs.getBoolean(FpsBoosterPrefs.AI_FUSION, false) else null,
-            avSync = if (prefs.contains(FpsBoosterPrefs.AV_SYNC)) prefs.getBoolean(FpsBoosterPrefs.AV_SYNC, true) else null
+            avSync = if (prefs.contains(FpsBoosterPrefs.AV_SYNC)) prefs.getBoolean(FpsBoosterPrefs.AV_SYNC, true) else null,
+            style = prefs.getString(FpsBoosterPrefs.STYLE, null),
+            multiple = if (prefs.contains(FpsBoosterPrefs.MULTIPLE)) prefs.getInt(FpsBoosterPrefs.MULTIPLE, 0) else null
         )
     }
 
@@ -45,6 +47,8 @@ object FpsBoosterStore {
             .putBoolean(FpsBoosterPrefs.SHOW_STATS, s.showStats)
             .putBoolean(FpsBoosterPrefs.AI_FUSION, s.aiFusion)
             .putBoolean(FpsBoosterPrefs.AV_SYNC, s.avSync)
+            .putString(FpsBoosterPrefs.STYLE, s.style.name)
+            .putInt(FpsBoosterPrefs.MULTIPLE, s.multiple)
             .apply()
     }
 

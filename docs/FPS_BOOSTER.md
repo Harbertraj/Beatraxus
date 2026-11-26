@@ -876,3 +876,22 @@ Known limits (unchanged by this patch):
 * Lowering the target gives the quality ladder back up to 2 rungs at once; raising it keeps the rung until it has proven itself.
 * The statistics show the running target, what was requested, and why they differ. Not governed: the Classic engine's own
   surface view, which has no run-time manager.
+
+## Method: Generate / Multiple
+
+A toggle at the top of the FPS Booster sheet picks how the output rate is chosen.
+
+* **Generate** (default, unchanged): any target (30 / 45 / 60 / 90 / 120). Every output frame is generated at its own point in time,
+  so 24 -> 60 (2.5x) has a different distance to the nearest real frame from one output frame to the next.
+* **Multiple** (video-player style): the output is a WHOLE multiple of the video's rate that the panel shows evenly
+  (`MultipleMode.options`): 24 FPS x5 = 120 on a 120 Hz panel; 30 FPS x2 / x3 / x4 = 60 / 90 / 120 on a 90 Hz-capable panel.
+  The user picks 2x..5x or Auto (the highest that fits; in Auto booster mode the lowest, climbing only while the phone keeps up).
+  * `PhaseLock` slides the presenter's content time onto the source frame grid (circular-mean phase servo, slew-limited, bounded to
+    one grid step) and snaps each output to k/n between two real frames; positions 0 / 1 show the real frame untouched. Every
+    generated frame therefore has the same, small motion step.
+  * A quarter of a source interval of extra hold (`MultipleMode.EXTRA_HOLD_SHARE`) and a 0.75 (instead of 0.5) interval analysis
+    window give each motion estimate more time, so fewer pairs fall back to real frames. The extra delay is reported to the A/V sync
+    like the normal hold. The 4-slot frame queue limits how much more hold is safe.
+  * When no whole multiple fits (25 FPS on 60 / 90 / 120 Hz: 25 x 4.8 = 120) the plan says so and the Generate rules apply.
+* Only the Optical flow presenter phase-locks; RIFE / Hybrid / Classic keep their own timing and ignore the toggle.
+* Not measured on a device: the extra hold and the servo constants (`PhaseLock.AVERAGE / SLEW / WARMUP`) are starting values.
