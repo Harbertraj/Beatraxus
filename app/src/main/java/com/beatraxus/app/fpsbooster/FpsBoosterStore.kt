@@ -32,7 +32,10 @@ object FpsBoosterStore {
             aiFusion = if (prefs.contains(FpsBoosterPrefs.AI_FUSION)) prefs.getBoolean(FpsBoosterPrefs.AI_FUSION, false) else null,
             avSync = if (prefs.contains(FpsBoosterPrefs.AV_SYNC)) prefs.getBoolean(FpsBoosterPrefs.AV_SYNC, true) else null,
             style = prefs.getString(FpsBoosterPrefs.STYLE, null),
-            multiple = if (prefs.contains(FpsBoosterPrefs.MULTIPLE)) prefs.getInt(FpsBoosterPrefs.MULTIPLE, 0) else null
+            // The legacy fpsb_multiple (whole multiplier 2..5) is intentionally not read: without the video it cannot be turned
+            // into a target, and an old 2 must not become "2 FPS". It means Auto (the highest target that fits), which is
+            // what a whole multiplier of 0 / the highest one already was for most users.
+            multipleTarget = if (prefs.contains(FpsBoosterPrefs.MULTIPLE_TARGET)) prefs.getInt(FpsBoosterPrefs.MULTIPLE_TARGET, 0) else null
         )
     }
 
@@ -48,7 +51,8 @@ object FpsBoosterStore {
             .putBoolean(FpsBoosterPrefs.AI_FUSION, s.aiFusion)
             .putBoolean(FpsBoosterPrefs.AV_SYNC, s.avSync)
             .putString(FpsBoosterPrefs.STYLE, s.style.name)
-            .putInt(FpsBoosterPrefs.MULTIPLE, s.multiple)
+            .putInt(FpsBoosterPrefs.MULTIPLE_TARGET, s.multipleTarget)
+            .remove(FpsBoosterPrefs.MULTIPLE)
             .apply()
     }
 

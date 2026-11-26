@@ -69,6 +69,9 @@ object BoosterTargets {
     const val DEFAULT = 60
     fun sanitize(fps: Int): Int = if (fps in ALL) fps else DEFAULT
 
+    /** A stored Multiple target: one of [ALL], else 0 (Auto). Corrupt or missing values mean Auto. */
+    fun sanitizeMultiple(fps: Int?): Int = if (fps != null && fps in ALL) fps else 0
+
     /**
      * The highest target the panel shows evenly (see [com.beatraxus.app.motionboost.MotionBoostTiming.isCleanRate]): 120 on a
      * 120 Hz panel, 60 on 60 / 90 Hz (90 Hz shows 90 and 45 evenly too, so 90), 30 as the last resort. Used as the first
@@ -104,10 +107,10 @@ data class FpsBoosterSettings(
      * On by default; the user's own audio delay stays on top of it.
      */
     val avSync: Boolean = true,
-    /** [BoosterStyle.GENERATE]: any target rate (the original behaviour). [BoosterStyle.MULTIPLE]: a whole multiple of the video's rate, phase-locked. */
+    /** [BoosterStyle.GENERATE]: any target rate (the original behaviour). [BoosterStyle.MULTIPLE]: target / source times the video's rate (whole or fractional), phase-aligned. */
     val style: BoosterStyle = BoosterStyle.GENERATE,
-    /** Multiple style: the multiplier (2..5) the user picked, 0 = the highest one the display shows evenly. */
-    val multiple: Int = 0
+    /** Multiple style: the TARGET FPS the user picked (one of [BoosterTargets.ALL]); 0 = Auto, the highest one the display and the device sustain. */
+    val multipleTarget: Int = 0
 ) {
     val isOn: Boolean get() = mode != BoosterMode.OFF
 
@@ -116,7 +119,7 @@ data class FpsBoosterSettings(
         fun fromStored(
             mode: String?, targetFps: Int?, engine: String?, quality: String?,
             adaptive: Boolean?, batterySaver: Boolean?, showStats: Boolean?, aiFusion: Boolean? = null, avSync: Boolean? = null,
-            style: String? = null, multiple: Int? = null
+            style: String? = null, multipleTarget: Int? = null
         ) = FpsBoosterSettings(
             mode = BoosterMode.fromName(mode),
             targetFps = BoosterTargets.sanitize(targetFps ?: BoosterTargets.DEFAULT),
@@ -128,7 +131,7 @@ data class FpsBoosterSettings(
             aiFusion = aiFusion ?: false,
             avSync = avSync ?: true,
             style = BoosterStyle.fromName(style),
-            multiple = (multiple ?: 0).let { if (it in MultipleMode.MIN_N..MultipleMode.MAX_N) it else 0 }
+            multipleTarget = BoosterTargets.sanitizeMultiple(multipleTarget)
         )
 
         /**
@@ -165,7 +168,13 @@ object FpsBoosterPrefs {
     const val AI_FUSION = "fpsb_ai_fusion"
     const val AV_SYNC = "fpsb_av_sync"
     const val STYLE = "fpsb_style"
+    /**
+     * LEGACY (never read as a target): before the fractional Multiple mode this held the whole multiplier (2, 3, 4 or 5). It is
+     * dropped on the first save; [MULTIPLE_TARGET] replaces it. An old 2 must never become "2 FPS".
+     */
     const val MULTIPLE = "fpsb_multiple"
+    /** Multiple style: the target FPS (30 / 45 / 60 / 90 / 120), 0 = Auto. */
+    const val MULTIPLE_TARGET = "fpsb_multiple_target"
     const val MIGRATED = "fpsb_migrated_v1"
     const val BENCH = "fpsb_bench"
     const val BENCH_SKIPPED = "fpsb_bench_skipped"

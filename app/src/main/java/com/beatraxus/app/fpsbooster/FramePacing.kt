@@ -38,11 +38,14 @@ object FramePacing {
      */
     fun schedule(sourceTsNs: LongArray, targetFps: Int): List<OutputFrame> {
         if (sourceTsNs.size < 2) return emptyList()
-        val step = intervalNs(targetFps)
         val out = ArrayList<OutputFrame>()
-        var t = sourceTsNs.first()
+        val anchor = sourceTsNs.first()
         val end = sourceTsNs.last()
         var i = 0
+        var k = 0L
+        // Output k is anchor + k / target, computed from k each time: adding a rounded step every frame would drift by
+        // (rounding error x frames), which is audible as a creeping phase against the source after a few minutes.
+        var t = anchor
         while (t < end) {
             while (i + 2 < sourceTsNs.size && sourceTsNs[i + 1] <= t) i++
             val a = sourceTsNs[i]
@@ -50,7 +53,7 @@ object FramePacing {
             val continuous = MotionBoostTiming.isContinuous(a, b)
             val alpha = if (continuous) MotionBoostTiming.alpha(t, a, b) else 0f
             out += OutputFrame(i, alpha, t, continuous)
-            t += step
+            t = MultipleMode.outputTimeNs(anchor, ++k, targetFps)
         }
         return out
     }

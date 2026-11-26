@@ -883,15 +883,28 @@ A toggle at the top of the FPS Booster sheet picks how the output rate is chosen
 
 * **Generate** (default, unchanged): any target (30 / 45 / 60 / 90 / 120). Every output frame is generated at its own point in time,
   so 24 -> 60 (2.5x) has a different distance to the nearest real frame from one output frame to the next.
-* **Multiple** (video-player style): the output is a WHOLE multiple of the video's rate that the panel shows evenly
-  (`MultipleMode.options`): 24 FPS x5 = 120 on a 120 Hz panel; 30 FPS x2 / x3 / x4 = 60 / 90 / 120 on a 90 Hz-capable panel.
-  The user picks 2x..5x or Auto (the highest that fits; in Auto booster mode the lowest, climbing only while the phone keeps up).
-  * `PhaseLock` slides the presenter's content time onto the source frame grid (circular-mean phase servo, slew-limited, bounded to
-    one grid step) and snaps each output to k/n between two real frames; positions 0 / 1 show the real frame untouched. Every
-    generated frame therefore has the same, small motion step.
+* **Multiple** (video-player style): the user picks a TARGET FPS (Auto / 30 / 45 / 60 / 90 / 120) and the multiplier is
+  `target / source`, computed from the video's current rate and shown next to each target (25 FPS: 60 FPS · 2.4x, 90 FPS · 3.6x,
+  120 FPS · 4.8x; 24 FPS: 2.5x / 3.75x / 5x). The multiplier may be fractional. `MultipleMode.options` enables only targets the panel
+  shows evenly (`MotionBoostTiming.isCleanRate`), that are at least 1.2x the source and within the battery-saver ceiling.
+  Auto = the highest enabled target; `TargetGovernor` / `AdaptiveQualityController` lower it when the device cannot sustain it and
+  raise it again gradually (no second controller).
+  * Output frames are evenly spaced (whole vsyncs, `CadenceGovernor`; reference timeline `MultipleMode.outputTimeNs` = anchor + k / target
+    computed from k, so no drift). Each output is placed by its EXACT timestamp between two real frames (`FrameSelection`), so at
+    25 -> 60 a source interval holds two or three outputs (3,2,3,2,2 per 5 frames) and never a forced equal count. VFR content is
+    placed by its own timestamps.
+  * `PhaseLock` is a servo only: it measures the mean phase error modulo 1/p (ratio p : q in lowest terms, `MultipleMode.ratio`; 25 -> 60 is
+    12 : 5) with a circular mean and slides the content time by it (slew-limited, bounded to one grid step), so output frames coincide with
+    real frames where the two clocks meet (`place` then shows the real frame untouched, alpha 0 / 1). Whole ratios (q = 1) still snap to
+    k/p as before; fractional ratios are NOT snapped. A frame that is already a vsync late is placed but does not steer the servo.
+    The servo is reset on a seek / restart / new clip, a new source rate, a new target and a refresh-rate change (target change).
   * A quarter of a source interval of extra hold (`MultipleMode.EXTRA_HOLD_SHARE`) and a 0.75 (instead of 0.5) interval analysis
     window give each motion estimate more time, so fewer pairs fall back to real frames. The extra delay is reported to the A/V sync
     like the normal hold. The 4-slot frame queue limits how much more hold is safe.
-  * When no whole multiple fits (25 FPS on 60 / 90 / 120 Hz: 25 x 4.8 = 120) the plan says so and the Generate rules apply.
+  * Late / unavailable interpolation uses the existing safe paths: a shed or flow-less pair shows the nearest real frame (never counted
+    as generated).
+  * Only when the source rate is unknown, or no target above it fits, the plan says so and the Generate rules apply.
+  * Settings: `fpsb_multiple_target` (0 = Auto). The old `fpsb_multiple` (whole multiplier 2..5) is not read as a target (an old 2 must not become
+    "2 FPS"); it means Auto and the key is removed on the next save. All other settings are kept.
 * Only the Optical flow presenter phase-locks; RIFE / Hybrid / Classic keep their own timing and ignore the toggle.
-* Not measured on a device: the extra hold and the servo constants (`PhaseLock.AVERAGE / SLEW / WARMUP`) are starting values.
+* No device can be promised to sustain every target: the governor decides at run time. Not measured on a device: the extra hold and the servo constants (`PhaseLock.AVERAGE / SLEW / WARMUP`) are starting values.

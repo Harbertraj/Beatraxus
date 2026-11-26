@@ -32,6 +32,7 @@ import com.beatraxus.app.fpsbooster.AiFusionVerdict
 import com.beatraxus.app.fpsbooster.BoosterMode
 import com.beatraxus.app.fpsbooster.BoosterStyle
 import com.beatraxus.app.fpsbooster.MultipleMode
+import com.beatraxus.app.fpsbooster.SourceRate
 import com.beatraxus.app.fpsbooster.BoosterQuality
 import com.beatraxus.app.fpsbooster.BoosterRecommender
 import com.beatraxus.app.fpsbooster.BoosterTargets
@@ -115,7 +116,7 @@ fun FpsBoosterSheetContent(
         }
         Hint(
             if (s.style == BoosterStyle.MULTIPLE)
-                "Multiple: the output is a whole multiple of the video's frame rate (24 FPS x5 = 120 FPS on a 120 Hz display). Real frames stay untouched and every new frame sits at the same distance between two real ones, with a little more delay: the steadiest look. If no whole multiple fits the display (25 FPS on 60 / 90 / 120 Hz), Generate is used and you are told."
+                "Multiple: you pick the output rate and the app shows the exact multiplier for this video (24 FPS to 60 FPS is 2.50x, 25 FPS to 120 FPS is 4.80x). Output frames are evenly spaced in time and each new frame is placed by its exact time between two real ones; real frames stay untouched where the two clocks meet. A little more delay, the steadiest look. If the video is unknown or already at the target, Generate is used and you are told."
             else
                 "Generate: any target frame rate you choose (24 FPS to 60 FPS, etc.). Every output frame is generated at its own point in time."
         )
@@ -129,18 +130,32 @@ fun FpsBoosterSheetContent(
 
         if (s.style == BoosterStyle.MULTIPLE) {
             SectionLabel("Multiple")
+            // Multipliers are computed here from the video's CURRENT rate on every recomposition (never remembered), so a new
+            // video or a measured rate can never leave a stale "2.40x" next to a target.
+            val nominalFps = SourceRate.snap(uiState.sourceFps)
+            val ceiling = if (s.batterySaver) 60 else BoosterTargets.ALL.max()
+            val options = MultipleMode.options(nominalFps, panelRates, ceiling)
+            val auto = s.mode == BoosterMode.AUTO || s.multipleTarget == 0
             ChipRow {
-                Chip("Auto", s.multiple == 0 || s.mode == BoosterMode.AUTO, enabled = s.mode != BoosterMode.AUTO) { onSettingsChange(s.copy(multiple = 0)) }
-                (MultipleMode.MIN_N..MultipleMode.MAX_N).forEach { n ->
-                    Chip("${n}x", s.multiple == n && s.mode != BoosterMode.AUTO, enabled = s.mode != BoosterMode.AUTO) {
-                        onSettingsChange(s.copy(multiple = n))
-                    }
+                Chip("Auto", auto, enabled = s.mode != BoosterMode.AUTO) { onSettingsChange(s.copy(multipleTarget = 0)) }
+                BoosterTargets.ALL.forEach { fps ->
+                    val option = options.firstOrNull { it.targetFps == fps }
+                    Chip(
+                        option?.label ?: "$fps FPS",
+                        !auto && s.multipleTarget == fps,
+                        enabled = option != null && s.mode != BoosterMode.AUTO
+                    ) { onSettingsChange(s.copy(multipleTarget = fps)) }
                 }
             }
             Hint(
-                if (s.mode == BoosterMode.AUTO) "Auto picks the lowest whole multiple the display shows evenly and climbs only while the phone keeps up."
-                else "Auto uses the highest whole multiple the display shows evenly. Your display runs at " +
-                    "${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz; a multiple that does not fit it falls back to the next one."
+                when {
+                    nominalFps <= 0f -> "The video's frame rate is not known yet: the multipliers appear as soon as it is."
+                    options.isEmpty() -> "No target above this video's ${"%.3g".format(nominalFps)} FPS fits the display (${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz) evenly."
+                    s.mode == BoosterMode.AUTO || s.multipleTarget == 0 ->
+                        "Auto picks the highest target the display shows evenly (${options.last().label}) and lowers it when the phone cannot keep up, then raises it again gradually."
+                    else -> "Output frames are spaced evenly and placed by exact time between real frames, so 25 FPS to 60 FPS (2.40x) alternates 2 and 3 new frames per real one. " +
+                        "Your display runs at ${panelRates.map { it.toInt() }.distinct().sorted().joinToString(" / ")} Hz; a target that does not fit it, or this video, is greyed out. The phone may still not sustain every target."
+                }
             )
         } else {
         SectionLabel("Target FPS")

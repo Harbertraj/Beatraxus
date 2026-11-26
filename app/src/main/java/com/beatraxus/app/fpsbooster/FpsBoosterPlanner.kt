@@ -31,7 +31,7 @@ data class BoosterPlan(
     val candidates: List<Int> = listOf(targetFps),
     /** True in Auto mode: the highest candidate is the ceiling the governor may climb to. */
     val auto: Boolean = false,
-    /** Multiple style: the output is a whole multiple of the video's rate and is phase-locked to it (see [PhaseLock]). */
+    /** Multiple style: the output is a (whole or fractional) multiple of the video's rate, aligned to it by timestamps (see [PhaseLock]). */
     val phaseLock: Boolean = false
 ) {
     /** The highest target this plan allows (the user's choice in manual mode). */
@@ -130,11 +130,13 @@ object FpsBoosterPlanner {
             ceiling = 60
         }
 
-        // Multiple style: a whole multiple of the video's rate that the panel shows evenly, phase-locked to the source (see
-        // [MultipleMode]). When none fits (25 FPS on a 60 / 90 / 120 Hz panel) it says so and the normal Generate rules apply.
+        // Multiple style: the output is target / source times the video's rate (a whole or a FRACTIONAL multiple: 25 -> 60 is
+        // 2.4x) on a target the panel shows evenly, placed by exact timestamps (see [MultipleMode], [PhaseLock]). Only when the
+        // video's rate is unknown, or nothing fits (the source is already at the targets), does it say so and the Generate rules apply.
         var multipleOptions: List<MultipleOption> = emptyList()
         var multiplePick: MultipleOption? = null
         var multipleNote: String? = null
+        val multipleAuto = settings.style == BoosterStyle.MULTIPLE && (settings.mode == BoosterMode.AUTO || settings.multipleTarget == 0)
         if (settings.style == BoosterStyle.MULTIPLE) {
             if (settings.mode == BoosterMode.AUTO && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
             val nominalFps = SourceRate.snap(source.fps)
@@ -143,14 +145,21 @@ object FpsBoosterPlanner {
                 multipleNote = if (source.fps <= 0f) "Multiple: the video's frame rate is not known yet, using Generate"
                 else String.format(
                     Locale.US,
-                    "Multiple: no whole multiple of %.1f FPS fits this display evenly (24 and 30 FPS videos do), using Generate", nominalFps
+                    "Multiple: no target above %.1f FPS fits this display evenly, using Generate", nominalFps
                 )
+            } else if (multipleAuto) {
+                // Auto: the highest suitable target. The run-time governor lowers it when the device cannot sustain it and brings
+                // it back gradually (see [TargetGovernor]).
+                multiplePick = multipleOptions.last()
             } else {
-                val want = settings.multiple
-                val exact = if (want > 0) multipleOptions.firstOrNull { it.n == want } else null
-                multiplePick = exact ?: multipleOptions.last()
-                if (want > 0 && exact == null) {
-                    multipleNote = String.format(Locale.US, "%dx of %.1f FPS does not fit this display evenly, using %dx", want, nominalFps, multiplePick.n)
+                val want = settings.multipleTarget
+                val exact = multipleOptions.firstOrNull { it.targetFps == want }
+                multiplePick = exact ?: multipleOptions.lastOrNull { it.targetFps < want } ?: multipleOptions.first()
+                if (exact == null) {
+                    multipleNote = String.format(
+                        Locale.US, "%d FPS does not fit a %.1f FPS video on this display evenly, using %d FPS",
+                        want, nominalFps, multiplePick.targetFps
+                    )
                 }
             }
         }
@@ -159,10 +168,12 @@ object FpsBoosterPlanner {
         var note: String? = engineNote
         val pickedMultiple = multiplePick
         if (pickedMultiple != null) {
-            // Auto starts at the lowest multiple and may climb; a manual choice starts at it and may only step down.
-            wanted = if (settings.mode == BoosterMode.AUTO) multipleOptions.first().targetFps else pickedMultiple.targetFps
+            // Auto starts at the highest suitable target and steps down when the device cannot sustain it; a manual choice starts
+            // at it and may only step down (and recover up to it).
+            wanted = pickedMultiple.targetFps
             note = multipleNote ?: engineNote ?: String.format(
-                Locale.US, "Multiple: %dx of %.1f FPS = %d FPS", pickedMultiple.n, SourceRate.snap(source.fps), pickedMultiple.targetFps
+                Locale.US, "Multiple: %.1f FPS x %s = %d FPS", SourceRate.snap(source.fps),
+                MultipleMode.formatMultiplier(pickedMultiple.multiplier), pickedMultiple.targetFps
             )
         } else if (settings.mode == BoosterMode.AUTO) {
             if (source.fps > 0f && source.fps >= 45f) return BoosterPlan.inactive("Auto: video is already smooth")
@@ -221,8 +232,8 @@ object FpsBoosterPlanner {
         // user's own choice, which is the ceiling; it can still step DOWN when the device cannot sustain it.
         val auto = settings.mode == BoosterMode.AUTO
         if (pickedMultiple != null) {
-            val list = multipleOptions.map { it.targetFps }.filter { it <= (if (auto) ceiling else pickedMultiple.targetFps) }
-            return BoosterPlan(true, wanted, engine, quality, note, (list + wanted).distinct().sorted(), auto, phaseLock = true)
+            val list = multipleOptions.map { it.targetFps }.filter { it <= (if (multipleAuto) ceiling else pickedMultiple.targetFps) }
+            return BoosterPlan(true, wanted, engine, quality, note, (list + wanted).distinct().sorted(), multipleAuto, phaseLock = true)
         }
         if (multipleNote != null && note == null) note = multipleNote
         val candidates = (TargetGovernor.candidates(if (auto) ceiling else wanted, caps.panelRates, source.fps, auto) + wanted)

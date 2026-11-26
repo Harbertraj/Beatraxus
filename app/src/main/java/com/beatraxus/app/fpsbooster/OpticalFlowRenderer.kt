@@ -124,9 +124,15 @@ class OpticalFlowRenderer(
 
     @Volatile private var released = false
     @Volatile private var targetFps = 60
-    /** Multiple style: the output is a whole multiple of the source rate and is locked to the source frame grid (see [PhaseLock]). */
+    /** Multiple style: the output is a (whole or fractional) multiple of the source rate, aligned to the source frame grid by timestamps (see [PhaseLock]). */
     @Volatile private var phaseLockOn = false
     private val phaseLock = PhaseLock()
+    /** The (output : source) pattern the phase servo is currently locked to; a different one (new source rate, new target or display rate) resets the servo. */
+    /** Set from the main thread (target / mode changed); the render thread owns the servo, so it does the reset itself. */
+    @Volatile private var lockResetRequested = false
+    private var lockedRatio: FrameRatio? = null
+    private var lockedSourceFps = 0f
+    private var lockedTarget = 0
     @Volatile private var level: QualityLevel = AdaptiveQualityController.LADDER[1]
     @Volatile private var brightness = 0f
     @Volatile private var contrast = 1f
@@ -302,9 +308,16 @@ class OpticalFlowRenderer(
         handler.post { runGuarded("init failed") { initGl() } }
     }
 
-    fun setTargetFps(fps: Int) { targetFps = fps.coerceIn(1, 240) }
+    fun setTargetFps(fps: Int) {
+        val v = fps.coerceIn(1, 240)
+        if (v != targetFps) lockResetRequested = true   // new target (governor step / refresh-rate change): re-align on the render thread
+        targetFps = v
+    }
 
-    fun setPhaseLock(on: Boolean) { phaseLockOn = on }
+    fun setPhaseLock(on: Boolean) {
+        if (phaseLockOn != on) lockResetRequested = true
+        phaseLockOn = on
+    }
 
     fun setColorGrade(brightness: Float, contrast: Float, saturation: Float) {
         this.brightness = brightness
@@ -567,6 +580,8 @@ class OpticalFlowRenderer(
             midChain.clear(); deferredB = null
             holdCtl.reset()
             tsRegularizer.reset()
+            phaseLock.reset()          // seek / restart / new clip: the phase of the old timeline means nothing now
+            lockedTarget = 0           // (forces the pattern to be re-derived from the new timeline)
         }
         // The decoder releases frames on vsync, so the stamp is quantised to the panel grid (24 fps on 60 Hz
         // arrives as 33 / 50 ms steps). Evenly spaced source frames get evenly spaced stamps back.
@@ -604,6 +619,28 @@ class OpticalFlowRenderer(
                 beginEstimate(last!!, slot, now)
             }
         }
+    }
+
+    /**
+     * The output : source pattern for [outTarget] and the measured source interval, or null when none fits (then the frame is
+     * still placed by its exact timestamp, just without alignment). The measured rate is snapped to the nominal one (24.8 -> 25), and
+     * the servo is reset whenever the pattern, the target or the source rate changes, so stale phase never steers a new one.
+     * Cached: nothing is allocated per vsync unless the pattern really changed.
+     */
+    private fun lockRatio(outTarget: Int, intervalNs: Long): FrameRatio? {
+        if (intervalNs <= 0L) return null
+        if (lockResetRequested) { lockResetRequested = false; phaseLock.reset(); lockedTarget = 0 }
+        val srcFps = SourceRate.snap(1_000_000_000f / intervalNs)
+        // The smoothed interval wobbles by a few microseconds; only a change of the snapped rate or the target is a new situation.
+        // A rate that is not near a nominal one (variable frame rate content) still wobbles a little: only a real change re-locks.
+        if (outTarget == lockedTarget && lockedSourceFps > 0f &&
+            abs(srcFps - lockedSourceFps) <= lockedSourceFps * MultipleMode.RATIO_TOLERANCE) return lockedRatio
+        val r = MultipleMode.ratio(outTarget, srcFps)
+        phaseLock.reset()
+        lockedTarget = outTarget
+        lockedSourceFps = srcFps
+        lockedRatio = r
+        return r
     }
 
     private fun wantsInterpolation(): Boolean {
@@ -1059,7 +1096,7 @@ class OpticalFlowRenderer(
         }
 
         // Multiple style holds the picture back a little longer, so the analysis may be spread over more vsyncs (lighter slices).
-        val ticksAvail = max(1, (((if (phaseLockOn) 0.75 else 0.5) * frameIntervalNs) / vsyncPeriodNs).toInt())
+        val ticksAvail = max(1, (((if (phaseLockOn && lockedRatio != null) 0.75 else 0.5) * frameIntervalNs) / vsyncPeriodNs).toInt())
         estPerTick = max(1, kotlin.math.ceil(estSteps.size.toDouble() / ticksAvail).toInt())
         estIdx = 0
         pumpEstimate()
@@ -1103,20 +1140,23 @@ class OpticalFlowRenderer(
         var shedThisFrame = false
         if (queue.size >= 2 && wantsInterpolation()) {
             hold = holdCtl.update(frameIntervalNs, vsyncPeriodNs, estimateLatency.smoothedNs)
-            // Multiple style: whole multiple of the source -> a little more hold (time for each estimate) and the content time
-            // is nudged onto the source grid, so generated frames sit at fixed positions between two real frames.
-            val sourceFpsNow = if (frameIntervalNs > 0) 1_000_000_000f / frameIntervalNs else 0f
-            val lockN = if (phaseLockOn) MultipleMode.phaseCount(cadence.effectiveTarget(targetFps), sourceFpsNow) else 0
-            if (lockN >= MultipleMode.MIN_N) hold += MultipleMode.extraHoldNs(frameIntervalNs) - phaseLock.offsetNs
-            else if (phaseLock.offsetNs != 0L) phaseLock.reset()
+            // Multiple style: target / source is a whole OR fractional multiple. The output frames are already evenly spaced by the
+            // cadence (whole vsyncs), so what is left is where each one falls between two real frames: that is read from the exact
+            // timestamps (never rounded to an integer grid), and a slow servo shifts the content time so the output grid and the
+            // source grid line up (real frames are then shown untouched). A little more hold gives each estimate more time.
+            val outTarget = cadence.effectiveTarget(targetFps)
+            val ratio = if (phaseLockOn) lockRatio(outTarget, frameIntervalNs) else null
+            if (ratio != null) hold += MultipleMode.extraHoldNs(frameIntervalNs) - phaseLock.offsetNs
             val content = FramePacing.contentTimeNs(vsyncNs, vsyncPeriodNs, hold)
             val pick = FrameSelection.pick(queue.size, { queue[it].tsNs }, content)
             a = queue[pick.a]; b = queue[pick.b]; alpha = pick.alpha
-            if (lockN >= MultipleMode.MIN_N && pick.a != pick.b) {
-                val snapped = phaseLock.lock(alpha, lockN, frameIntervalNs)
-                alpha = snapped
+            if (ratio != null && pick.a != pick.b) {
+                // A frame that is already a vsync late sits at a displaced phase: it is placed, but must not steer the servo.
+                if (lateNowNs < vsyncPeriodNs) phaseLock.observe(alpha, ratio.outputs, frameIntervalNs)
+                val placed = PhaseLock.place(alpha, ratio)
+                alpha = placed
                 // On the grid at 0 / 1 the real frame itself is shown: no warp, no generated frame.
-                if (snapped <= 0f) { b = a; alpha = 1f } else if (snapped >= 1f) { a = b; alpha = 1f }
+                if (placed <= 0f) { b = a; alpha = 1f } else if (placed >= 1f) { a = b; alpha = 1f }
             }
             // frames older than the pair are no longer needed
             var i = 0
