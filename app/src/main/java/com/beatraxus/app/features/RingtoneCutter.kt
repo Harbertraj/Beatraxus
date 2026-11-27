@@ -97,11 +97,15 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sqrt
 import kotlin.random.Random
 
 /** Lengths offered as chips. "Full song" is always offered as well; chips longer than the song are hidden. */
 private val CUT_LENGTHS_SEC = listOf(15, 30, 40, 90)
+
+/** Shortest cut the user can drag the window down to. */
+private const val MIN_CUT_MS = 1000L
 
 /**
  * Ringtone cutter (Instagram audio-picker style): the whole song as a waveform, a window you drag to choose
@@ -137,6 +141,8 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
     var fade by remember { mutableStateOf(true) }
     var type by remember { mutableIntStateOf(RingtoneManager.TYPE_RINGTONE) }
     var busy by remember { mutableStateOf(false) }
+    var exporting by remember { mutableStateOf(false) }
+    var exportFormat by remember { mutableStateOf(ExportFormat.MP3) }
 
     var peaks by remember(song.id) { mutableStateOf<FloatArray?>(null) }
     var playerReady by remember(song.id) { mutableStateOf(false) }
@@ -227,6 +233,25 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
         }
     }
 
+    fun saveCopy() {
+        if (busy || totalMs <= 0L) return
+        busy = true
+        exporting = true
+        playing = false
+        scope.launch {
+            val from = if (isWhole) 0L else startMs
+            val len = if (isWhole) totalMs else lenMs
+            when (val r = RingtoneHelper.saveClip(context, song, from, len, fade, exportFormat)) {
+                is RingtoneHelper.SaveResult.Saved ->
+                    Toast.makeText(context, "Saved to Music/${RingtoneHelper.EXPORT_FOLDER}: ${r.fileName}", Toast.LENGTH_LONG).show()
+                is RingtoneHelper.SaveResult.Error ->
+                    Toast.makeText(context, r.message, Toast.LENGTH_LONG).show()
+            }
+            exporting = false
+            busy = false
+        }
+    }
+
     Dialog(
         onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
@@ -305,7 +330,12 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
                         lenMs = lenMs,
                         progress = if (playing) playPosMs.toFloat() / lenMs.toFloat() else -1f,
                         accent = accent,
-                        onStartChange = { startMs = it; userMoved = true; playPosMs = 0L }
+                        onRangeChange = { s, l ->
+                            startMs = s
+                            lenMs = l
+                            userMoved = true
+                            playPosMs = 0L
+                        }
                     )
                 } else {
                     Box(Modifier.fillMaxWidth().height(96.dp), contentAlignment = Alignment.Center) {
@@ -317,7 +347,7 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("0:00", color = TextMuted, fontSize = 12.sp)
                     Text(
-                        if (peaks == null) "Reading waveform…" else if (isWhole) "Full song selected" else "Drag to pick your part",
+                        if (peaks == null) "Reading waveform…" else if (isWhole) "Full song selected" else "Drag to move · pull edges to resize",
                         color = TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center
                     )
                     Text(formatMs(totalMs), color = TextMuted, fontSize = 12.sp)
@@ -402,14 +432,54 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
                     enabled = !busy && totalMs > 0L,
                     modifier = Modifier.fillMaxWidth().height(52.dp),
                     shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = onAccent)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = accent,
+                        contentColor = onAccent,
+                        disabledContainerColor = accent.copy(alpha = 0.6f),
+                        disabledContentColor = onAccent.copy(alpha = 0.7f)
+                    )
                 ) {
-                    if (busy) {
+                    if (busy && !exporting) {
                         CircularProgressIndicator(color = onAccent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Saving…", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    } else {
+                        Text("Set as ${typeLabel(type).lowercase()}", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                    }
+                }
+
+                Spacer(Modifier.height(24.dp))
+
+                Text("Save as", color = TextSecondary, fontSize = 12.sp)
+                Text("Keep this cut as an audio file in Music/${RingtoneHelper.EXPORT_FOLDER}", color = TextMuted, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ExportFormat.values().forEach { f ->
+                        LengthChip(f.label, selected = exportFormat == f) { if (!busy) exportFormat = f }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = { saveCopy() },
+                    enabled = !busy && totalMs > 0L,
+                    modifier = Modifier.fillMaxWidth().height(52.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = TextPrimary.copy(alpha = 0.10f),
+                        contentColor = TextPrimary,
+                        disabledContainerColor = TextPrimary.copy(alpha = 0.06f),
+                        disabledContentColor = TextPrimary.copy(alpha = 0.5f)
+                    )
+                ) {
+                    if (exporting) {
+                        CircularProgressIndicator(color = TextPrimary, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                         Spacer(Modifier.width(10.dp))
                         Text("Saving…", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     } else {
-                        Text("Set as ${typeLabel(type).lowercase()}", fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        Text("Save as ${exportFormat.label}", fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     }
                 }
                 Spacer(Modifier.height(8.dp))
@@ -467,7 +537,11 @@ private fun TypeSegment(
     }
 }
 
-/** Full-song waveform with a fixed-length window. Tap or drag anywhere to centre the window there. */
+/**
+ * Full-song waveform with a selection window.
+ * - Drag the left or right edge handle to set a custom length.
+ * - Tap or drag anywhere else to move the window (keeping its length).
+ */
 @Composable
 private fun CutterWaveform(
     peaks: FloatArray?,
@@ -476,9 +550,13 @@ private fun CutterWaveform(
     lenMs: Long,
     progress: Float,
     accent: Color,
-    onStartChange: (Long) -> Unit
+    onRangeChange: (startMs: Long, lenMs: Long) -> Unit
 ) {
-    val onChange by rememberUpdatedState(onStartChange)
+    val onChange by rememberUpdatedState(onRangeChange)
+    // The gesture below must not restart while the window is being resized, so it reads the
+    // latest window through these instead of using startMs/lenMs as pointerInput keys.
+    val curStart by rememberUpdatedState(startMs)
+    val curLen by rememberUpdatedState(lenMs)
     val placeholder = remember {
         val r = Random(7)
         FloatArray(160) { 0.25f + r.nextFloat() * 0.5f }
@@ -489,18 +567,65 @@ private fun CutterWaveform(
         modifier = Modifier
             .fillMaxWidth()
             .height(96.dp)
-            .pointerInput(totalMs, lenMs) {
+            .pointerInput(totalMs) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
-                    fun move(x: Float) {
-                        if (totalMs <= 0L || size.width <= 0) return
-                        val center = (x / size.width).coerceIn(0f, 1f) * totalMs
-                        val s = (center - lenMs / 2f).toLong().coerceIn(0L, max(0L, totalMs - lenMs))
-                        onChange(s / 100L * 100L)
+                    if (totalMs <= 0L || size.width <= 0) return@awaitEachGesture
+
+                    val w = size.width.toFloat()
+                    val s0 = curStart
+                    val e0 = s0 + curLen
+                    val winL = w * s0.toFloat() / totalMs.toFloat()
+                    val winR = w * e0.toFloat() / totalMs.toFloat()
+                    val x0 = down.position.x
+
+                    // Which part of the window was grabbed. The grab zone sticks out a little past each edge so
+                    // the thin handle is easy to catch, and is limited inside so a short window can still be moved.
+                    val inner = min(24.dp.toPx(), (winR - winL) / 3f)
+                    val outer = 20.dp.toPx()
+                    val nearLeft = x0 >= winL - outer && x0 <= winL + inner
+                    val nearRight = x0 >= winR - inner && x0 <= winR + outer
+                    val mode = when {
+                        nearLeft && nearRight -> if (abs(x0 - winL) <= abs(x0 - winR)) GRAB_LEFT else GRAB_RIGHT
+                        nearLeft -> GRAB_LEFT
+                        nearRight -> GRAB_RIGHT
+                        else -> GRAB_MOVE
                     }
-                    move(down.position.x)
+                    // Keep the finger's offset from the edge so the edge doesn't jump to the touch point.
+                    val grabOffset = when (mode) {
+                        GRAB_LEFT -> x0 - winL
+                        GRAB_RIGHT -> x0 - winR
+                        else -> 0f
+                    }
+
+                    fun msAt(x: Float): Long =
+                        ((x / w).coerceIn(0f, 1f) * totalMs).toLong() / 100L * 100L
+
+                    fun update(x: Float) {
+                        when (mode) {
+                            GRAB_LEFT -> {
+                                val maxStart = max(0L, e0 - MIN_CUT_MS)
+                                val ns = msAt(x - grabOffset).coerceIn(0L, maxStart)
+                                onChange(ns, e0 - ns)
+                            }
+                            GRAB_RIGHT -> {
+                                val minEnd = min(totalMs, s0 + MIN_CUT_MS)
+                                val ne = msAt(x - grabOffset).coerceIn(minEnd, totalMs)
+                                onChange(s0, ne - s0)
+                            }
+                            else -> {
+                                val len = curLen
+                                val center = (x / w).coerceIn(0f, 1f) * totalMs
+                                val s = (center - len / 2f).toLong().coerceIn(0L, max(0L, totalMs - len))
+                                onChange(s / 100L * 100L, len)
+                            }
+                        }
+                    }
+
+                    // A tap on an edge just grabs it; a tap elsewhere still jumps the window there.
+                    if (mode == GRAB_MOVE) update(x0)
                     drag(down.id) { change ->
-                        move(change.position.x)
+                        update(change.position.x)
                         change.consume()
                     }
                 }
@@ -547,13 +672,17 @@ private fun CutterWaveform(
             cornerRadius = CornerRadius(10.dp.toPx()),
             style = Stroke(width = stroke)
         )
-        val handleH = 26.dp.toPx()
-        val handleW = 4.dp.toPx()
+        val handleH = 34.dp.toPx()
+        val handleW = 5.dp.toPx()
         val handleTop = (size.height - handleH) / 2f
         drawRoundRect(ink, Offset(winL, handleTop), Size(handleW, handleH), CornerRadius(handleW / 2f))
         drawRoundRect(ink, Offset(winL + width - handleW, handleTop), Size(handleW, handleH), CornerRadius(handleW / 2f))
     }
 }
+
+private const val GRAB_MOVE = 0
+private const val GRAB_LEFT = 1
+private const val GRAB_RIGHT = 2
 
 /** Thin MediaPlayer wrapper that plays only [playFrom] onwards; the screen loops it inside the chosen window. */
 private class ClipPreviewPlayer(

@@ -20,6 +20,15 @@ import java.io.File
 import java.io.OutputStream
 import java.util.Locale
 
+/** File formats a cut can be exported as (needs the full ffmpeg-kit build, which Beatraxus already bundles). */
+enum class ExportFormat(val label: String, val ext: String, val mime: String, val codec: List<String>) {
+    MP3("MP3", "mp3", "audio/mpeg", listOf("-c:a", "libmp3lame", "-q:a", "0")),
+    FLAC("FLAC", "flac", "audio/flac", listOf("-c:a", "flac")),
+    M4A("M4A", "m4a", "audio/mp4", listOf("-c:a", "aac", "-b:a", "256k")),
+    WAV("WAV", "wav", "audio/x-wav", listOf("-c:a", "pcm_s16le")),
+    OGG("OGG", "ogg", "audio/ogg", listOf("-c:a", "libvorbis", "-q:a", "6"))
+}
+
 object RingtoneHelper {
 
     sealed class Result {
@@ -27,6 +36,14 @@ object RingtoneHelper {
         object NeedsWriteSettings : Result()
         data class Error(val message: String) : Result()
     }
+
+    sealed class SaveResult {
+        data class Saved(val fileName: String) : SaveResult()
+        data class Error(val message: String) : SaveResult()
+    }
+
+    /** Folder (under Music) that exported cuts are saved to. */
+    const val EXPORT_FOLDER = "Beatraxus"
 
     fun openWriteSettings(context: Context) {
         val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS).apply {
@@ -91,6 +108,97 @@ object RingtoneHelper {
         }
     }
 
+    /**
+     * Cuts [lengthMs] of the song starting at [startMs] (optionally faded) and saves it as a normal audio file in
+     * Music/Beatraxus in the chosen [format]. This does not touch the ringtone settings or the original song.
+     */
+    suspend fun saveClip(
+        context: Context,
+        song: Song,
+        startMs: Long,
+        lengthMs: Long,
+        fade: Boolean,
+        format: ExportFormat
+    ): SaveResult = withContext(Dispatchers.IO) {
+        if (song.isCloud()) return@withContext SaveResult.Error("Download the song first. Cloud songs can't be cut.")
+        if (lengthMs < 1000L) return@withContext SaveResult.Error("Pick at least one second.")
+        val tmp = File(context.cacheDir, "cut_export_${System.nanoTime()}.${format.ext}")
+        try {
+            val ok = trimToFile(
+                context, song, startMs, lengthMs, fade, tmp,
+                codec = format.codec, title = "${song.title} (cut)", artist = song.artist
+            )
+            if (!ok) return@withContext SaveResult.Error("Could not cut this song. Try another part or format.")
+            val name = exportName(song, startMs, lengthMs, format)
+            val uri = insertIntoMusic(context, name, "${song.title} (cut)", song.artist, format.mime) { out ->
+                tmp.inputStream().use { it.copyTo(out) }
+                true
+            } ?: return@withContext SaveResult.Error("Could not save the file to your Music folder.")
+            SaveResult.Saved(name)
+        } catch (e: Exception) {
+            SaveResult.Error(e.message ?: "Failed to save the cut")
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    private fun exportName(song: Song, startMs: Long, lengthMs: Long, format: ExportFormat): String {
+        // Keeps non-Latin titles (e.g. Tamil), only strips characters that are not allowed in file names.
+        val title = song.title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "").trim().take(80).ifBlank { "song" }
+        fun t(ms: Long): String {
+            val s = ms / 1000L
+            return "${s / 60}m${(s % 60).toString().padStart(2, '0')}s"
+        }
+        return "$title (cut ${t(startMs)}-${t(startMs + lengthMs)}).${format.ext}"
+    }
+
+    /** Creates the file in Music/Beatraxus (visible in the gallery/music apps) and lets [write] fill it. */
+    private fun insertIntoMusic(
+        context: Context,
+        name: String,
+        title: String,
+        artist: String,
+        mime: String,
+        write: (OutputStream) -> Boolean
+    ): Uri? {
+        val resolver = context.contentResolver
+        val values = ContentValues().apply {
+            put(MediaStore.Audio.Media.DISPLAY_NAME, name)
+            put(MediaStore.Audio.Media.TITLE, title)
+            put(MediaStore.Audio.Media.ARTIST, artist)
+            put(MediaStore.Audio.Media.MIME_TYPE, mime)
+            put(MediaStore.Audio.Media.IS_MUSIC, true)
+        }
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            values.put(MediaStore.Audio.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MUSIC}/$EXPORT_FOLDER")
+            values.put(MediaStore.Audio.Media.IS_PENDING, 1)
+            val newUri = resolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, values) ?: return null
+            val ok = try {
+                resolver.openOutputStream(newUri)?.use { write(it) } ?: false
+            } catch (e: Exception) {
+                false
+            }
+            if (!ok) {
+                runCatching { resolver.delete(newUri, null, null) }
+                return null
+            }
+            resolver.update(newUri, ContentValues().apply { put(MediaStore.Audio.Media.IS_PENDING, 0) }, null, null)
+            newUri
+        } else {
+            @Suppress("DEPRECATION")
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), EXPORT_FOLDER).apply { mkdirs() }
+            val file = File(dir, name)
+            val ok = file.outputStream().use { write(it) }
+            if (!ok) {
+                file.delete()
+                return null
+            }
+            @Suppress("DEPRECATION")
+            values.put(MediaStore.Audio.Media.DATA, file.absolutePath)
+            resolver.insert(MediaStore.Audio.Media.getContentUriForPath(file.absolutePath)!!, values)
+        }
+    }
+
     private fun clipName(song: Song, startMs: Long, lengthMs: Long, fade: Boolean, type: Int): String {
         val kind = when (type) {
             RingtoneManager.TYPE_NOTIFICATION -> "n"
@@ -105,8 +213,21 @@ object RingtoneHelper {
 
     private fun sec(ms: Long): String = String.format(Locale.US, "%.3f", ms / 1000.0)
 
-    /** Decodes just the chosen part and writes it as an MP3 (plays on every Android version as a tone). */
-    private fun trimToFile(context: Context, song: Song, startMs: Long, lengthMs: Long, fade: Boolean, out: File): Boolean {
+    /**
+     * Decodes just the chosen part and encodes it with [codec] (default: MP3, which plays on every Android version
+     * as a tone). [title] and [artist], when given, are written as tags; other metadata is dropped.
+     */
+    private fun trimToFile(
+        context: Context,
+        song: Song,
+        startMs: Long,
+        lengthMs: Long,
+        fade: Boolean,
+        out: File,
+        codec: List<String> = listOf("-c:a", "libmp3lame", "-q:a", "2"),
+        title: String? = null,
+        artist: String? = null
+    ): Boolean {
         val input = FFmpegKitConfig.getSafParameterForRead(context, song.uri)
         val args = mutableListOf(
             "-y", "-v", "error",
@@ -117,7 +238,10 @@ object RingtoneHelper {
         if (fade && lengthMs >= 4000L) {
             args += listOf("-af", "afade=t=in:st=0:d=1.5,afade=t=out:st=${sec(lengthMs - 1500L)}:d=1.5")
         }
-        args += listOf("-c:a", "libmp3lame", "-q:a", "2", out.absolutePath)
+        if (title != null) args += listOf("-metadata", "title=$title")
+        if (artist != null) args += listOf("-metadata", "artist=$artist")
+        args += codec
+        args += out.absolutePath
         val session = FFmpegKit.executeWithArguments(args.toTypedArray())
         return ReturnCode.isSuccess(session.returnCode) && out.length() > 0L
     }
