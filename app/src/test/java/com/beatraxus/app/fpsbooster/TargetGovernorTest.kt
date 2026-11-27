@@ -217,8 +217,16 @@ class TargetGovernorTest {
         assertEquals(90, TargetGovernor.forPlan(auto, 90).target)          // auto may start above the planner's 60
         val manual = plan(120, listOf(30, 60, 90, 120), auto = false)
         assertEquals(120, TargetGovernor.forPlan(manual, null).target)
-        assertEquals(90, TargetGovernor.forPlan(manual, 90).target)        // known not to sustain 120: starts lower
+        assertEquals(120, TargetGovernor.forPlan(manual, 90).target)       // the user's 120 is not lowered by an old "could not sustain it"
         assertEquals(90, TargetGovernor.forPlan(plan(90, listOf(30, 60, 90), false), 120).target)   // never above the user's choice
+        assertEquals(60, TargetGovernor.forPlan(plan(60, listOf(30, 45, 60), false), 30).target)    // a learned 30 never replaces a picked 60
+    }
+
+    @Test fun aManualTargetIsNeverSteppedDown() {
+        val g = TargetGovernor.forPlan(plan(60, listOf(30, 45, 60), auto = false), learned = 30)
+        val w = WindowStats(1_000_000_000L, 25, 40, 20, 5, 9f, 9f, 20f, displayHz = 120f)
+        repeat(100) { assertFalse(g.onWindow(LoadVerdict.SEVERE, 3, true, ThermalLevel.SEVERE, w).changed) }
+        assertEquals(60, g.target)
     }
 
     // ---- controller hooks ----

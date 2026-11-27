@@ -111,15 +111,15 @@ class TargetGovernor(candidates: List<Int>, startTarget: Int, private val auto: 
         /**
          * The governor for a plan. The plan's own target is always one of the candidates (a plan copied with a new target but old
          * candidates must still run at that target). Auto starts where this phone last settled ([learned]) or at the plan's
-         * target; manual never starts above the user's choice, and below it only when [learned] says the phone cannot sustain it.
+         * target and adapts to the load; a manual choice stays exactly where the user put it.
          */
         fun forPlan(plan: BoosterPlan, learned: Int?): TargetGovernor {
-            val start = when {
-                learned == null -> plan.targetFps
-                plan.auto -> learned
-                else -> minOf(plan.targetFps, learned)
-            }
-            return TargetGovernor((plan.candidates + plan.targetFps).distinct().sorted(), start, plan.auto)
+            // A target the user picked is theirs: it is pinned (one candidate), so neither a remembered "this phone could not
+            // sustain it" nor a run-time overload steps it down. The picture quality ladder still protects the phone; only the
+            // output rate is left alone. Auto is the adaptive mode and starts where this phone last settled.
+            if (!plan.auto) return TargetGovernor(listOf(plan.targetFps), plan.targetFps, auto = false)
+            val start = learned ?: plan.targetFps
+            return TargetGovernor((plan.candidates + plan.targetFps).distinct().sorted(), start, auto = true)
         }
 
         /** Windows between two target changes. */

@@ -888,7 +888,8 @@ A toggle at the top of the FPS Booster sheet picks how the output rate is chosen
   120 FPS · 4.8x; 24 FPS: 2.5x / 3.75x / 5x). The multiplier may be fractional. `MultipleMode.options` enables only targets the panel
   shows evenly (`MotionBoostTiming.isCleanRate`), that are at least 1.2x the source and within the battery-saver ceiling.
   Auto = the highest enabled target; `TargetGovernor` / `AdaptiveQualityController` lower it when the device cannot sustain it and
-  raise it again gradually (no second controller).
+  raise it again gradually (no second controller). A target the user picks is pinned: the governor never starts below it from a
+  remembered result and never steps it down (the quality ladder still protects the phone).
   * Output frames are evenly spaced (whole vsyncs, `CadenceGovernor`; reference timeline `MultipleMode.outputTimeNs` = anchor + k / target
     computed from k, so no drift). Each output is placed by its EXACT timestamp between two real frames (`FrameSelection`), so at
     25 -> 60 a source interval holds two or three outputs (3,2,3,2,2 per 5 frames) and never a forced equal count. VFR content is

@@ -1601,7 +1601,9 @@ class VideoPlayerViewModel(
     fun updateFpsBoosterStats(stats: BoosterStats) {
         learnSourceRate(stats)
         val activePlan = _uiState.value.fpsBoosterPlan
-        val updatedStats = if (activePlan.active && activePlan.targetFps > 0 && stats.targetFps != activePlan.targetFps) {
+        // The running target (what the governor really runs) is reported as it is. The plan's own number only fills in before the
+        // renderer has reported anything, so the panel can never claim a rate the output is not running.
+        val updatedStats = if (!stats.running && activePlan.active && activePlan.targetFps > 0 && stats.targetFps != activePlan.targetFps) {
             stats.copy(targetFps = activePlan.targetFps)
         } else {
             stats

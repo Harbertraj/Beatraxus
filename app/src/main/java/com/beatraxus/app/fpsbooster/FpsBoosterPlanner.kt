@@ -168,8 +168,8 @@ object FpsBoosterPlanner {
         var note: String? = engineNote
         val pickedMultiple = multiplePick
         if (pickedMultiple != null) {
-            // Auto starts at the highest suitable target and steps down when the device cannot sustain it; a manual choice starts
-            // at it and may only step down (and recover up to it).
+            // Auto starts at the highest suitable target and steps down when the device cannot sustain it; a manual choice runs
+            // at exactly that target (the governor pins it).
             wanted = pickedMultiple.targetFps
             note = multipleNote ?: engineNote ?: String.format(
                 Locale.US, "Multiple: %.1f FPS x %s = %d FPS", SourceRate.snap(source.fps),

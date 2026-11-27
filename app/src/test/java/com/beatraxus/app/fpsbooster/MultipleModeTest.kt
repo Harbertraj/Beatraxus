@@ -251,7 +251,7 @@ class MultipleModeTest {
         assertEquals(listOf(30, 45, 60), plan.candidates)
         val g = TargetGovernor.forPlan(plan, learned = null)
         repeat(200) { g.onWindow(LoadVerdict.CALM, 0, true, ThermalLevel.NONE, win()) }
-        assertEquals(60, g.target)   // manual: the user's choice is the ceiling
+        assertEquals(60, g.target)   // manual: the user's choice is pinned
     }
 
     // ---- phase servo ----
