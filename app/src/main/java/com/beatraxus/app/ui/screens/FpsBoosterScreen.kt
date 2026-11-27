@@ -259,6 +259,14 @@ fun FpsBoosterSheetContent(
                     StatLine("Status", if (plan.active) "Waiting for playback…" else "Not running")
                 } else {
                     StatLine("Engine", stats.engine.label + if (stats.qualityLabel.isNotEmpty()) " · ${stats.qualityLabel}" else "")
+                    StatLine("Method", when {
+                        stats.multipleActive -> "Multiple · %s%s".format(
+                            MultipleMode.formatMultiplier(stats.multiplier),
+                            if (stats.patternSources > 1) " (${stats.patternOutputs} outputs per ${stats.patternSources} source frames)" else ""
+                        )
+                        stats.multipleRequested -> "Generate (Multiple not applied: needs the Optical flow engine, a known source rate below the target)"
+                        else -> "Generate"
+                    })
                     StatLine("Source", "%.1f FPS".format(stats.sourceFps))
                     // The running target (the governor may be below what was asked for), never the plan's own number.
                     StatLine("Target", when {

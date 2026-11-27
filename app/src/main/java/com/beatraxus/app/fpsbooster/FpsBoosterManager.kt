@@ -34,6 +34,8 @@ class FpsBoosterManager(
     /** Run-time output-target selection (60 / 90 / 120): starts where this phone last settled, see [TargetGovernor]. */
     private var governor = buildGovernor(plan)
     /** What the user selected (manual) or the Auto ceiling; the plan's own target is the one running now. */
+    /** Multiple is the chosen method (it may still not be applied: see [BoosterStats.multipleActive]). */
+    private val multipleRequested: Boolean = settings.style == BoosterStyle.MULTIPLE
     private var requestedTarget = plan.ceilingFps.let { if (plan.auto) it else plan.targetFps }
     private var targetNote: String? = null
     private val adaptive = settings.adaptiveResolution
@@ -136,6 +138,10 @@ class FpsBoosterManager(
                 requestedTargetFps = requestedTarget,
                 autoTarget = plan.auto,
                 targetNote = targetNote,
+                multipleActive = plan.phaseLock && plan.engine == BoosterEngine.OPTICAL_FLOW,
+                multipleRequested = multipleRequested,
+                patternOutputs = MultipleMode.ratio(plan.targetFps, SourceRate.snap(sourceFps))?.outputs ?: 0,
+                patternSources = MultipleMode.ratio(plan.targetFps, SourceRate.snap(sourceFps))?.sources ?: 0,
                 renderedFps = w.renderedFps,
                 generatedFps = w.generatedFps,
                 originalFps = w.originalFps,

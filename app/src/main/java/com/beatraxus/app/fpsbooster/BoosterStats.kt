@@ -82,8 +82,18 @@ data class BoosterStats(
     /** True in Auto mode: the target is chosen by the device's measured headroom. */
     val autoTarget: Boolean = false,
     /** Why the running target differs from the requested one (null when it does not), or what Auto last did. */
-    val targetNote: String? = null
+    val targetNote: String? = null,
+    /** The method really running: [BoosterStats.METHOD_MULTIPLE] only when the plan is Multiple AND the presenter applies it. */
+    val multipleActive: Boolean = false,
+    /** Multiple chosen in the settings but not applied (unknown source rate, source already at the target, or an engine that ignores it). */
+    val multipleRequested: Boolean = false,
+    /** Output : source pattern of the running Multiple target, e.g. 12 : 5 for 25 -> 60 (0 when there is none, e.g. a whole or unpatterned rate). */
+    val patternOutputs: Int = 0,
+    val patternSources: Int = 0
 ) {
+    /** target / source of the running plan (0 when the source rate is not known yet). */
+    val multiplier: Double get() = MultipleMode.multiplier(targetFps, SourceRate.snap(sourceFps))
+
     /** Output rate the cadence grid allows: panel rate / vsyncs per frame (0 = unknown). */
     val cadenceFps: Float get() = if (cadenceVsyncs > 0 && displayHz > 0f) displayHz / cadenceVsyncs else 0f
 }
