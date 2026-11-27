@@ -147,7 +147,9 @@ object RingtoneHelper {
         val title = song.title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "").trim().take(80).ifBlank { "song" }
         fun t(ms: Long): String {
             val s = ms / 1000L
-            return "${s / 60}m${(s % 60).toString().padStart(2, '0')}s"
+            val frac = ms % 1000L
+            val base = "${s / 60}m${(s % 60).toString().padStart(2, '0')}"
+            return if (frac == 0L) "${base}s" else "$base.${frac.toString().padStart(3, '0')}s"
         }
         return "$title (cut ${t(startMs)}-${t(startMs + lengthMs)}).${format.ext}"
     }
