@@ -36,16 +36,21 @@ object PodcastFeedParser {
         require(xml.isNotEmpty()) { "Podcast feed is empty" }
         require(xml.size <= MAX_FEED_BYTES) { "Podcast feed exceeds the 2 MiB limit" }
 
+        // Android's XML parser lacks the JAXP ACCESS_EXTERNAL_* attributes and may reject some
+        // SAX features, so DTDs/entities are refused up front and hardening below is best-effort.
+        val head = String(xml, Charsets.ISO_8859_1).replace("\u0000", "").lowercase()
+        require(!head.contains("<!doctype") && !head.contains("<!entity")) {
+            "DTD and entity declarations are not allowed in podcast feeds"
+        }
+
         val factory = DocumentBuilderFactory.newInstance().apply {
             isNamespaceAware = true
-            isXIncludeAware = false
-            setExpandEntityReferences(false)
-            setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            runCatching { isXIncludeAware = false }
+            runCatching { setExpandEntityReferences(false) }
+            runCatching { setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true) }
+            runCatching { setFeature("http://apache.org/xml/features/disallow-doctype-decl", true) }
+            runCatching { setFeature("http://xml.org/sax/features/external-general-entities", false) }
+            runCatching { setFeature("http://xml.org/sax/features/external-parameter-entities", false) }
         }
         val document = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
         val channel = document.getElementsByTagName("channel").item(0) as? Element
