@@ -35,7 +35,7 @@ class FpsBoosterManager(
     private var governor = buildGovernor(plan)
     /** What the user selected (manual) or the Auto ceiling; the plan's own target is the one running now. */
     /** Multiple is the chosen method (it may still not be applied: see [BoosterStats.multipleActive]). */
-    private val multipleRequested: Boolean = settings.style == BoosterStyle.MULTIPLE
+    @Volatile private var multipleRequested: Boolean = settings.style == BoosterStyle.MULTIPLE
     private var requestedTarget = plan.ceilingFps.let { if (plan.auto) it else plan.targetFps }
     private var targetNote: String? = null
     private val adaptive = settings.adaptiveResolution
@@ -204,7 +204,8 @@ class FpsBoosterManager(
     fun restartGrace() { graceWindows = START_GRACE_WINDOWS }
 
     /** Updates the plan (e.g. on target FPS change) and resets grace windows. */
-    fun updatePlan(newPlan: BoosterPlan) {
+    fun updatePlan(newPlan: BoosterPlan, multipleRequested: Boolean = this.multipleRequested) {
+        this.multipleRequested = multipleRequested
         governor = buildGovernor(newPlan)
         requestedTarget = if (newPlan.auto) newPlan.ceilingFps else newPlan.targetFps
         plan = newPlan.copy(targetFps = governor.target)

@@ -81,7 +81,10 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
             applied!!.first.quality != plan.quality ||
             applied!!.second.adaptiveResolution != settings.adaptiveResolution ||
             applied!!.second.batterySaver != settings.batterySaver
-        val targetChanged = applied?.first?.targetFps != plan.targetFps
+        // ANY plan change must reach the manager, not only a new target: a file that declares no frame rate is first planned as
+        // Generate at 60, then (once the rate is measured) as Multiple at the same 60. The target is unchanged, but the method,
+        // the governor's candidates and the stats are not.
+        val planChanged = applied?.first != plan || applied?.second?.style != settings.style
         this.plan = plan
         this.settings = settings
         applied = key
@@ -92,8 +95,8 @@ class FpsBoosterSurfaceView(context: Context) : SurfaceView(context), SurfaceHol
                 hybridRenderer?.setLevel(mgr.initialLevel)
                 rifeRenderer?.setLevel(mgr.initialLevel)
             }
-        } else if (targetChanged) {
-            manager?.updatePlan(plan)
+        } else if (planChanged) {
+            manager?.updatePlan(plan, settings.style == BoosterStyle.MULTIPLE)
         }
         // The target the renderers and the display run at is the governor's (it may be below the plan's), not the plan's own.
         applyTarget(manager?.currentTarget ?: plan.targetFps)
