@@ -26,7 +26,7 @@ sealed interface StemModelDownloadState {
     data class Failed(val errorText: String) : StemModelDownloadState
 }
 
-/** One downloadable separation model. [sha256] null = not pinned yet (see the Max entry). */
+/** One downloadable separation model. A null [sha256] is rejected before any network request. */
 data class StemModelFile(
     val quality: StemQuality,
     val url: String,
@@ -51,17 +51,15 @@ object StemModelDownloader {
     )
 
     /**
-     * htdemucs_6s with fp16 weights, MIT licence, from the StemSplitio export (input `mix` [1,2,343980], output
-     * `stems` [1,6,2,343980], order drums, bass, other, vocals, guitar, piano, per its model card).
-     * The SHA-256 is not pinned: it could not be read from here. The file is checked by size and, more strictly, by
-     * the tensor contract when it is loaded ([HtDemucsSeparator]). The computed hash is logged after a download
-     * (tag StemModelDownloader) so it can be pinned here.
+     * htdemucs_6s with fp16 weights, MIT licence, from the immutable StemSplitio export revision.
+     * Input `mix` [1,2,343980], output `stems` [1,6,2,343980], order drums, bass, other,
+     * vocals, guitar, piano. The SHA-256 is pinned to the model file's published hash.
      */
     val MAX_MODEL = StemModelFile(
         quality = StemQuality.MAX,
-        url = "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/main/htdemucs_6s_fp16weights.onnx",
+        url = "https://huggingface.co/StemSplitio/htdemucs-6s-onnx/resolve/49df9b6989cf2150840ea65b0bef77a2e471b678/htdemucs_6s_fp16weights.onnx",
         fileName = HtDemucsSeparator.MODEL_FILENAME,
-        sha256 = null,
+        sha256 = "7ce55792e2231c93fbf92de95f5fd5b3a5e6c89f7db690dfd693e8f1dce56869",
         minBytes = 100_000_000L,
         approxSizeLabel = "136 MB"
     )
@@ -85,6 +83,11 @@ object StemModelDownloader {
         if (jobs[quality]?.isActive == true) return
         val model = modelFor(quality)
         val state = states.getValue(quality)
+
+        if (model.sha256.isNullOrBlank()) {
+            state.value = StemModelDownloadState.Failed("This model has no pinned SHA-256 checksum and cannot be downloaded safely")
+            return
+        }
 
         val appContext = context.applicationContext
         val modelsDir = File(appContext.filesDir, "models")
@@ -138,8 +141,7 @@ object StemModelDownloader {
                     }
 
                     val computedHash = digest.digest().joinToString("") { "%02x".format(it) }
-                    val expected = model.sha256
-                    if (expected != null && !computedHash.equals(expected, ignoreCase = true)) {
+                    if (!computedHash.equals(model.sha256, ignoreCase = true)) {
                         partFile.delete()
                         state.value = StemModelDownloadState.Failed("SHA-256 checksum mismatch")
                         return@launch
@@ -150,7 +152,6 @@ object StemModelDownloader {
                         state.value = StemModelDownloadState.Failed("Incomplete download ($got bytes)")
                         return@launch
                     }
-                    if (expected == null) Log.i(TAG, "${model.fileName} downloaded, SHA-256 = $computedHash (not pinned)")
 
                     if (targetFile.exists()) targetFile.delete()
                     if (!partFile.renameTo(targetFile)) {
