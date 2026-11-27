@@ -87,4 +87,40 @@ class PipelineSignalPathTest {
         assertEquals(PipelineVerdictType.LOSSY, result.verdict.type)
         assertNotNull(result.plainTextSummary)
     }
+
+    @Test
+    fun testLossless16BitStaysLosslessWhenOutputIsHiRes() {
+        val song = Song(
+            id = "4", uri = Uri.EMPTY, title = "CD FLAC", artist = "Artist", album = "Album",
+            durationMs = 200000, format = "FLAC", sampleRateHz = 44100, bitDepth = 16, bitrate = 900000
+        )
+        val uiState = PlayerUiState(
+            format = "FLAC", inputSampleRate = 44100, outputSampleRate = 96000,
+            bitDepth = 16, outputBitDepth = 24, pipelineOutputPath = "AAudio",
+            pipelineResamplerEnabled = true,
+            dsp = DspUiState(config = DspConfig())
+        )
+
+        val result = buildPipelineStages(song, uiState)
+
+        assertEquals(PipelineVerdictType.LOSSLESS, result.verdict.type)
+    }
+
+    @Test
+    fun testHiResSourceShowsHiResLossless() {
+        val song = Song(
+            id = "5", uri = Uri.EMPTY, title = "HiRes FLAC", artist = "Artist", album = "Album",
+            durationMs = 200000, format = "FLAC", sampleRateHz = 96000, bitDepth = 24, bitrate = 2500000
+        )
+        val uiState = PlayerUiState(
+            format = "FLAC", inputSampleRate = 96000, outputSampleRate = 48000,
+            bitDepth = 24, outputBitDepth = 24, pipelineOutputPath = "AAudio",
+            pipelineResamplerEnabled = true,
+            dsp = DspUiState(config = DspConfig())
+        )
+
+        val result = buildPipelineStages(song, uiState)
+
+        assertEquals(PipelineVerdictType.HI_RES_LOSSLESS, result.verdict.type)
+    }
 }

@@ -263,7 +263,8 @@ fun SongOptionsSheet(
             if (showRingtone) {
                 com.beatraxus.app.features.RingtoneDialog(
                     song = song,
-                    onDismiss = { showRingtone = false; onDismiss() }
+                    onDismiss = { showRingtone = false; onDismiss() },
+                    onPauseLocalPlayback = onPauseLocalPlayback
                 )
             }
             if (showDlna) {

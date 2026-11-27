@@ -69,7 +69,7 @@ Implemented in `app/src/main/cpp/SpecialDSP.cpp` and exposed through JNI (`Nativ
 - **Telegram** channels as a media source (via TDLib).
 - **Internet radio** (Radio Browser API) and **Live TV** (user-supplied M3U playlists).
 - **Cast / DLNA**: Google Cast support and a DLNA sheet; a local HTTP server feeds files to cast targets.
-- **Tag editor**, ringtone helper, embedded and online album art, artist art and biographies.
+- **Tag editor**, ringtone cutter (pick any part of a song, preview it, set it as ringtone, notification or alarm), embedded and online album art, artist art and biographies.
 - **Encrypted backup and restore** of settings and data.
 
 ### Lyrics

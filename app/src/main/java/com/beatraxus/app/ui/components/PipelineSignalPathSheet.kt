@@ -397,9 +397,14 @@ fun buildPipelineStages(song: Song, uiState: PlayerUiState): PipelineResult {
     // VERDICT COMPUTATION
     val isBitPerfect = dspConf.bitPerfectEnabled || (!isDspActive && !isResampled && inputBits == outputBits && inputSr == outputSr)
 
+    // Hi-Res is a property of the SOURCE file only (same rule as AudioQualityBadge on Now Playing).
+    // The output stage often runs at 24-bit / 48 kHz+ even for CD-quality files, so it must not
+    // promote a 16-bit lossless track to "HI-RES LOSSLESS".
+    val isHiResSource = inputBits >= 24 || inputSr > 48000
+
     val verdictType = when {
         isBitPerfect -> PipelineVerdictType.BIT_PERFECT
-        isLossless && (inputSr >= 48000 || outputSr >= 48000) && (inputBits >= 24 || outputBits >= 24) -> PipelineVerdictType.HI_RES_LOSSLESS
+        isLossless && isHiResSource -> PipelineVerdictType.HI_RES_LOSSLESS
         isLossless -> PipelineVerdictType.LOSSLESS
         isDspActive || isResampled -> PipelineVerdictType.PROCESSED
         else -> PipelineVerdictType.LOSSY
