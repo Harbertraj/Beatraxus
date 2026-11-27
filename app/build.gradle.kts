@@ -33,8 +33,8 @@ configure<ApplicationExtension> {
         applicationId = "com.beatraxus.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 8
-        versionName = "3.3.7-stable"
+        versionCode = 9
+        versionName = "3.3.8-stable"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

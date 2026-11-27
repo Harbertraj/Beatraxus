@@ -7,7 +7,7 @@ Beatraxus is a native Android app written in Kotlin (Jetpack Compose) with a C++
 | | |
 |---|---|
 | **Package** | `com.beatraxus.app` |
-| **Version** | `3.3.7-stable` (versionCode 8) |
+| **Version** | `3.3.8-stable` (versionCode 9) |
 | **Min / Target SDK** | 26 (Android 8.0) / 36 |
 | **Language** | Kotlin 2.4 + C++17 (NDK 29) |
 | **UI** | Jetpack Compose, Material 3 |
