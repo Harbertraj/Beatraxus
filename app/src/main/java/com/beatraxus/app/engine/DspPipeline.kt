@@ -216,6 +216,8 @@ internal class AudioDspPipeline(
         val needed = frames * outCh
         if (surroundBuffer.size < needed) surroundBuffer = FloatArray(needed + needed / 4)
         upmixer.process(base.data, inChannels, frames, surroundBuffer)
+        val healed = upmixer.consumeRecoveries()
+        if (healed > 0) Log.w("DspPipeline", "Surround upmixer received non-finite audio; state cleared ($healed time(s))")
         return DspProcessResult(
             data = surroundBuffer,
             sampleCount = needed,

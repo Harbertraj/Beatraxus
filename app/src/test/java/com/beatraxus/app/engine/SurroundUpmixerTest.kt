@@ -433,4 +433,22 @@ class SurroundUpmixerTest {
         assertTrue(data[last * 6 + 2] > 0.1f)
         assertTrue(data[last * 6 + 4] < 0.1f)
     }
+
+    @Test
+    fun nonFiniteInputNeverPoisonsLaterBatches() {
+        val up = SurroundUpmixer(rate)
+        up.configure(6, SurroundMode.MOVIE.tuning(), flat)
+        val frames = 256
+        val out = FloatArray(frames * 6)
+        val bad = FloatArray(frames * 2) { 0.3f }
+        bad[10] = Float.NaN
+        bad[11] = Float.POSITIVE_INFINITY
+        up.process(bad, 2, frames, out)
+        assertTrue(out.all { it.isFinite() })
+        assertTrue(up.consumeRecoveries() > 0)
+        val good = FloatArray(frames * 2) { 0.3f }
+        repeat(4) { up.process(good, 2, frames, out) }
+        assertTrue(out.all { it.isFinite() })
+        assertTrue(out.any { it != 0f })
+    }
 }

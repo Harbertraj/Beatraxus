@@ -299,11 +299,16 @@ internal class SurroundUpmixer(sampleRate: Int) {
         var wp = writePos
         var sAmb = sideAmbience
         var bAmb = backAmbience
+        var bad = false
 
         for (f in 0 until frames) {
             val ib = f * inCh
-            val l = input[ib]
-            val r = if (inCh > 1) input[ib + 1] else l
+            // A single NaN / Inf from the chain would poison the recursive state below (ambience low-pass, LFE
+            // biquads, ...) for good, and the platform fold-down then spreads it into L/R = silence. Never let it in.
+            var l = input[ib]
+            if (l - l != 0f) { l = 0f; bad = true }
+            var r = if (inCh > 1) input[ib + 1] else l
+            if (r - r != 0f) { r = 0f; bad = true }
             val m = 0.5f * (l + r)
             val s = 0.5f * (l - r)
 
@@ -433,7 +438,28 @@ internal class SurroundUpmixer(sampleRate: Int) {
         writePos = wp
         sideAmbience = sAmb
         backAmbience = bAmb
+
+        // Also catches state that went non-finite on its own (overflow, bad trims): wipe it, keep playing.
+        if (bad || !stateFinite()) {
+            reset()
+            recoveries++
+        }
     }
+
+    /** How many times the stage had to clear poisoned (non-finite) state since the last call; resets to 0. */
+    fun consumeRecoveries(): Int {
+        val n = recoveries
+        recoveries = 0
+        return n
+    }
+
+    private var recoveries = 0
+
+    private fun stateFinite(): Boolean =
+        sideAmbience - sideAmbience == 0f && backAmbience - backAmbience == 0f &&
+            y1a - y1a == 0.0 && y2a - y2a == 0.0 && y1b - y1b == 0.0 && y2b - y2b == 0.0 &&
+            smartCentre - smartCentre == 0f && smartSurround - smartSurround == 0f &&
+            corrLL - corrLL == 0f && corrRR - corrRR == 0f && corrLR - corrLR == 0f
 
     /** End of a batch: decays the room-view levels and lifts them to the peaks of this batch. */
     private fun publishLevels(outCh: Int) {
@@ -596,7 +622,7 @@ internal class SurroundUpmixer(sampleRate: Int) {
         a2 = (1.0 - alpha) / a0
     }
 
-    private fun clamp(v: Float): Float = if (v > 1f) 1f else if (v < -1f) -1f else v
+    private fun clamp(v: Float): Float = if (v > 1f) 1f else if (v < -1f) -1f else if (v - v != 0f) 0f else v
 
     companion object {
         private const val CHANNELS_UI = 8

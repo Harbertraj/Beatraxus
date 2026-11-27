@@ -1110,6 +1110,7 @@ class AudioEngine(
     }
 
     private var lastDiagnosticsTimeMs = 0L
+    private var lastStallRebuildMs = 0L
 
     private suspend fun renderLoop() {
         val localBuffer = FloatArray(RENDER_BATCH_SAMPLES)
@@ -1249,8 +1250,18 @@ class AudioEngine(
 
                 val frames = processed.sampleCount / outChannels
                 var writtenFramesTotal = 0
+                var lastWriteProgressMs = System.currentTimeMillis()
 
                 while (writtenFramesTotal < frames && engineScope.isActive && activeSession?.sessionId == targetSessionId && isSessionPlaying(targetSession)) {
+                    // The output can be re-opened with another channel count while this batch is being written (surround
+                    // on/off, 5.1 <-> 7.1, rate change). The rest of this batch is then laid out for the OLD layout and
+                    // AudioTrackOutput.write() rejects it forever (size check), i.e. silent "playing" until the song
+                    // changes. Drop the stale remainder and let the next batch be built for the new layout.
+                    val liveChannels = output.outputChannelCount()
+                    if (liveChannels > 0 && liveChannels != outChannels) {
+                        Log.w(TAG, "Output re-opened mid-batch ($outChannels -> $liveChannels ch); dropping stale batch")
+                        break
+                    }
                     val written = if (processed.isDoP && processed.intData != null) {
                         output.writeInt(
                             data = processed.intData,
@@ -1265,9 +1276,21 @@ class AudioEngine(
                         )
                     }
                     if (written <= 0) {
+                        // A healthy non-blocking track frees space within milliseconds. Seconds of nothing means the
+                        // track is dead / never started (silent "playing"): rebuild the output instead of spinning.
+                        val nowMs = System.currentTimeMillis()
+                        if (nowMs - lastWriteProgressMs > WRITE_STALL_REBUILD_MS &&
+                            nowMs - lastStallRebuildMs > WRITE_STALL_REBUILD_MS
+                        ) {
+                            lastStallRebuildMs = nowMs
+                            Log.w(TAG, "Output accepted no audio for ${nowMs - lastWriteProgressMs} ms; rebuilding the output")
+                            reconfigureOutput()
+                            break // never keep retrying the same batch
+                        }
                         delay(2)
                         continue
                     }
+                    lastWriteProgressMs = System.currentTimeMillis()
                     writtenFramesTotal += written
                     
                     if (targetSession.song.id.startsWith("video_route:") && !_videoRouteStateFlow.value.firstFrameRendered) {
@@ -1637,7 +1660,11 @@ class AudioEngine(
                     outputReady = output.init(format.sampleRate, outChannels, format.bitDepth, format.isDoP, resetOffsets = false)
                 }
                 if (!outputReady) {
-                    logWarn("Audio output initialization failed")
+                    // One more try: a failed init leaves no track at all, which would be silent forever.
+                    logWarn("Audio output initialization failed, retrying once")
+                    delay(60)
+                    outputReady = output.init(format.sampleRate, outChannels, format.bitDepth, format.isDoP, resetOffsets = false)
+                    if (!outputReady) logWarn("Audio output initialization failed again")
                 }
                 lastOutputChannels = outChannels
 
@@ -1766,6 +1793,8 @@ class AudioEngine(
         /** How far past the tagged duration the position may run before it is treated as a counter desync. */
         private const val POSITION_DESYNC_TOLERANCE_MS = 30_000L
         private const val OUTPUT_RECONFIG_SKIP_MS = 0L
+        /** No audio accepted by the output for this long while playing = output is stuck, rebuild it. */
+        private const val WRITE_STALL_REBUILD_MS = 3_000L
         /** Highest output rate used when 5.1/7.1 is rendered through the platform mixer (device not truly multichannel). */
         private const val SURROUND_MIXER_RATE_CAP = 48_000
         /** Same cap when the resampler is on Auto: 96 kHz files are never downgraded. */
