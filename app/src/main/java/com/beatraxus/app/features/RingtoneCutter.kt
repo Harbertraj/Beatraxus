@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -24,6 +25,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -70,11 +72,13 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
@@ -103,6 +107,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
 import com.arthenica.ffmpegkit.FFmpegKit
 import com.arthenica.ffmpegkit.FFmpegKitConfig
 import com.arthenica.ffmpegkit.ReturnCode
@@ -112,6 +118,7 @@ import com.beatraxus.app.ui.theme.PremiumTeal
 import com.beatraxus.app.ui.theme.TextMuted
 import com.beatraxus.app.ui.theme.TextPrimary
 import com.beatraxus.app.ui.theme.TextSecondary
+import com.beatraxus.app.ui.theme.bgTone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -163,6 +170,49 @@ fun RingtoneCutterScreen(song: Song, onDismiss: () -> Unit, onPauseLocalPlayback
     } else {
         CutterContent(song, onDismiss, onPauseLocalPlayback)
     }
+}
+
+/** Near-black base of the screen: the same colour the Music Detail Inspector uses. */
+private val CutterBg: Color get() = bgTone(0xFF07060B)
+
+/**
+ * Soft, heavily blurred album-art glow at the top of the screen that fades into [CutterBg]. Same look as the
+ * Music Detail Inspector background, so the "Set as" screen matches it.
+ */
+@Composable
+private fun BoxScope.CutterAmbientBackdrop(song: Song) {
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(song.albumArtUri)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .size(256, 256)
+            .crossfade(true)
+            .build(),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(420.dp)
+            .align(Alignment.TopCenter)
+            .blur(if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) 60.dp else 30.dp)
+            .background(Color.Black.copy(alpha = 0.55f))
+    )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(420.dp)
+            .align(Alignment.TopCenter)
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        Color.Black.copy(alpha = 0.45f),
+                        CutterBg.copy(alpha = 0.75f),
+                        CutterBg
+                    )
+                )
+            )
+    )
 }
 
 @Composable
@@ -326,255 +376,210 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
         onDismissRequest = { if (!busy) onDismiss() },
         properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false)
     ) {
-        Surface(modifier = Modifier.fillMaxSize(), color = BgBase) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 12.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+        Surface(modifier = Modifier.fillMaxSize(), color = CutterBg) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                CutterAmbientBackdrop(song)
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                 ) {
-                    IconButton(onClick = { if (!busy) onDismiss() }) {
-                        Icon(Icons.Rounded.Close, contentDescription = "Close", tint = TextPrimary)
-                    }
-                    Text("Cut ringtone", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                    TextButton(onClick = { apply() }, enabled = !busy && totalMs > 0L) {
-                        Text("Done", color = accent, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    }
-                }
-
-                Spacer(Modifier.height(10.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(TextPrimary.copy(alpha = 0.08f)),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = TextSecondary)
-                        if (song.albumArtUri != null) {
-                            AsyncImage(
-                                model = song.albumArtUri,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize()
+                        IconButton(onClick = { if (!busy) onDismiss() }) {
+                            Icon(Icons.Rounded.Close, contentDescription = "Close", tint = TextPrimary)
+                        }
+                        Text("Cut ringtone", color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        TextButton(onClick = { apply() }, enabled = !busy && totalMs > 0L) {
+                            Text("Done", color = accent, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+
+                    Spacer(Modifier.height(10.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(TextPrimary.copy(alpha = 0.08f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = TextSecondary)
+                            if (song.albumArtUri != null) {
+                                AsyncImage(
+                                    model = song.albumArtUri,
+                                    contentDescription = null,
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(song.title, color = TextPrimary, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                "${song.artist} · ${formatMs(totalMs)}",
+                                color = TextSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
-                    Spacer(Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(song.title, color = TextPrimary, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+                    Spacer(Modifier.height(20.dp))
+
+                    Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
-                            "${song.artist} · ${formatMs(totalMs)}",
-                            color = TextSecondary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                Column(modifier = Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        if (isWhole) AnnotatedString("Full song") else buildAnnotatedString {
-                            append(preciseTime(startMs, TextPrimary, TextSecondary))
-                            withStyle(SpanStyle(color = TextMuted)) { append("  –  ") }
-                            append(preciseTime(startMs + lenMs, TextPrimary, TextSecondary))
-                        },
-                        color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Medium,
-                        style = TextStyle(fontFeatureSettings = "tnum"), maxLines = 1
-                    )
-                    Text(
-                        if (isWhole) "The whole song will be used" else "${formatLength(lenMs)} selected",
-                        color = TextSecondary, fontSize = 13.sp,
-                        style = TextStyle(fontFeatureSettings = "tnum")
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                if (totalMs > 0L) {
-                    CutterWaveform(
-                        peaks = peaks,
-                        totalMs = totalMs,
-                        startMs = startMs,
-                        lenMs = lenMs,
-                        progress = if (playing) playPosMs.toFloat() / lenMs.toFloat() else -1f,
-                        accent = accent,
-                        onAccent = onAccent,
-                        revealMs = revealMs,
-                        revealTick = revealTick,
-                        onRangeChange = { s, l ->
-                            startMs = s
-                            lenMs = l
-                            userMoved = true
-                            playPosMs = 0L
-                        }
-                    )
-                } else {
-                    Box(Modifier.fillMaxWidth().height(168.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = accent, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                    }
-                }
-
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    when {
-                        peaks == null -> "Reading waveform…"
-                        isWhole -> "Full song selected · swipe outside the frame to scroll"
-                        else -> "Drag frame to move · pull edges to resize · swipe outside to scroll"
-                    },
-                    color = TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                Spacer(Modifier.height(16.dp))
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(46.dp)
-                            .clip(CircleShape)
-                            .background(TextPrimary)
-                            .clickable(enabled = !busy) {
-                                if (!playing) onPauseLocalPlayback()
-                                playing = !playing
+                            if (isWhole) AnnotatedString("Full song") else buildAnnotatedString {
+                                append(preciseTime(startMs, TextPrimary, TextSecondary))
+                                withStyle(SpanStyle(color = TextMuted)) { append("  –  ") }
+                                append(preciseTime(startMs + lenMs, TextPrimary, TextSecondary))
                             },
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                            contentDescription = if (playing) "Pause preview" else "Play preview",
-                            tint = BgBase,
-                            modifier = Modifier.size(26.dp)
+                            color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.Medium,
+                            style = TextStyle(fontFeatureSettings = "tnum"), maxLines = 1
+                        )
+                        Text(
+                            if (isWhole) "The whole song will be used" else "${formatLength(lenMs)} selected",
+                            color = TextSecondary, fontSize = 13.sp,
+                            style = TextStyle(fontFeatureSettings = "tnum")
                         )
                     }
-                    Spacer(Modifier.width(10.dp))
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        if (totalMs > 0L) {
-                            CUT_LENGTHS_SEC.filter { it * 1000L < totalMs }.forEach { sec ->
-                                LengthChip("${sec}s", selected = !isWhole && lenMs == sec * 1000L) { setLength(sec * 1000L) }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    if (totalMs > 0L) {
+                        CutterWaveform(
+                            peaks = peaks,
+                            totalMs = totalMs,
+                            startMs = startMs,
+                            lenMs = lenMs,
+                            progress = if (playing) playPosMs.toFloat() / lenMs.toFloat() else -1f,
+                            accent = accent,
+                            onAccent = onAccent,
+                            revealMs = revealMs,
+                            revealTick = revealTick,
+                            onRangeChange = { s, l ->
+                                startMs = s
+                                lenMs = l
+                                userMoved = true
+                                playPosMs = 0L
                             }
-                            LengthChip("Full song", selected = isWhole) { setLength(totalMs) }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(TextPrimary.copy(alpha = 0.06f))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Fine tune", color = TextPrimary, modifier = Modifier.weight(1f))
-                        Text("ms steps · hold to repeat", color = TextMuted, fontSize = 12.sp)
-                    }
-                    FineTuneRow("Start", startMs, enabled = !busy && totalMs > 0L) { nudgeStart(it) }
-                    FineTuneRow("End", startMs + lenMs, enabled = !busy && totalMs > 0L) { nudgeEnd(it) }
-                }
-
-                Spacer(Modifier.height(12.dp))
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(TextPrimary.copy(alpha = 0.06f))
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Fade in and out", color = TextPrimary)
-                        Text("Softens the start and end of the tone", color = TextSecondary, fontSize = 12.sp)
-                    }
-                    Switch(
-                        checked = fade,
-                        onCheckedChange = { fade = it },
-                        colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = onAccent)
-                    )
-                }
-
-                Spacer(Modifier.height(16.dp))
-
-                Text("Use this cut as", color = TextSecondary, fontSize = 12.sp)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TypeSegment(Icons.Rounded.RingVolume, "Ringtone", type == RingtoneManager.TYPE_RINGTONE, accent, onAccent, Modifier.weight(1f)) {
-                        type = RingtoneManager.TYPE_RINGTONE
-                    }
-                    TypeSegment(Icons.Rounded.Notifications, "Notification", type == RingtoneManager.TYPE_NOTIFICATION, accent, onAccent, Modifier.weight(1f)) {
-                        type = RingtoneManager.TYPE_NOTIFICATION
-                    }
-                    TypeSegment(Icons.Rounded.Alarm, "Alarm", type == RingtoneManager.TYPE_ALARM, accent, onAccent, Modifier.weight(1f)) {
-                        type = RingtoneManager.TYPE_ALARM
-                    }
-                }
-
-                Spacer(Modifier.height(20.dp))
-
-                Button(
-                    onClick = { apply() },
-                    enabled = !busy && totalMs > 0L,
-                    modifier = Modifier.fillMaxWidth().height(52.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = accent,
-                        contentColor = onAccent,
-                        disabledContainerColor = accent.copy(alpha = 0.6f),
-                        disabledContentColor = onAccent.copy(alpha = 0.7f)
-                    )
-                ) {
-                    if (busy && !exporting) {
-                        CircularProgressIndicator(color = onAccent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Saving…", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                        )
                     } else {
-                        Text("Set as ${typeLabel(type).lowercase()}", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                    }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(TextPrimary.copy(alpha = 0.06f))
-                        .padding(14.dp)
-                ) {
-                    Text("Save as", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "Keep this cut as an audio file in Music/${RingtoneHelper.EXPORT_FOLDER}",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ExportFormat.values().forEach { f ->
-                            LengthChip(f.label, selected = exportFormat == f) { if (!busy) exportFormat = f }
+                        Box(Modifier.fillMaxWidth().height(168.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(color = accent, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
+
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        when {
+                            peaks == null -> "Reading waveform…"
+                            isWhole -> "Full song selected · swipe outside the frame to scroll"
+                            else -> "Drag frame to move · pull edges to resize · swipe outside to scroll"
+                        },
+                        color = TextMuted, fontSize = 12.sp, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(46.dp)
+                                .clip(CircleShape)
+                                .background(TextPrimary)
+                                .clickable(enabled = !busy) {
+                                    if (!playing) onPauseLocalPlayback()
+                                    playing = !playing
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                contentDescription = if (playing) "Pause preview" else "Play preview",
+                                tint = BgBase,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (totalMs > 0L) {
+                                CUT_LENGTHS_SEC.filter { it * 1000L < totalMs }.forEach { sec ->
+                                    LengthChip("${sec}s", selected = !isWhole && lenMs == sec * 1000L) { setLength(sec * 1000L) }
+                                }
+                                LengthChip("Full song", selected = isWhole) { setLength(totalMs) }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(TextPrimary.copy(alpha = 0.06f))
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Fine tune", color = TextPrimary, modifier = Modifier.weight(1f))
+                            Text("ms steps · hold to repeat", color = TextMuted, fontSize = 12.sp)
+                        }
+                        FineTuneRow("Start", startMs, enabled = !busy && totalMs > 0L) { nudgeStart(it) }
+                        FineTuneRow("End", startMs + lenMs, enabled = !busy && totalMs > 0L) { nudgeEnd(it) }
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(TextPrimary.copy(alpha = 0.06f))
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Fade in and out", color = TextPrimary)
+                            Text("Softens the start and end of the tone", color = TextSecondary, fontSize = 12.sp)
+                        }
+                        Switch(
+                            checked = fade,
+                            onCheckedChange = { fade = it },
+                            colors = SwitchDefaults.colors(checkedTrackColor = accent, checkedThumbColor = onAccent)
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    Text("Use this cut as", color = TextSecondary, fontSize = 12.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TypeSegment(Icons.Rounded.RingVolume, "Ringtone", type == RingtoneManager.TYPE_RINGTONE, accent, onAccent, Modifier.weight(1f)) {
+                            type = RingtoneManager.TYPE_RINGTONE
+                        }
+                        TypeSegment(Icons.Rounded.Notifications, "Notification", type == RingtoneManager.TYPE_NOTIFICATION, accent, onAccent, Modifier.weight(1f)) {
+                            type = RingtoneManager.TYPE_NOTIFICATION
+                        }
+                        TypeSegment(Icons.Rounded.Alarm, "Alarm", type == RingtoneManager.TYPE_ALARM, accent, onAccent, Modifier.weight(1f)) {
+                            type = RingtoneManager.TYPE_ALARM
+                        }
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+
                     Button(
-                        onClick = { saveCopy() },
+                        onClick = { apply() },
                         enabled = !busy && totalMs > 0L,
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         shape = RoundedCornerShape(14.dp),
@@ -585,16 +590,64 @@ private fun CutterContent(song: Song, onDismiss: () -> Unit, onPauseLocalPlaybac
                             disabledContentColor = onAccent.copy(alpha = 0.7f)
                         )
                     ) {
-                        if (exporting) {
+                        if (busy && !exporting) {
                             CircularProgressIndicator(color = onAccent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(10.dp))
                             Text("Saving…", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                         } else {
-                            Text("Save as ${exportFormat.label}", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            Text("Set as ${typeLabel(type).lowercase()}", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                         }
                     }
+
+                    Spacer(Modifier.height(24.dp))
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(TextPrimary.copy(alpha = 0.06f))
+                            .padding(14.dp)
+                    ) {
+                        Text("Save as", color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "Keep this cut as an audio file in Music/${RingtoneHelper.EXPORT_FOLDER}",
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ExportFormat.values().forEach { f ->
+                                LengthChip(f.label, selected = exportFormat == f) { if (!busy) exportFormat = f }
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Button(
+                            onClick = { saveCopy() },
+                            enabled = !busy && totalMs > 0L,
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = accent,
+                                contentColor = onAccent,
+                                disabledContainerColor = accent.copy(alpha = 0.6f),
+                                disabledContentColor = onAccent.copy(alpha = 0.7f)
+                            )
+                        ) {
+                            if (exporting) {
+                                CircularProgressIndicator(color = onAccent, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Text("Saving…", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            } else {
+                                Text("Save as ${exportFormat.label}", color = onAccent, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(32.dp))
                 }
-                Spacer(Modifier.height(32.dp))
             }
         }
     }

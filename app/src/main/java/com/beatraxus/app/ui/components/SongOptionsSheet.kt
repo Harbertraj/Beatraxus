@@ -97,6 +97,12 @@ fun SongOptionsSheet(
     var showRingtone by remember { mutableStateOf(false) }
     var showDlna by remember { mutableStateOf(false) }
 
+    // Now Playing passes the playing song as [song], and that changes when the next track starts. A screen the
+    // user is working in (Edit Tags / Set as / DLNA) keeps the song it was opened for until it is closed with
+    // Done / Cancel / back. The value is picked up again each time one of these screens opens.
+    val subScreenOpen = showTagEditor || showRingtone || showDlna
+    val pinnedSong = remember(subScreenOpen) { song }
+
     val density = androidx.compose.ui.platform.LocalDensity.current
     val sheetState = remember {
         SheetState(
@@ -254,7 +260,7 @@ fun SongOptionsSheet(
 
             if (showTagEditor) {
                 com.beatraxus.app.features.TagEditorDialog(
-                    song = song,
+                    song = pinnedSong,
                     onDismiss = { showTagEditor = false; onDismiss() },
                     onSaved = onTagsSaved,
                     onLoadLyrics = onLoadLyrics
@@ -262,14 +268,14 @@ fun SongOptionsSheet(
             }
             if (showRingtone) {
                 com.beatraxus.app.features.RingtoneDialog(
-                    song = song,
+                    song = pinnedSong,
                     onDismiss = { showRingtone = false; onDismiss() },
                     onPauseLocalPlayback = onPauseLocalPlayback
                 )
             }
             if (showDlna) {
                 com.beatraxus.app.features.DlnaSheet(
-                    song = song,
+                    song = pinnedSong,
                     positionMs = currentPositionMs,
                     onPauseLocal = onPauseLocalPlayback,
                     onPlaySongs = onPlaySongs,
